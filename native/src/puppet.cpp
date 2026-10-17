@@ -1,0 +1,236 @@
+#include "puppet.h"
+
+#include <windows.h>
+
+#include <cmath>
+#include <cstring>
+
+#include "MinHook.h"
+#include "log.h"
+
+namespace coop::puppet {
+
+namespace {
+
+constexpr int kObjPlayer = 22;
+constexpr double kFollow = 0.35;       // fraction of the remaining distance covered per step
+constexpr double kSnapDistance = 256;  // teleport instead of gliding across the map
+
+// objPlayer events that must not run for the puppet (its state comes from the network).
+// Create/PreCreate/CleanUp run normally; Draw_0 runs with PlayerFind() pointing at the puppet.
+namespace ev {
+constexpr uint32_t Step_0 = 0x009A0430;
+constexpr uint32_t Step_1 = 0x009D76D0;  // begin step: also where hp < 1 turns into a game over
+constexpr uint32_t Draw_0 = 0x009DCB00;
+}  // namespace ev
+constexpr uint32_t kSkippedEvents[] = {
+    0x0099F340,  // Alarm_1
+    0x0099F650,  // Alarm_2
+    0x009C66A0,  // Step_2
+    0x009D8F90,  // Collision with parEntity
+    0x009D90A0,  // Mouse_61
+    0x009D93D0,  // Mouse_60
+    0x009D9700,  // Other_10
+    0x009DA130,  // Other_18
+    0x009DC8B0,  // Other_4 (room start)
+    0x009F7590,  // Draw_73
+};
+constexpr int kSkippedCount = sizeof(kSkippedEvents) / sizeof(kSkippedEvents[0]);
+constexpr uint32_t kScriptDmgPlayer = 0x00727030;
+constexpr char kCreateFrame[] = "gml_Object_objPlayer_Create_0";
+
+struct StackFrame {
+    StackFrame* prev;
+    const char* name;
+    int line;
+};
+
+LocalStepFn g_onLocalStep = nullptr;
+yyc::CInstance* g_puppet = nullptr;  // valid while g_puppetId's instance exists; checked every local step
+int g_puppetId = 0;
+bool g_creating = false;     // PlayerFind() -> calling instance, while the puppet runs Create_0
+int g_actorId = 0;           // PlayerFind() -> this instance id, when non-zero
+int g_actingDepth = 0;       // BeginActing nesting
+
+yyc::EventFn g_origStep = nullptr;
+yyc::EventFn g_origStep1 = nullptr;
+LocalStepFn g_beforeLocalStep1 = nullptr;
+yyc::EventFn g_origDraw = nullptr;
+yyc::EventFn g_origSkipped[kSkippedCount] = {};
+yyc::ScriptFn g_origPlayerFind = nullptr;
+yyc::ScriptFn g_origDmgPlayer = nullptr;
+
+bool IsPuppet(const yyc::CInstance* instance) { return instance != nullptr && instance == g_puppet; }
+
+const char* CallerName() {
+    const StackFrame* top = *yyc::At<StackFrame**>(yyc::va::StackTraceTop);
+    return top != nullptr ? top->name : nullptr;
+}
+
+// Hot path (~350 calls per frame): a single branch when no override is active.
+yyc::RValue* __cdecl PlayerFindHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
+                                    yyc::RValue** args) {
+    int id = g_actorId;
+    if (id == 0 && g_creating) {
+        // The puppet's Create_0 edits "the player's" gear: point it at the puppet itself. Create_0's own
+        // checks ("am I the main player?" -> create uiToolbar/familiars) must keep seeing the local player.
+        const char* caller = CallerName();
+        if (caller != nullptr && strcmp(caller, kCreateFrame) != 0) {
+            id = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
+        }
+    }
+    if (id == 0) return g_origPlayerFind(self, other, result, argc, args);
+    yyc::Free(result);
+    *result = yyc::Real(id);
+    return result;
+}
+
+void __cdecl StepHook(yyc::CInstance* self, yyc::CInstance* other) {
+    if (IsPuppet(self)) return;
+    g_origStep(self, other);
+    if (g_onLocalStep == nullptr) return;
+    __try {
+        g_onLocalStep(self);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log("puppet: local step callback crashed (code 0x%08lX)", GetExceptionCode());
+    }
+}
+
+void __cdecl Step1Hook(yyc::CInstance* self, yyc::CInstance* other) {
+    if (IsPuppet(self)) return;
+    if (g_beforeLocalStep1 != nullptr) {
+        __try {
+            g_beforeLocalStep1(self);
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            Log("puppet: before-Step_1 callback crashed (code 0x%08lX)", GetExceptionCode());
+        }
+    }
+    g_origStep1(self, other);
+}
+
+void __cdecl DrawHook(yyc::CInstance* self, yyc::CInstance* other) {
+    if (!IsPuppet(self)) {
+        g_origDraw(self, other);
+        return;
+    }
+    g_actorId = g_puppetId;
+    g_origDraw(self, other);
+    g_actorId = 0;
+}
+
+// Damage meant for the puppet must not land on the local player (for now it is dropped).
+yyc::RValue* __cdecl DmgPlayerHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
+                                   yyc::RValue** args) {
+    if (IsPuppet(other)) return result;
+    return g_origDmgPlayer(self, other, result, argc, args);
+}
+
+template <int N>
+void __cdecl SkippedHook(yyc::CInstance* self, yyc::CInstance* other) {
+    if (!IsPuppet(self)) g_origSkipped[N](self, other);
+}
+
+template <int... N>
+struct SkippedTable {
+    static constexpr yyc::EventFn kHooks[] = {&SkippedHook<N>...};
+};
+using Skipped = SkippedTable<0, 1, 2, 3, 4, 5, 6, 7, 8, 9>;
+static_assert(sizeof(Skipped::kHooks) / sizeof(Skipped::kHooks[0]) == kSkippedCount, "one hook per skipped event");
+
+bool Hook(uint32_t va, void* detour, void* original) {
+    const MH_STATUS status = MH_CreateHook(yyc::At<void*>(va), detour, static_cast<void**>(original));
+    if (status != MH_OK) Log("puppet: hook @ VA %08X failed: %s", va, MH_StatusToString(status));
+    return status == MH_OK;
+}
+
+yyc::CInstance* Create(yyc::CInstance* localPlayer, const State& at) {
+    yyc::RValue args[4] = {yyc::Real(at.x), yyc::Real(at.y), yyc::Real(at.depth), yyc::Real(kObjPlayer)};
+    yyc::RValue result{};
+    g_creating = true;
+    const bool called = yyc::CallBuiltin("instance_create_depth", localPlayer, 4, args, &result);
+    g_creating = false;
+    if (!called) return nullptr;
+    g_puppetId = static_cast<int>(yyc::ToReal(result));
+    yyc::Free(&result);
+    g_puppet = yyc::FindInstance(g_puppetId);
+    if (g_puppet != nullptr) {
+        yyc::SetBuiltinReal(g_puppet, yyc::va::YYVar_image_speed, 0);
+        Log("puppet: objPlayer %d created", g_puppetId);
+    }
+    return g_puppet;
+}
+
+void Approach(uint32_t yyvar, double target) {
+    const double current = yyc::GetBuiltinReal(g_puppet, yyvar);
+    yyc::SetBuiltinReal(g_puppet, yyvar, current + (target - current) * kFollow);
+}
+
+}  // namespace
+
+bool InstallHooks(LocalStepFn onLocalStep, LocalStepFn beforeLocalStep1) {
+    g_onLocalStep = onLocalStep;
+    g_beforeLocalStep1 = beforeLocalStep1;
+    bool ok = Hook(yyc::va::Script_PlayerFind, reinterpret_cast<void*>(&PlayerFindHook), &g_origPlayerFind);
+    ok = Hook(ev::Step_0, reinterpret_cast<void*>(&StepHook), &g_origStep) && ok;
+    ok = Hook(ev::Step_1, reinterpret_cast<void*>(&Step1Hook), &g_origStep1) && ok;
+    ok = Hook(ev::Draw_0, reinterpret_cast<void*>(&DrawHook), &g_origDraw) && ok;
+    ok = Hook(kScriptDmgPlayer, reinterpret_cast<void*>(&DmgPlayerHook), &g_origDmgPlayer) && ok;
+    for (int i = 0; i < kSkippedCount; ++i) {
+        ok = Hook(kSkippedEvents[i], reinterpret_cast<void*>(Skipped::kHooks[i]), &g_origSkipped[i]) && ok;
+    }
+    return ok;
+}
+
+yyc::CInstance* Instance() {
+    if (g_puppet != nullptr && yyc::FindInstance(g_puppetId) != g_puppet) {
+        g_puppet = nullptr;
+        g_puppetId = 0;
+    }
+    return g_puppet;
+}
+
+void BeginActing() {
+    if (++g_actingDepth == 1 && Instance() != nullptr) g_actorId = g_puppetId;
+}
+
+void EndActing() {
+    if (g_actingDepth > 0 && --g_actingDepth == 0) g_actorId = 0;
+}
+
+bool IsActing() { return g_actorId != 0 && g_actorId == g_puppetId; }
+
+void Update(yyc::CInstance* localPlayer, const State& target) {
+    if (g_puppetId != 0 && yyc::FindInstance(g_puppetId) != g_puppet) {
+        g_puppet = nullptr;  // destroyed by the game (room change)
+        g_puppetId = 0;
+    }
+    if (g_puppet == nullptr && Create(localPlayer, target) == nullptr) return;
+
+    const double dx = target.x - yyc::GetBuiltinReal(g_puppet, yyc::va::YYVar_x);
+    const double dy = target.y - yyc::GetBuiltinReal(g_puppet, yyc::va::YYVar_y);
+    if (std::sqrt(dx * dx + dy * dy) > kSnapDistance) {
+        yyc::SetBuiltinReal(g_puppet, yyc::va::YYVar_x, target.x);
+        yyc::SetBuiltinReal(g_puppet, yyc::va::YYVar_y, target.y);
+    } else {
+        Approach(yyc::va::YYVar_x, target.x);
+        Approach(yyc::va::YYVar_y, target.y);
+    }
+    yyc::SetBuiltinReal(g_puppet, yyc::va::YYVar_sprite_index, target.sprite);
+    yyc::SetBuiltinReal(g_puppet, yyc::va::YYVar_image_index, target.imageIndex);
+    yyc::SetBuiltinReal(g_puppet, yyc::va::YYVar_image_xscale, target.xscale);
+    yyc::SetBuiltinReal(g_puppet, yyc::va::YYVar_image_yscale, target.yscale);
+    yyc::SetBuiltinReal(g_puppet, yyc::va::YYVar_depth, target.depth);
+}
+
+void Destroy(yyc::CInstance* localPlayer) {
+    if (g_puppet != nullptr && yyc::FindInstance(g_puppetId) == g_puppet) {
+        yyc::RValue id = yyc::Real(g_puppetId);
+        yyc::RValue result{};
+        yyc::CallBuiltin("instance_destroy", localPlayer, 1, &id, &result);
+        yyc::Free(&result);
+    }
+    g_puppet = nullptr;
+    g_puppetId = 0;
+}
+
+}  // namespace coop::puppet

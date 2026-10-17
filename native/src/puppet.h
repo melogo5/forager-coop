@@ -1,0 +1,33 @@
+// The peer's character, shown as a real objPlayer instance whose own logic is switched off.
+// Enemies target it like any parAlly; it is drawn by objPlayer's Draw_0 with PlayerFind() pointing at it.
+#pragma once
+
+#include "yyc.h"
+
+namespace coop::puppet {
+
+struct State {
+    float x, y;
+    float imageIndex, xscale, yscale, depth;
+    int sprite;
+};
+
+using LocalStepFn = void (*)(yyc::CInstance* localPlayer);
+
+// Creates the hooks (enabled by the caller). `onLocalStep` runs after the local player's Step_0,
+// `beforeLocalStep1` before its Step_1 (the begin step that turns hp < 1 into a game over).
+bool InstallHooks(LocalStepFn onLocalStep, LocalStepFn beforeLocalStep1);
+
+// The puppet instance, or nullptr when there is none.
+yyc::CInstance* Instance();
+// While acting, PlayerFind() returns the puppet: game code run in between treats the peer as "the player".
+// Nests; every Begin needs an End.
+void BeginActing();
+void EndActing();
+bool IsActing();
+
+// Moves the puppet toward `target`, creating it next to the local player if needed.
+void Update(yyc::CInstance* localPlayer, const State& target);
+void Destroy(yyc::CInstance* localPlayer);
+
+}  // namespace coop::puppet

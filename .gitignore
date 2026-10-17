@@ -1,0 +1,9 @@
+# Ghidra project with the analyzed Forager.exe (~440 MB, binary, regenerable)
+ghidra/
+native/build/
+tools/gametest/shots/
+# Derived from the game (proprietary) — regenerate locally, never commit
+decompiled/code/
+decompiled/data/
+decompiled/symbols/
+.claude/
