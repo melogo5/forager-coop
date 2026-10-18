@@ -40,6 +40,7 @@ constexpr int kSlotInvulFrames = 0x5A7;
 constexpr double kRespawnX = 672;  // the starting island: where a new world puts the player (rmGame centre)
 constexpr double kRespawnY = 672;
 constexpr double kRespawnInvulSteps = 120;  // ~2 s
+constexpr uint32_t kScriptRestartGame = 0x004A5620;  // RestartGame(): what game over uses to reach the menu
 constexpr uint32_t kScriptIsMenuOpen = 0x00835040;
 constexpr int kObjPlayer = 22;
 constexpr int kParMenu = 238;
@@ -49,6 +50,7 @@ constexpr int kMaxObjects = 512;
 enum MessageType : uint8_t {
     kHello = 1,
     kPlayerState = 2,
+    kBye = 7,  // host -> guest: the host left its world; the session is over
 };
 
 #pragma pack(push, 1)
@@ -65,6 +67,7 @@ struct PlayerStateMsg {
 using session::Role;
 
 Role g_role = Role::kNone;
+bool g_playedWorld = false;  // this session has been in a world (back in the menu = the session is over)
 unsigned g_steps = 0;
 bool g_wasConnected = false;
 bool g_haveRemote = false;
@@ -121,6 +124,13 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             // The guest's character answer is out; now the world, so it arrives after it.
             if (guestIntroduced) world::HostRequestSnapshot(localPlayer);
             continue;
+        }
+        if (message.type == kBye && g_role == Role::kGuest) {
+            Log("session: the host left; back to the main menu");
+            yyc::RValue result{};
+            yyc::At<yyc::ScriptFn>(kScriptRestartGame)(localPlayer, localPlayer, &result, 0, nullptr);
+            yyc::Free(&result);
+            return;  // the room is going away; the rest does not matter any more
         }
         if (message.type == kHello && message.payload.size() == sizeof(HelloMsg)) {
             HelloMsg hello{};
@@ -209,6 +219,7 @@ yyc::RValue* __cdecl IsMenuOpenHook(yyc::CInstance* self, yyc::CInstance* other,
 void Tick(yyc::CInstance* localPlayer) {
     ApplyDebugGodMode();
     if (g_role == Role::kNone) return;
+    g_playedWorld = true;
     const bool connected = net::IsConnected();
     if (g_role == Role::kHost && g_steps % kAnnounceEverySteps == 0) Announce(connected);
     if (connected && !g_wasConnected) {
@@ -228,7 +239,10 @@ void Tick(yyc::CInstance* localPlayer) {
     }
     g_wasConnected = connected;
     ++g_steps;
-    if (!connected) return;
+    if (!connected) {
+        HandleMessages(localPlayer);  // what arrived before the link went, e.g. the host saying goodbye
+        return;
+    }
 
     sync::Tick(localPlayer);
     storage::DebugTick(localPlayer);
@@ -271,9 +285,12 @@ void Join(const std::string& address, uint16_t port) {
 }
 
 void Leave() {
-    if (g_role != Role::kGuest) return;
+    if (g_role == Role::kNone) return;
+    const bool host = g_role == Role::kHost;
+    if (host) net::Send(kBye, nullptr, 0);
     net::Stop();
     g_role = Role::kNone;
+    g_playedWorld = false;
     g_wasConnected = false;
     g_haveRemote = false;
     character::Reset();
@@ -281,8 +298,10 @@ void Leave() {
     sync::Reset();
     mobs::Reset();
     storage::Reset();
-    Log("session: left the host's world; can join again");
+    Log(host ? "session: stopped hosting; can create again" : "session: left the host's world; can join again");
 }
+
+bool PlayedWorld() { return g_playedWorld; }
 
 Role CurrentRole() { return g_role; }
 bool IsConnected() { return net::IsConnected(); }

@@ -313,10 +313,11 @@ void Step(yyc::CInstance* control) {
     gui::Begin(control);
     if (session::CurrentRole() == session::Role::kHost) lan::SetAnnouncement(false, "", 1);  // back in the menu
     EnsureCoopButton(control);
-    // A guest back in the main menu after playing: its working copy of the host's world (slot 99) goes, so it
-    // never sits in the player's own save list, and the session ends, so the guest can join again.
-    if (session::CurrentRole() == session::Role::kGuest && g_loadingWorld) {
-        world::RemoveGuestSaveSlot();
+    // Back in the main menu after playing, the session is over: the host tells the guest, and both can start
+    // a new one. A guest's working copy of the host's world (slot 99) goes, so it never sits in the player's
+    // own save list.
+    if (session::CurrentRole() != session::Role::kNone && session::PlayedWorld()) {
+        if (session::CurrentRole() == session::Role::kGuest) world::RemoveGuestSaveSlot();
         session::Leave();
         g_loadingWorld = false;
         g_status.clear();

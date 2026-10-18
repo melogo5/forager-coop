@@ -16,7 +16,7 @@ struct Message {
 
 void StartHost(uint16_t port);
 void StartJoin(const std::string& host, uint16_t port);
-// Guest: drops the link and stops reconnecting; a later StartJoin starts over.
+// Drops the link and stops hosting/reconnecting; a later StartHost/StartJoin starts over.
 void Stop();
 
 bool IsConnected();

@@ -22,6 +22,8 @@ constexpr size_t kHeaderSize = 4;              // u32 little-endian body size
 std::mutex g_lock;  // guards g_socket (for Send) and g_inbox
 SOCKET g_socket = INVALID_SOCKET;
 std::atomic<unsigned> g_joinGeneration{0};  // Stop() bumps it: older join threads give up
+std::atomic<unsigned> g_hostGeneration{0};  // ... and older host threads
+SOCKET g_listener = INVALID_SOCKET;          // guarded by g_lock
 std::vector<Message> g_inbox;
 bool g_started = false;
 ReceiveHandler g_handler = nullptr;  // set before Start*, read only by the receive thread
@@ -78,7 +80,7 @@ void ReceiveLoop(SOCKET s) {
     Disconnect(s);
 }
 
-void HostThread(uint16_t port) {
+void HostThread(uint16_t port, unsigned generation) {
     SOCKET listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     sockaddr_in address{};
     address.sin_family = AF_INET;
@@ -89,12 +91,20 @@ void HostThread(uint16_t port) {
         Log("net: cannot listen on port %u (error %d)", port, WSAGetLastError());
         return;
     }
+    {
+        std::lock_guard<std::mutex> guard(g_lock);
+        if (g_hostGeneration != generation) {  // stopped meanwhile
+            closesocket(listener);
+            return;
+        }
+        g_listener = listener;
+    }
     Log("net: hosting on port %u", port);
-    for (;;) {
+    while (g_hostGeneration == generation) {
         sockaddr_in peer{};
         int peerSize = sizeof(peer);
         const SOCKET client = accept(listener, reinterpret_cast<sockaddr*>(&peer), &peerSize);
-        if (client == INVALID_SOCKET) continue;
+        if (client == INVALID_SOCKET) continue;  // Stop() closes the listener: the loop then ends
         char ip[INET_ADDRSTRLEN] = {};
         inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip));
         if (IsConnected()) {
@@ -107,6 +117,7 @@ void HostThread(uint16_t port) {
         // One guest at a time: serve it here, then go back to accepting.
         ReceiveLoop(client);
     }
+    Log("net: stopped hosting");
 }
 
 void JoinThread(std::string host, uint16_t port, unsigned generation) {
@@ -154,7 +165,7 @@ bool Startup() {
 }  // namespace
 
 void StartHost(uint16_t port) {
-    if (Startup()) std::thread(HostThread, port).detach();
+    if (Startup()) std::thread(HostThread, port, g_hostGeneration.load()).detach();
 }
 
 void StartJoin(const std::string& host, uint16_t port) {
@@ -163,8 +174,13 @@ void StartJoin(const std::string& host, uint16_t port) {
 
 void Stop() {
     ++g_joinGeneration;
+    ++g_hostGeneration;
     std::lock_guard<std::mutex> guard(g_lock);
     if (g_socket != INVALID_SOCKET) shutdown(g_socket, SD_BOTH);  // the receive loop then closes it
+    if (g_listener != INVALID_SOCKET) {
+        closesocket(g_listener);  // wakes the host thread up from accept()
+        g_listener = INVALID_SOCKET;
+    }
     g_inbox.clear();
 }
 
