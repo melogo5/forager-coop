@@ -118,6 +118,7 @@ yyc::RValue* WithGuestArea(yyc::ScriptFn original, yyc::CInstance* self, yyc::CI
 
 yyc::RValue* __cdecl CullObjectHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                     yyc::RValue** args) {
+    sync::BeforeCull(self);
     return WithGuestArea(g_origCullObject, self, other, result, argc, args);
 }
 

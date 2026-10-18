@@ -225,8 +225,8 @@ void FlushSpawns(yyc::CInstance* self) {
     g_pendingSpawns.clear();
 }
 
-// The instance of `object` standing at (x, y), or nullptr.
-// Known issue: off-screen objects are deactivated (CullObject) and not found here (see QUESTIONS.md).
+// The active instance of `object` standing at (x, y), or nullptr. Off-screen objects are deactivated
+// (CullObject) and not found here.
 yyc::CInstance* FindAt(yyc::CInstance* self, int object, double x, double y) {
     const int id = static_cast<int>(Builtin(self, "instance_nearest", {x, y, double(object)}));
     if (id == kNoOne) return nullptr;
@@ -471,6 +471,32 @@ void ApplySpawn(yyc::CInstance* self, const ObjectMsg& msg) {
     }
 }
 
+// Guest: destroys of objects the guest has deactivated (off-screen, CullObject). instance_nearest and
+// instance_destroy skip deactivated instances, and instance_activate_* only takes effect on the next step,
+// so such a destroy wakes the object up and is retried over the next steps. The game culls the rest back.
+struct PendingDestroy {
+    ObjectMsg msg;
+    int local;  // the known replica, or 0: look the object up by position
+    int attempts;
+};
+std::vector<PendingDestroy> g_pendingDestroys;
+constexpr int kDestroyAttempts = 5;
+
+// Destroys the object if it is active now; false if it has to be woken up first.
+bool TryDestroy(yyc::CInstance* self, const ObjectMsg& msg, int local) {
+    if (local == 0) {
+        yyc::CInstance* found = FindAt(self, msg.object, msg.x, msg.y);
+        if (found == nullptr) return false;
+        local = static_cast<int>(yyc::GetBuiltinReal(found, yyc::va::YYVar_id));
+    } else if (yyc::FindInstance(local) == nullptr) {
+        return true;  // already gone
+    } else if (Builtin(self, "instance_exists", {double(local)}) == 0) {  // false for deactivated instances
+        return false;
+    }
+    DestroySilently(self, local);
+    return true;
+}
+
 void ApplyDestroy(yyc::CInstance* self, const ObjectMsg& msg) {
     g_destroyedOnHost.insert(msg.id);
     int local = 0;
@@ -479,11 +505,34 @@ void ApplyDestroy(yyc::CInstance* self, const ObjectMsg& msg) {
         local = known->second;
         g_localToHost.erase(local);
         g_hostToLocal.erase(known);
-    } else if (yyc::CInstance* found = FindAt(self, msg.object, msg.x, msg.y)) {
-        local = static_cast<int>(yyc::GetBuiltinReal(found, yyc::va::YYVar_id));
     }
-    if (local != 0 && yyc::FindInstance(local) != nullptr) DestroySilently(self, local);
+    if (TryDestroy(self, msg, local)) return;
+    if (local == 0 && IsDrop(self, msg.object)) return;  // the host's own loot, collected at once: never sent
+    if (local != 0) {
+        Builtin(self, "instance_activate_object", {double(local)});
+    } else {
+        Builtin(self, "instance_activate_region",
+                {msg.x - kMatchDistance, msg.y - kMatchDistance, 2 * kMatchDistance, 2 * kMatchDistance, 1});
+    }
+    g_pendingDestroys.push_back({msg, local, 0});
 }
+
+// `countAttempt`: once per step (from Tick); CullObject runs several times a step and only gets a free try.
+void RetryDestroys(yyc::CInstance* self, bool countAttempt) {
+    if (g_pendingDestroys.empty()) return;
+    std::vector<PendingDestroy> waiting;
+    for (PendingDestroy pending : g_pendingDestroys) {
+        if (TryDestroy(self, pending.msg, pending.local)) continue;
+        if (!countAttempt || ++pending.attempts < kDestroyAttempts) {
+            waiting.push_back(pending);
+        } else {
+            Log("sync: destroy of object %d at (%.0f, %.0f): not found", pending.msg.object, pending.msg.x,
+                pending.msg.y);
+        }
+    }
+    g_pendingDestroys = std::move(waiting);
+}
+
 
 // Host: the instance a guest message refers to (by the host id it carries, else by object and position).
 yyc::CInstance* ResolveOnHost(yyc::CInstance* self, const ObjectMsg& msg) {
@@ -597,6 +646,75 @@ void DebugBuild(yyc::CInstance* localPlayer) {
     }
 }
 
+// Testing aid: COOP_DEBUG_CULLTEST=1 (on both sides) checks destroys of objects the guest has culled, on rocks;
+// COOP_DEBUG_CULLTEST=<object index> on another object (85 = trees). Both sides list those objects at the
+// start; the guest deactivates the ones away from itself, as CullObject does (usually the game already has);
+// the host destroys the ones away from both players; both sides list them again - the lists must match.
+std::vector<int> FarInstances(yyc::CInstance* self, int object, std::initializer_list<yyc::CInstance*> players) {
+    constexpr double kNear = 150;
+    std::vector<int> distant;
+    const int count = static_cast<int>(Builtin(self, "instance_number", {double(object)}));
+    for (int i = 0; i < count; ++i) {
+        const int id = static_cast<int>(Builtin(self, "instance_find", {double(object), double(i)}));
+        yyc::CInstance* instance = yyc::FindInstance(id);
+        if (instance == nullptr) continue;
+        const InstanceInfo info = Describe(instance);
+        const bool nearby = std::any_of(players.begin(), players.end(), [&](yyc::CInstance* player) {
+            return player != nullptr && std::hypot(info.x - yyc::GetBuiltinReal(player, yyc::va::YYVar_x),
+                                                   info.y - yyc::GetBuiltinReal(player, yyc::va::YYVar_y)) <= kNear;
+        });
+        if (!nearby) distant.push_back(id);
+    }
+    return distant;
+}
+
+// Listings and the host's destroys run right before the game culls (BeforeCull): objects woken up a step
+// earlier are active only there.
+const char* g_cullTestListing = nullptr;
+bool g_cullTestDestroy = false;
+
+int CullTestObject() {
+    static const int object = [] {
+        char value[16] = {};
+        if (GetEnvironmentVariableA("COOP_DEBUG_CULLTEST", value, sizeof(value)) == 0) return 0;
+        const int index = atoi(value);
+        return index > 1 ? index : 84;  // "1": rocks
+    }();
+    return object;
+}
+
+void LogCullTestObjects(yyc::CInstance* self, const char* when) {
+    const int object = CullTestObject();
+    const int count = static_cast<int>(Builtin(self, "instance_number", {double(object)}));
+    Log("sync: cull test: %d objects at the %s", count, when);
+    for (int i = 0; i < count; ++i) {
+        const int id = static_cast<int>(Builtin(self, "instance_find", {double(object), double(i)}));
+        if (yyc::CInstance* instance = yyc::FindInstance(id)) {
+            const InstanceInfo info = Describe(instance);
+            Log("sync: cull test: object at (%.0f, %.0f), host id %d", info.x, info.y, HostIdOf(info.id));
+        }
+    }
+}
+
+void DebugCullTest(yyc::CInstance* localPlayer) {
+    constexpr unsigned kStartAt = 200, kCullAt = 300, kDestroyAt = 900, kEndAt = 1500;  // steps since connecting
+    const int object = CullTestObject();
+    static unsigned steps = 0;
+    if (object == 0 || !Connected()) return;
+    ++steps;
+    if (steps == kStartAt || steps == kEndAt) {
+        Builtin(localPlayer, "instance_activate_object", {double(object)});
+        g_cullTestListing = steps == kStartAt ? "start" : "end";
+    } else if (steps == kDestroyAt && IsHost()) {
+        Builtin(localPlayer, "instance_activate_object", {double(object)});
+        g_cullTestDestroy = true;
+    } else if (steps == kCullAt && IsGuest()) {
+        const std::vector<int> distant = FarInstances(localPlayer, object, {localPlayer});
+        for (const int id : distant) Builtin(localPlayer, "instance_deactivate_object", {double(id)});
+        Log("sync: cull test: deactivated %zu distant objects", distant.size());
+    }
+}
+
 // Testing aid: COOP_DEBUG_CENSUS=1 on the host makes both sides write their world objects (rocks, trees,
 // structures, bushes; not drops) to coop_census_<pid>_<n>.txt every 30 s, so the lists can be diffed.
 // Only objects near the host's player count: off-screen ones are deactivated, differently on each side.
@@ -653,12 +771,28 @@ void Tick(yyc::CInstance* localPlayer) {
     DebugAutoHit(localPlayer);
     DebugBuild(localPlayer);
     DebugCensus(localPlayer);
+    DebugCullTest(localPlayer);
     if (!g_builtinsHooked) HookBuiltins();
     if (IsHost()) FlushSpawns(localPlayer);
+    if (IsGuest()) RetryDestroys(localPlayer, true);
     if (++g_steps % kStatsEverySteps == 0) {
         Log("sync: sent spawn %u destroy %u hit %u gone %u | applied spawn %u destroy %u hit %u gone %u",
             g_sent[kSpawn], g_sent[kDestroy], g_sent[kHit], g_sent[kGuestDestroyed], g_applied[kSpawn],
             g_applied[kDestroy], g_applied[kHit], g_applied[kGuestDestroyed]);
+    }
+}
+
+void BeforeCull(yyc::CInstance* self) {
+    if (IsGuest()) RetryDestroys(self, false);
+    if (g_cullTestListing != nullptr) {
+        LogCullTestObjects(self, g_cullTestListing);
+        g_cullTestListing = nullptr;
+    }
+    if (g_cullTestDestroy && g_localPlayer != nullptr) {
+        g_cullTestDestroy = false;
+        const std::vector<int> distant = FarInstances(self, CullTestObject(), {g_localPlayer, puppet::Instance()});
+        for (const int id : distant) Builtin(self, "instance_destroy", {double(id)});
+        Log("sync: cull test: destroyed %zu distant objects", distant.size());
     }
 }
 

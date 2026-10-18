@@ -4,7 +4,7 @@
 мышь не нужна). Если сценарий пройден заново и что-то сдвинулось — поправь здесь.
 
 ```powershell
-$ctl = 'Z:\repos\test rep\tools\gametest\gamectl.ps1'
+$ctl = 'Z:\repos\forager-coop\tools\gametest\gamectl.ps1'
 & $ctl -GamePid <pid> -Click '641,60' -HoldMs 150   # клик
 & $ctl -GamePid <pid> -Key Esc                      # клавиша (Enter, Esc, Back, T, ...)
 & $ctl -GamePid <pid> -Text '/give stone 50'        # ввод текста
@@ -17,7 +17,7 @@ $ctl = 'Z:\repos\test rep\tools\gametest\gamectl.ps1'
 ## 1. Запуск хоста и гостя
 
 ```powershell
-& 'Z:\repos\test rep\tools\gametest\coopflow.ps1' -GodMode -GuestName 'Builder' [-HostSlotRow 1] `
+& 'Z:\repos\forager-coop\tools\gametest\coopflow.ps1' -GodMode -GuestName 'Builder' [-HostSlotRow 1] `
     [-HostEnv @{...}] [-GuestEnv @{...}]
 ```
 Печатает `HOST=<pid> GUEST=<pid>`. Внутри: главное меню → COOP (675,640) → у хоста CREATE (993,114) →
@@ -73,6 +73,7 @@ $ctl = 'Z:\repos\test rep\tools\gametest\gamectl.ps1'
 | `COOP_DEBUG_STORAGE=1` | гость открывает ближайший сундук, кладёт предмет #1 ×5, закрывает |
 | `COOP_DEBUG_BUYLAND=1` | покупка острова без меню |
 | `COOP_DEBUG_ENEMY=<object>` | хост спавнит врага рядом с гостем (26 — слайм) |
+| `COOP_DEBUG_CULLTEST=1` (обоим) | уничтожение объектов, усыплённых у гостя: обе стороны пишут в лог список камней, хост уничтожает дальние, обе пишут список снова — списки должны совпасть (`=85` — деревья) |
 
 ## Ещё не записано
 
