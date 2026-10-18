@@ -62,7 +62,21 @@ $ctl = 'Z:\repos\forager-coop\tools\gametest\gamectl.ps1'
 `storage: chest <id> updated from the peer …, first cell: item 1 xN` (1 — камень). Пока сундук открыт у
 одного, у другого `E` не открывает и в логе `storage: chest <id> is open by the other player`.
 
-## 6. Отладочные переменные окружения (через `-HostEnv` / `-GuestEnv`)
+## 6. Выход гостя в меню и повторный вход (проверено 2026-10-19)
+
+1. У гостя `Esc` → последняя вкладка (825,60) → **SAVE AND EXIT TO MENU** (930,505).
+2. Через ~10 с главное меню: COOP (675,640) → JOIN (995,205).
+
+Ожидание: гость `session: left the host's world; can join again`, затем снова `session: joining`,
+`character: own character restored`, `puppet: objPlayer`; хост `session: peer gone`, затем
+`net: guest connected`, снимок мира и новый `puppet: objPlayer`.
+
+## 7. Вкладка BUY LAND (покупка островов)
+
+`Esc` → (735,60). Таблички продажи (`objPurchaseLand`) существуют только пока вкладка открыта. Осторожно:
+второй клик по вкладке может попасть по участку и купить его (так хост купил остров 2026-10-18).
+
+## 8. Отладочные переменные окружения (через `-HostEnv` / `-GuestEnv`)
 
 | Переменная | Что делает |
 |---|---|
