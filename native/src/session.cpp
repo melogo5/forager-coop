@@ -43,6 +43,7 @@ constexpr double kRespawnY = 672;
 constexpr double kRespawnInvulSteps = 120;  // ~2 s
 constexpr uint32_t kScriptToolSelected = 0x007047B0;  // ToolSelected(): the item in the player's hand
 constexpr uint32_t kScriptRestartGame = 0x004A5620;  // RestartGame(): what game over uses to reach the menu
+constexpr int kSlotGameMode = 0x527;  // global.gameMode: 0 classic, 1 single island, 2 speedrun, 3 hard
 constexpr unsigned kGuestGiveUpSteps = 300;          // ~5 s without the host: the guest goes back to the menu
 constexpr uint32_t kScriptIsMenuOpen = 0x00835040;
 constexpr int kObjPlayer = 22;
@@ -75,6 +76,7 @@ bool g_playedWorld = false;  // this session has been in a world (back in the me
 unsigned g_steps = 0;
 unsigned g_offlineSteps = 0;
 bool g_leaving = false;  // guest: on the way back to the main menu
+std::string g_notice;    // shown on the COOP screen when back in the menu
 bool g_wasConnected = false;
 bool g_haveRemote = false;
 PlayerStateMsg g_remote{};
@@ -118,6 +120,19 @@ PlayerStateMsg CaptureState(yyc::CInstance* player) {
     s.tool = static_cast<int32_t>(yyc::ToReal(tool));
     yyc::Free(&tool);
     return s;
+}
+
+// Coop worlds are Classic only for now (QUESTIONS.md): a host that started another mode goes back to the menu.
+bool HostWorldAllowed(yyc::CInstance* localPlayer) {
+    const yyc::RValue* mode = yyc::GlobalVar(kSlotGameMode);
+    if (mode == nullptr || yyc::ToReal(*mode) == 0) return true;
+    Log("session: game mode %.0f is not Classic - coop worlds are Classic only", yyc::ToReal(*mode));
+    g_notice = "Coop needs a Classic world";
+    g_leaving = true;
+    yyc::RValue result{};
+    yyc::At<yyc::ScriptFn>(kScriptRestartGame)(localPlayer, localPlayer, &result, 0, nullptr);
+    yyc::Free(&result);
+    return false;
 }
 
 // Guest: the session is over (the host left or is gone); back to the main menu, where it is reset.
@@ -236,7 +251,11 @@ yyc::RValue* __cdecl IsMenuOpenHook(yyc::CInstance* self, yyc::CInstance* other,
 // Runs after the local player's Step_0, i.e. only while in a world.
 void Tick(yyc::CInstance* localPlayer) {
     ApplyDebugGodMode();
-    if (g_role == Role::kNone) return;
+    if (g_role == Role::kNone || g_leaving) return;
+    if (!g_playedWorld && g_role == Role::kHost && !HostWorldAllowed(localPlayer)) {
+        g_playedWorld = true;  // back in the menu this ends the session
+        return;
+    }
     g_playedWorld = true;
     const bool connected = net::IsConnected();
     if (g_role == Role::kHost && g_steps % kAnnounceEverySteps == 0) Announce(connected);
@@ -328,6 +347,12 @@ void Leave() {
 }
 
 bool PlayedWorld() { return g_playedWorld; }
+
+std::string TakeNotice() {
+    std::string notice;
+    notice.swap(g_notice);
+    return notice;
+}
 
 Role CurrentRole() { return g_role; }
 bool IsConnected() { return net::IsConnected(); }

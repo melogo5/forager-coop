@@ -70,6 +70,7 @@ std::string g_nameText;  // the guest's name for the host (kept between games)
 bool g_nameLoaded = false;
 constexpr size_t kMaxNameLength = 16;
 std::string g_status;
+std::string g_notice;  // how the last session ended; shown when the COOP screen opens next
 std::vector<lan::Server> g_servers;
 bool g_loadingWorld = false;
 
@@ -320,7 +321,8 @@ void Step(yyc::CInstance* control) {
         if (session::CurrentRole() == session::Role::kGuest) world::RemoveGuestSaveSlot();
         session::Leave();
         g_loadingWorld = false;
-        g_status.clear();
+        g_notice = session::TakeNotice();
+        g_status = g_notice;
     }
     if (session::CurrentRole() == session::Role::kGuest && !g_loadingWorld) {
         if (world::GuestWorldReady() && character::GuestReady()) {
@@ -402,7 +404,8 @@ void __cdecl ButtonUser0Hook(yyc::CInstance* self, yyc::CInstance* other) {
     }
     Log("menu: COOP screen opened");
     g_ipFocused = false;
-    g_status.clear();
+    g_status = g_notice;  // empty unless a session just ended for a reason worth telling
+    g_notice.clear();
     lan::StartListening();
 }
 

@@ -24,6 +24,8 @@ void Join(const std::string& address, uint16_t port);
 void Leave();
 // The current session has been in a world.
 bool PlayedWorld();
+// A message for the COOP screen about how the last session ended (empty if none); taken once.
+std::string TakeNotice();
 
 Role CurrentRole();
 bool IsConnected();
