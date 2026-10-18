@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <unordered_map>
@@ -55,6 +56,7 @@ bool (*g_isGuest)() = nullptr;
 unsigned g_steps = 0;
 std::unordered_map<int, MobState> g_targets;  // guest: host id -> latest state
 unsigned g_received = 0;
+unsigned g_purgedAt = 0;  // guest: the update the last purge followed
 unsigned g_applySteps = 0;
 constexpr unsigned kTraceEverySteps = 120;  // log replica positions every ~2 s
 
@@ -177,8 +179,23 @@ void Follow(yyc::CInstance* mob, const MobState& s) {
     yyc::SetVar(static_cast<int>(yyc::GetBuiltinReal(mob, yyc::va::YYVar_id)), kSlotHp, &hp);
 }
 
+// Guest: enemies are exactly what the host streams. Any other active enemy here - one from the loaded save that
+// the host does not have (dead or asleep there), or a replica the host stopped sending (it fell asleep there,
+// and its own AI would walk it around) - is a ghost the guest could see and hit for nothing: it goes.
+void PurgeGhosts(yyc::CInstance* self, const std::vector<int>& followed) {
+    const int count = static_cast<int>(Builtin(self, "instance_number", {kParEnemy}));
+    std::vector<int> ghosts;
+    for (int i = 0; i < count; ++i) {
+        const int id = static_cast<int>(Builtin(self, "instance_find", {kParEnemy, double(i)}));
+        if (id != kNoOne && std::find(followed.begin(), followed.end(), id) == followed.end()) ghosts.push_back(id);
+    }
+    for (const int id : ghosts) sync::RemoveLocal(self, id);
+    if (!ghosts.empty()) Log("mobs: removed %zu enemies the host does not have", ghosts.size());
+}
+
 // After every Step event: whatever the replicas' own AI did, they stand where the host says.
 void ApplyTargets(yyc::CInstance* self) {
+    std::vector<int> followed;
     for (auto it = g_targets.begin(); it != g_targets.end();) {
         const MobState& s = it->second;
         int local = sync::ReplicaOf(s.id);
@@ -189,18 +206,23 @@ void ApplyTargets(yyc::CInstance* self) {
             continue;
         }
         Follow(mob, s);
+        followed.push_back(local);
         if (g_applySteps % kTraceEverySteps == 0) {
             Log("mobs: host %d at (%.0f, %.0f) -> replica %d at (%.0f, %.0f)", s.id, s.x, s.y, local,
                 yyc::GetBuiltinReal(mob, yyc::va::YYVar_x), yyc::GetBuiltinReal(mob, yyc::va::YYVar_y));
         }
         ++it;
     }
+    if (g_purgedAt != g_received) {  // once per update, right after it is applied
+        g_purgedAt = g_received;
+        PurgeGhosts(self, followed);
+    }
     ++g_applySteps;
 }
 
 void __cdecl EndStepHook(yyc::CInstance* self, yyc::CInstance* other) {
     g_origEndStep(self, other);
-    if (g_isGuest == nullptr || !g_isGuest() || g_targets.empty()) return;
+    if (g_isGuest == nullptr || !g_isGuest() || (g_targets.empty() && g_purgedAt == g_received)) return;
     __try {
         ApplyTargets(self);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -279,6 +301,7 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
 void Reset() {
     g_targets.clear();
     g_received = 0;
+    g_purgedAt = 0;
 }
 
 }  // namespace coop::mobs

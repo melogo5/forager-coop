@@ -822,6 +822,15 @@ int SpawnReplica(yyc::CInstance* self, int hostId, int object, double x, double 
     return CreateReplica(self, hostId, object, x, y, depth);
 }
 
+void RemoveLocal(yyc::CInstance* self, int localId) {
+    const auto host = g_localToHost.find(localId);
+    if (host != g_localToHost.end()) {
+        g_hostToLocal.erase(host->second);
+        g_localToHost.erase(host);
+    }
+    if (yyc::FindInstance(localId) != nullptr) DestroySilently(self, localId);
+}
+
 void AdoptReplica(int hostId, int localId) {
     g_hostToLocal[hostId] = localId;
     g_localToHost[localId] = hostId;

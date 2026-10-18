@@ -36,6 +36,8 @@ int ReplicaOf(int hostId);
 int SpawnReplica(yyc::CInstance* self, int hostId, int object, double x, double y, double depth);
 // Guest: binds an existing local instance (e.g. loaded from the same save) to a host instance.
 void AdoptReplica(int hostId, int localId);
+// Guest: removes a local instance quietly (not reported to the host) and forgets it as a replica.
+void RemoveLocal(yyc::CInstance* self, int localId);
 bool IsReplica(int localId);
 // Guest: the host destroyed this instance (so a late update must not bring it back).
 bool WasDestroyed(int hostId);
