@@ -84,7 +84,7 @@ constexpr int kNoOne = -4;
 constexpr uint32_t kScriptResourceSpawn = 0x00749E80;
 constexpr uint32_t kScriptResourceSpawnSingle = 0x00750710;
 constexpr uint32_t kScriptGainXp = 0x00730600;
-constexpr uint32_t kSkillStep = 0x00E39DF0;  // objSkill Step_0: buying a skill
+constexpr uint32_t kScriptUnlockAchievement = 0x004A6DA0;  // UnlockAchievement(name): Steam achievement
 constexpr uint32_t kScriptHandleCrafting = 0x004AB790;  // a structure works on its craft; DropItem when done
 constexpr uint32_t kEventUser = 0x016F2D00;  // event_user(n): (self, other, n)
 
@@ -106,7 +106,7 @@ yyc::ScriptFn g_origResourceSpawn = nullptr;
 yyc::ScriptFn g_origResourceSpawnSingle = nullptr;
 yyc::ScriptFn g_origGainXp = nullptr;
 yyc::ScriptFn g_origHandleCrafting = nullptr;
-yyc::EventFn g_origSkillStep = nullptr;
+yyc::ScriptFn g_origUnlockAchievement = nullptr;
 EventUserFn g_origEventUser = nullptr;
 yyc::BuiltinFn g_origCreate = nullptr;
 using DestroyFn = void(__cdecl*)(yyc::CInstance* self, yyc::CInstance* other, int id, int executeEvent);
@@ -407,11 +407,14 @@ yyc::RValue* __cdecl GainXpHook(yyc::CInstance* self, yyc::CInstance* other, yyc
     return r;
 }
 
-// Only the host buys skills (QUESTIONS.md): on the guest the skill tree's nodes don't react.
-void __cdecl SkillStepHook(yyc::CInstance* self, yyc::CInstance* other) {
-    if (IsGuest() && Connected()) return;
-    g_origSkillStep(self, other);
+// Steam achievements are the host's only (docs/coop/SPEC.md): the guest's game does not unlock any.
+yyc::RValue* __cdecl UnlockAchievementHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result,
+                                           int argc, yyc::RValue** args) {
+    if (IsGuest() && Connected()) return result;
+    return g_origUnlockAchievement(self, other, result, argc, args);
 }
+
+
 
 // event_user(0) with the player as `other` is also how drops get collected, so only tool use counts as a hit.
 bool CalledFromToolUse() {
@@ -665,7 +668,8 @@ bool InstallHooks(bool (*isHost)(), bool (*isGuest)()) {
               &g_origResourceSpawnSingle) && ok;
     ok = Hook(kScriptGainXp, reinterpret_cast<void*>(&GainXpHook), &g_origGainXp) && ok;
     ok = Hook(kScriptHandleCrafting, reinterpret_cast<void*>(&HandleCraftingHook), &g_origHandleCrafting) && ok;
-    ok = Hook(kSkillStep, reinterpret_cast<void*>(&SkillStepHook), &g_origSkillStep) && ok;
+    ok = Hook(kScriptUnlockAchievement, reinterpret_cast<void*>(&UnlockAchievementHook), &g_origUnlockAchievement) &&
+         ok;
     ok = Hook(kEventUser, reinterpret_cast<void*>(&EventUserHook), &g_origEventUser) && ok;
     ok = Hook(kResourceCollect, reinterpret_cast<void*>(&CollectHook), &g_origCollect) && ok;
     ok = Hook(kInstanceDestroy, reinterpret_cast<void*>(&DestroyHook), &g_origDestroy) && ok;
@@ -784,7 +788,8 @@ void DebugCullTest(yyc::CInstance* localPlayer) {
 }
 
 // The shared progress lives in the host's player: level, xp, xpCap (XP for the next level), xpToGain (XP still
-// being counted up), availableSkillPoints. The host sends it twice a second; the guest's player shows it.
+// being counted up), availableSkillPoints. The host sends it twice a second; the guest's player shows it -
+// except the skill points: only the host buys skills (QUESTIONS.md), so the guest always has none to spend.
 constexpr int kProgressSlots[] = {0x603, 0x90E, 0x910, 0x912, 0x8F};  // decompiled/code/var_slots.tsv
 constexpr unsigned kProgressEverySteps = 30;
 
@@ -800,7 +805,7 @@ void SendProgress(yyc::CInstance* localPlayer) {
 void ApplyProgress(yyc::CInstance* localPlayer, const ProgressMsg& msg) {
     static float shownLevel = -1;
     const int id = static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_id));
-    const float values[5] = {msg.level, msg.xp, msg.xpCap, msg.xpToGain, msg.skillPoints};
+    const float values[5] = {msg.level, msg.xp, msg.xpCap, msg.xpToGain, 0};
     for (int i = 0; i < 5; ++i) {
         yyc::RValue current{};
         const bool number = yyc::GetVar(id, kProgressSlots[i], &current) &&
