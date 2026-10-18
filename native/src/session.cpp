@@ -42,6 +42,7 @@ constexpr double kRespawnY = 672;
 constexpr double kRespawnInvulSteps = 120;  // ~2 s
 constexpr uint32_t kScriptToolSelected = 0x007047B0;  // ToolSelected(): the item in the player's hand
 constexpr uint32_t kScriptRestartGame = 0x004A5620;  // RestartGame(): what game over uses to reach the menu
+constexpr unsigned kGuestGiveUpSteps = 300;          // ~5 s without the host: the guest goes back to the menu
 constexpr uint32_t kScriptIsMenuOpen = 0x00835040;
 constexpr int kObjPlayer = 22;
 constexpr int kParMenu = 238;
@@ -71,6 +72,8 @@ using session::Role;
 Role g_role = Role::kNone;
 bool g_playedWorld = false;  // this session has been in a world (back in the menu = the session is over)
 unsigned g_steps = 0;
+unsigned g_offlineSteps = 0;
+bool g_leaving = false;  // guest: on the way back to the main menu
 bool g_wasConnected = false;
 bool g_haveRemote = false;
 PlayerStateMsg g_remote{};
@@ -116,6 +119,16 @@ PlayerStateMsg CaptureState(yyc::CInstance* player) {
     return s;
 }
 
+// Guest: the session is over (the host left or is gone); back to the main menu, where it is reset.
+void GuestGoToMenu(yyc::CInstance* localPlayer, const char* why) {
+    if (g_leaving) return;
+    g_leaving = true;
+    Log("session: %s; back to the main menu", why);
+    yyc::RValue result{};
+    yyc::At<yyc::ScriptFn>(kScriptRestartGame)(localPlayer, localPlayer, &result, 0, nullptr);
+    yyc::Free(&result);
+}
+
 void HandleMessages(yyc::CInstance* localPlayer) {
     std::vector<net::Message> inbox;
     net::Drain(inbox);
@@ -132,10 +145,7 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             continue;
         }
         if (message.type == kBye && g_role == Role::kGuest) {
-            Log("session: the host left; back to the main menu");
-            yyc::RValue result{};
-            yyc::At<yyc::ScriptFn>(kScriptRestartGame)(localPlayer, localPlayer, &result, 0, nullptr);
-            yyc::Free(&result);
+            GuestGoToMenu(localPlayer, "the host left");
             return;  // the room is going away; the rest does not matter any more
         }
         if (message.type == kHello && message.payload.size() == sizeof(HelloMsg)) {
@@ -247,8 +257,12 @@ void Tick(yyc::CInstance* localPlayer) {
     ++g_steps;
     if (!connected) {
         HandleMessages(localPlayer);  // what arrived before the link went, e.g. the host saying goodbye
+        if (g_role == Role::kGuest && ++g_offlineSteps == kGuestGiveUpSteps) {
+            GuestGoToMenu(localPlayer, "the host is gone");
+        }
         return;
     }
+    g_offlineSteps = 0;
 
     sync::Tick(localPlayer);
     storage::DebugTick(localPlayer);
@@ -297,6 +311,8 @@ void Leave() {
     net::Stop();
     g_role = Role::kNone;
     g_playedWorld = false;
+    g_leaving = false;
+    g_offlineSteps = 0;
     g_wasConnected = false;
     g_haveRemote = false;
     character::Reset();
