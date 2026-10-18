@@ -22,11 +22,12 @@ enum MessageType : uint8_t {
     kSpawn = 10,           // host -> guest
     kDestroy = 11,         // host -> guest
     kHit = 12,             // guest -> host
-    kXp = 13,              // host -> guest
+    kXp = 13,              // guest -> host: XP the guest earned goes to the shared progress (the host's)
     kGuestDestroyed = 14,  // guest -> host
     kGuestSpawn = 15,      // guest -> host: something the guest built/placed (id = the guest's instance)
     kGuestSpawnAck = 16,   // host -> guest: id = the host's instance, item = the guest's instance
     kObjectHp = 17,        // host -> guest: health of a world object after a hit (HpMsg)
+    kProgress = 19,        // host -> guest: the shared level/XP/skill points (ProgressMsg)
     kCensus = 18,          // host -> guest (testing aid): write down your world objects now, as I just did
 };
 constexpr int kSlotHp = 0x573;
@@ -57,6 +58,10 @@ constexpr int32_t kOwnerGuest = 2;
 struct XpMsg {
     float amount;
 };
+
+struct ProgressMsg {
+    float level, xp, xpCap, xpToGain, skillPoints;
+};
 #pragma pack(pop)
 
 // Parents of the objects that make up the world (decompiled/data/objects.tsv).
@@ -79,6 +84,7 @@ constexpr int kNoOne = -4;
 constexpr uint32_t kScriptResourceSpawn = 0x00749E80;
 constexpr uint32_t kScriptResourceSpawnSingle = 0x00750710;
 constexpr uint32_t kScriptGainXp = 0x00730600;
+constexpr uint32_t kSkillStep = 0x00E39DF0;  // objSkill Step_0: buying a skill
 constexpr uint32_t kScriptHandleCrafting = 0x004AB790;  // a structure works on its craft; DropItem when done
 constexpr uint32_t kEventUser = 0x016F2D00;  // event_user(n): (self, other, n)
 
@@ -100,6 +106,7 @@ yyc::ScriptFn g_origResourceSpawn = nullptr;
 yyc::ScriptFn g_origResourceSpawnSingle = nullptr;
 yyc::ScriptFn g_origGainXp = nullptr;
 yyc::ScriptFn g_origHandleCrafting = nullptr;
+yyc::EventFn g_origSkillStep = nullptr;
 EventUserFn g_origEventUser = nullptr;
 yyc::BuiltinFn g_origCreate = nullptr;
 using DestroyFn = void(__cdecl*)(yyc::CInstance* self, yyc::CInstance* other, int id, int executeEvent);
@@ -383,13 +390,27 @@ void CollectCrafted(yyc::CInstance* localPlayer) {
     if (collected > 0) Log("sync: %zu crafted items straight into the inventory", collected);
 }
 
-// XP earned while the puppet acts belongs to the guest.
+// Level and XP are shared and kept by the host (QUESTIONS.md). Host: XP earned while the puppet acts goes to
+// the host's own player. Guest: XP is not added here but sent to the host; the shared progress comes back
+// as kProgress.
 yyc::RValue* __cdecl GainXpHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                 yyc::RValue** args) {
-    if (!IsHost() || !puppet::IsActing() || argc < 1) return g_origGainXp(self, other, result, argc, args);
-    const XpMsg msg{static_cast<float>(yyc::ToReal(*args[0]))};
-    net::Send(kXp, &msg, sizeof(msg));
-    return result;
+    if (argc >= 1 && IsGuest() && Connected() && g_applyingRemote == 0) {
+        const XpMsg msg{static_cast<float>(yyc::ToReal(*args[0]))};
+        net::Send(kXp, &msg, sizeof(msg));
+        return result;
+    }
+    if (!IsHost() || !puppet::IsActing()) return g_origGainXp(self, other, result, argc, args);
+    const int depth = puppet::PauseActing();
+    yyc::RValue* r = g_origGainXp(self, other, result, argc, args);
+    puppet::ResumeActing(depth);
+    return r;
+}
+
+// Only the host buys skills (QUESTIONS.md): on the guest the skill tree's nodes don't react.
+void __cdecl SkillStepHook(yyc::CInstance* self, yyc::CInstance* other) {
+    if (IsGuest() && Connected()) return;
+    g_origSkillStep(self, other);
 }
 
 // event_user(0) with the player as `other` is also how drops get collected, so only tool use counts as a hit.
@@ -624,8 +645,9 @@ void ApplyGuestDestroyed(yyc::CInstance* self, const ObjectMsg& msg) {
     }
 }
 
+// Host: XP the guest earned, added to the shared progress.
 void ApplyXp(yyc::CInstance* localPlayer, const XpMsg& msg) {
-    Log("sync: +%.1f XP from the host", msg.amount);
+    Log("sync: +%.1f XP from the guest", msg.amount);
     yyc::RValue amount = yyc::Real(msg.amount);
     yyc::RValue* args[1] = {&amount};
     yyc::RValue result{};
@@ -643,6 +665,7 @@ bool InstallHooks(bool (*isHost)(), bool (*isGuest)()) {
               &g_origResourceSpawnSingle) && ok;
     ok = Hook(kScriptGainXp, reinterpret_cast<void*>(&GainXpHook), &g_origGainXp) && ok;
     ok = Hook(kScriptHandleCrafting, reinterpret_cast<void*>(&HandleCraftingHook), &g_origHandleCrafting) && ok;
+    ok = Hook(kSkillStep, reinterpret_cast<void*>(&SkillStepHook), &g_origSkillStep) && ok;
     ok = Hook(kEventUser, reinterpret_cast<void*>(&EventUserHook), &g_origEventUser) && ok;
     ok = Hook(kResourceCollect, reinterpret_cast<void*>(&CollectHook), &g_origCollect) && ok;
     ok = Hook(kInstanceDestroy, reinterpret_cast<void*>(&DestroyHook), &g_origDestroy) && ok;
@@ -760,6 +783,39 @@ void DebugCullTest(yyc::CInstance* localPlayer) {
     }
 }
 
+// The shared progress lives in the host's player: level, xp, xpCap (XP for the next level), xpToGain (XP still
+// being counted up), availableSkillPoints. The host sends it twice a second; the guest's player shows it.
+constexpr int kProgressSlots[] = {0x603, 0x90E, 0x910, 0x912, 0x8F};  // decompiled/code/var_slots.tsv
+constexpr unsigned kProgressEverySteps = 30;
+
+void SendProgress(yyc::CInstance* localPlayer) {
+    if (g_steps % kProgressEverySteps != 0) return;
+    const int id = static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_id));
+    float values[5] = {};
+    for (int i = 0; i < 5; ++i) values[i] = ReadVar(id, kProgressSlots[i]);
+    const ProgressMsg msg{values[0], values[1], values[2], values[3], values[4]};
+    net::Send(kProgress, &msg, sizeof(msg));
+}
+
+void ApplyProgress(yyc::CInstance* localPlayer, const ProgressMsg& msg) {
+    static float shownLevel = -1;
+    const int id = static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_id));
+    const float values[5] = {msg.level, msg.xp, msg.xpCap, msg.xpToGain, msg.skillPoints};
+    for (int i = 0; i < 5; ++i) {
+        yyc::RValue current{};
+        const bool number = yyc::GetVar(id, kProgressSlots[i], &current) &&
+                            (current.kind & yyc::kKindMask) == yyc::kReal;
+        yyc::Free(&current);
+        if (!number) continue;
+        yyc::RValue value = yyc::Real(values[i]);
+        yyc::SetVar(id, kProgressSlots[i], &value);
+    }
+    if (msg.level != shownLevel) {
+        Log("sync: shared progress: level %.0f, xp %.0f/%.0f", msg.level, msg.xp, msg.xpCap);
+        shownLevel = msg.level;
+    }
+}
+
 // Testing aid: COOP_DEBUG_CRAFTDROP=<item> on the guest makes a drop of that item next to it ~5 s in, the way
 // a finished craft does (inside the crafting flag), to check that it lands in the inventory.
 void DebugCraftDrop(yyc::CInstance* localPlayer) {
@@ -838,6 +894,7 @@ void Tick(yyc::CInstance* localPlayer) {
     DebugCullTest(localPlayer);
     if (!g_builtinsHooked) HookBuiltins();
     if (IsHost()) FlushSpawns(localPlayer);
+    if (IsHost()) SendProgress(localPlayer);
     if (IsGuest()) RetryDestroys(localPlayer, true);
     if (IsGuest()) CollectCrafted(localPlayer);
     DebugCraftDrop(localPlayer);
@@ -966,8 +1023,15 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
                 WriteCensus(localPlayer, census);
             }
             return true;
+        case kProgress:
+            if (size == sizeof(ProgressMsg) && IsGuest()) {
+                ProgressMsg msg{};
+                memcpy(&msg, message.payload.data(), sizeof(msg));
+                ApplyProgress(localPlayer, msg);
+            }
+            return true;
         case kXp:
-            if (size == sizeof(XpMsg) && IsGuest()) {
+            if (size == sizeof(XpMsg) && IsHost()) {
                 XpMsg msg{};
                 memcpy(&msg, message.payload.data(), sizeof(msg));
                 ApplyXp(localPlayer, msg);

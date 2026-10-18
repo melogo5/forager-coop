@@ -26,6 +26,9 @@ yyc::CInstance* Instance();
 void BeginActing();
 void EndActing();
 bool IsActing();
+// Lets something run as the local player in the middle of acting; returns what ResumeActing needs.
+int PauseActing();
+void ResumeActing(int depth);
 
 // Moves the puppet toward `target`, creating it next to the local player if needed.
 void Update(yyc::CInstance* localPlayer, const State& target);

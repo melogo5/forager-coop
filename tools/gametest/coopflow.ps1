@@ -1,12 +1,13 @@
 # Test helper for the native coop: starts a host and a guest through the COOP menu and waits until the
 # guest is in the host's world. Prints HOST=<pid> GUEST=<pid>.
-# Usage: coopflow.ps1 [-HostSlotRow 1] [-HostEnv @{COOP_DEBUG_ENEMY='26'}] [-GodMode]
+# Usage: coopflow.ps1 [-HostSlotRow 1 | -NewWorld] [-HostEnv @{COOP_DEBUG_ENEMY='26'}] [-GodMode]
 param(
   [int]$HostSlotRow = 1,          # row in the save list (1 = top, the most recently played)
   [hashtable]$HostEnv = @{},
   [hashtable]$GuestEnv = @{},
   [string]$GuestName = '',        # typed into the COOP screen's NAME field before joining
-  [switch]$GodMode
+  [switch]$GodMode,
+  [switch]$NewWorld               # the host starts a new Classic world instead of a save
 )
 $ErrorActionPreference = 'Stop'
 $exe = 'Z:\SteamLibrary\steamapps\common\Forager\Forager.exe'
@@ -44,7 +45,16 @@ $hostPid = Launch $HostEnv
 OpenCoop $hostPid
 & $ctl -GamePid $hostPid -Click '993,114' -HoldMs 150 | Out-Null   # CREATE
 Start-Sleep 3
-Click $hostPid ("1000,{0}" -f (38 + 100 * $HostSlotRow))
+if ($NewWorld) {
+  # The "+" button sits under the saves (100 px per save row); then the Classic mode and its PLAY button.
+  $saves = @(Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Forager') -Directory -Filter 'saveData*' |
+             Where-Object { $_.Name -ne 'saveData99' }).Count
+  Click $hostPid ("640,{0}" -f (140 + 100 * $saves)); Start-Sleep 3
+  Click $hostPid '165,370'; Start-Sleep 3
+  Click $hostPid '650,575'
+} else {
+  Click $hostPid ("1000,{0}" -f (38 + 100 * $HostSlotRow))
+}
 if (-not (WaitLog $hostPid 'session: hosting' 10)) { throw 'host did not start hosting' }
 
 $guestPid = Launch $GuestEnv

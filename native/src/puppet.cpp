@@ -200,6 +200,18 @@ void EndActing() {
 
 bool IsActing() { return g_actorId != 0 && g_actorId == g_puppetId; }
 
+int PauseActing() {
+    const int depth = g_actingDepth;
+    g_actingDepth = 0;
+    g_actorId = 0;
+    return depth;
+}
+
+void ResumeActing(int depth) {
+    g_actingDepth = depth;
+    if (depth > 0 && Instance() != nullptr) g_actorId = g_puppetId;
+}
+
 namespace {
 
 // The puppet draws the tool in its own toolbar (Draw_0 -> ToolSelected() with PlayerFind() = the puppet). It
