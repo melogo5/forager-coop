@@ -79,6 +79,7 @@ constexpr int kNoOne = -4;
 constexpr uint32_t kScriptResourceSpawn = 0x00749E80;
 constexpr uint32_t kScriptResourceSpawnSingle = 0x00750710;
 constexpr uint32_t kScriptGainXp = 0x00730600;
+constexpr uint32_t kScriptHandleCrafting = 0x004AB790;  // a structure works on its craft; DropItem when done
 constexpr uint32_t kEventUser = 0x016F2D00;  // event_user(n): (self, other, n)
 
 using EventUserFn = void(__cdecl*)(yyc::CInstance* self, yyc::CInstance* other, int n);
@@ -98,6 +99,7 @@ std::unordered_set<int> g_destroyedOnHost;  // guest: host ids reported destroye
 yyc::ScriptFn g_origResourceSpawn = nullptr;
 yyc::ScriptFn g_origResourceSpawnSingle = nullptr;
 yyc::ScriptFn g_origGainXp = nullptr;
+yyc::ScriptFn g_origHandleCrafting = nullptr;
 EventUserFn g_origEventUser = nullptr;
 yyc::BuiltinFn g_origCreate = nullptr;
 using DestroyFn = void(__cdecl*)(yyc::CInstance* self, yyc::CInstance* other, int id, int executeEvent);
@@ -196,6 +198,14 @@ std::unordered_set<int> g_hostOwnedDrops;   // guest: replicas of drops the host
 // (DropItem sets a drop's `item` right after instance_create_depth returns).
 std::vector<int> g_pendingSpawns;
 
+// Crafting: what a structure makes goes straight into the inventory of whoever crafted it (QUESTIONS.md), not
+// onto the ground. The host gets all its own drops at once anyway (FlushSpawns); the guest crafts on its own
+// copy of the structure, and its crafted drops are collected here at its next step (DropItem sets `item`
+// after the drop is created).
+int g_crafting = 0;               // inside HandleCrafting
+std::vector<int> g_craftedDrops;  // guest
+std::unordered_set<int> g_localDrops;  // guest: crafted here, the host never knew them - their end is no news
+
 void DestroySilently(yyc::CInstance* self, int id);
 
 void FlushSpawns(yyc::CInstance* self) {
@@ -260,7 +270,13 @@ void __cdecl CreateHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstanc
     const int id = static_cast<int>(yyc::ToReal(*result));
     yyc::CInstance* created = yyc::FindInstance(id);
     if (created == nullptr) return;
-    if (!IsSynced(self, static_cast<int>(yyc::GetBuiltinReal(created, yyc::va::YYVar_object_index)))) return;
+    const int object = static_cast<int>(yyc::GetBuiltinReal(created, yyc::va::YYVar_object_index));
+    if (!IsSynced(self, object)) return;
+    if (IsGuest() && g_crafting > 0 && IsDrop(self, object)) {
+        g_craftedDrops.push_back(id);  // ours: collected at the next step, never reported
+        g_localDrops.insert(id);
+        return;
+    }
     if (IsHost()) {
         g_pendingSpawns.push_back(id);
         if (puppet::IsActing()) g_guestDrops.insert(id);
@@ -300,6 +316,7 @@ void __cdecl DestroyHook(yyc::CInstance* self, yyc::CInstance* other, int id, in
             Send(kDestroy, info, info.id);
         }
     } else if (IsGuest()) {
+        if (g_localDrops.erase(info.id) > 0) return;
         const auto host = g_localToHost.find(info.id);
         Send(kGuestDestroyed, info, host != g_localToHost.end() ? host->second : -1);
         if (host != g_localToHost.end()) {
@@ -342,6 +359,28 @@ yyc::RValue* __cdecl ResourceSpawnSingleHook(yyc::CInstance* self, yyc::CInstanc
                                              int argc, yyc::RValue** args) {
     if (IsGuest()) return SpawnedNothing(result);
     return g_origResourceSpawnSingle(self, other, result, argc, args);
+}
+
+yyc::RValue* __cdecl HandleCraftingHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
+                                        yyc::RValue** args) {
+    ++g_crafting;
+    yyc::RValue* r = g_origHandleCrafting(self, other, result, argc, args);
+    --g_crafting;
+    return r;
+}
+
+// Guest: crafted drops into the inventory.
+void CollectCrafted(yyc::CInstance* localPlayer) {
+    if (g_craftedDrops.empty()) return;
+    size_t collected = 0;
+    for (const int id : g_craftedDrops) {
+        if (yyc::CInstance* drop = yyc::FindInstance(id)) {
+            CollectNow(drop, localPlayer);
+            ++collected;
+        }
+    }
+    g_craftedDrops.clear();
+    if (collected > 0) Log("sync: %zu crafted items straight into the inventory", collected);
 }
 
 // XP earned while the puppet acts belongs to the guest.
@@ -603,6 +642,7 @@ bool InstallHooks(bool (*isHost)(), bool (*isGuest)()) {
     ok = Hook(kScriptResourceSpawnSingle, reinterpret_cast<void*>(&ResourceSpawnSingleHook),
               &g_origResourceSpawnSingle) && ok;
     ok = Hook(kScriptGainXp, reinterpret_cast<void*>(&GainXpHook), &g_origGainXp) && ok;
+    ok = Hook(kScriptHandleCrafting, reinterpret_cast<void*>(&HandleCraftingHook), &g_origHandleCrafting) && ok;
     ok = Hook(kEventUser, reinterpret_cast<void*>(&EventUserHook), &g_origEventUser) && ok;
     ok = Hook(kResourceCollect, reinterpret_cast<void*>(&CollectHook), &g_origCollect) && ok;
     ok = Hook(kInstanceDestroy, reinterpret_cast<void*>(&DestroyHook), &g_origDestroy) && ok;
@@ -720,6 +760,25 @@ void DebugCullTest(yyc::CInstance* localPlayer) {
     }
 }
 
+// Testing aid: COOP_DEBUG_CRAFTDROP=<item> on the guest makes a drop of that item next to it ~5 s in, the way
+// a finished craft does (inside the crafting flag), to check that it lands in the inventory.
+void DebugCraftDrop(yyc::CInstance* localPlayer) {
+    static int item = [] {
+        char value[16] = {};
+        return GetEnvironmentVariableA("COOP_DEBUG_CRAFTDROP", value, sizeof(value)) > 0 ? atoi(value) : 0;
+    }();
+    static unsigned steps = 0;
+    if (item <= 0 || !IsGuest() || ++steps != 300) return;
+    const double x = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_x) + 24;
+    const double y = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_y);
+    ++g_crafting;
+    const int id = static_cast<int>(Builtin(localPlayer, "instance_create_depth", {x, y, -y, double(kParResource)}));
+    --g_crafting;
+    yyc::RValue value = yyc::Real(item);
+    yyc::SetVar(id, kSlotItem, &value);
+    Log("sync: debug crafted drop of item %d as %d", item, id);
+}
+
 // Testing aid: COOP_DEBUG_CENSUS=1 on the host makes both sides write their world objects (rocks, trees,
 // structures, bushes; not drops) to coop_census_<pid>_<n>.txt every 30 s, so the lists can be diffed.
 // Only objects near the host's player count: off-screen ones are deactivated, differently on each side.
@@ -780,6 +839,8 @@ void Tick(yyc::CInstance* localPlayer) {
     if (!g_builtinsHooked) HookBuiltins();
     if (IsHost()) FlushSpawns(localPlayer);
     if (IsGuest()) RetryDestroys(localPlayer, true);
+    if (IsGuest()) CollectCrafted(localPlayer);
+    DebugCraftDrop(localPlayer);
     if (++g_steps % kStatsEverySteps == 0) {
         Log("sync: sent spawn %u destroy %u hit %u gone %u | applied spawn %u destroy %u hit %u gone %u",
             g_sent[kSpawn], g_sent[kDestroy], g_sent[kHit], g_sent[kGuestDestroyed], g_applied[kSpawn],
@@ -928,6 +989,8 @@ void Reset() {
     g_hostOwnedDrops.clear();
     g_pendingSpawns.clear();
     g_pendingDestroys.clear();
+    g_craftedDrops.clear();
+    g_localDrops.clear();
     g_afterWake.clear();
 }
 
