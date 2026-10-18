@@ -1,7 +1,6 @@
-// Buying an island: the host runs SpawnLand as usual and tells the guest, which runs the same SpawnLand
-// (same seed) and removes the purchase sign there. A guest's purchase (paid from the guest's coins) is sent
-// to the host, which builds it the same way. Resources on the new island reach the guest through the
-// normal object sync (the guest spawns none of its own).
+// Buying an island (only the host buys - the guest's sale signs are inert): the host runs SpawnLand as usual
+// and tells the guest, which runs the same SpawnLand (same seed) and removes the purchase sign there.
+// Resources on the new island reach the guest through the normal object sync (the guest spawns none).
 #pragma once
 
 #include "net.h"

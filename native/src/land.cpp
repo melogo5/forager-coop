@@ -13,8 +13,7 @@ namespace coop::land {
 
 namespace {
 
-constexpr uint8_t kLand = 50;       // host -> guest: an island was bought (by either player)
-constexpr uint8_t kGuestLand = 51;  // guest -> host: the guest bought the island of this sign; seed unused
+constexpr uint8_t kLand = 50;  // host -> guest: the host bought an island
 constexpr uint32_t kScriptSpawnLand = 0x00763750;  // SpawnLand(x, y, biome): x, y of the sale sign
 constexpr int kObjPurchaseLand = 229;              // the sign standing on an island for sale
 constexpr int kNoOne = -4;
@@ -33,7 +32,10 @@ struct LandMsg {
 };
 #pragma pack(pop)
 
+constexpr uint32_t kPurchaseSignStep = 0x00E1F0F0;  // objPurchaseLand Step_0: buying happens here
+
 yyc::ScriptFn g_origSpawnLand = nullptr;
+yyc::EventFn g_origSignStep = nullptr;
 bool (*g_isHost)() = nullptr;
 bool (*g_isGuest)() = nullptr;
 int g_applying = 0;
@@ -45,18 +47,11 @@ bool CalledFromPurchase() {
 
 double CallReal(yyc::CInstance* self, const char* builtin, std::initializer_list<double> values);
 
-// Host: a purchase is generated from a fresh seed that the guest then reuses. Guest: the purchase (paid with
-// the guest's coins, as the sign does it) is the host's to make; the island arrives back as kLand.
+// Host: a purchase is generated from a fresh seed that the guest then reuses.
 yyc::RValue* __cdecl SpawnLandHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                    yyc::RValue** args) {
-    const bool purchase = g_applying == 0 && argc >= 3 && net::IsConnected() && CalledFromPurchase();
-    if (purchase && g_isGuest != nullptr && g_isGuest()) {
-        const LandMsg msg{yyc::ToReal(*args[0]), yyc::ToReal(*args[1]), yyc::ToReal(*args[2]), 0};
-        net::Send(kGuestLand, &msg, sizeof(msg));
-        Log("land: bought island at (%.0f, %.0f), biome %.0f - asking the host", msg.x, msg.y, msg.biome);
-        return result;
-    }
-    const bool share = purchase && g_isHost != nullptr && g_isHost();
+    const bool share = g_applying == 0 && argc >= 3 && net::IsConnected() && g_isHost != nullptr && g_isHost() &&
+                       CalledFromPurchase();
     if (!share) return g_origSpawnLand(self, other, result, argc, args);
     const LandMsg msg{yyc::ToReal(*args[0]), yyc::ToReal(*args[1]), yyc::ToReal(*args[2]),
                       static_cast<double>(GetTickCount() % 1000000000)};
@@ -110,8 +105,7 @@ void Apply(yyc::CInstance* localPlayer, const LandMsg& msg) {
     Log("land: the peer bought the island at (%.0f, %.0f)", msg.x, msg.y);
 }
 
-// Host: builds the island at (x, y) from a fresh seed and sends it to the guest with that seed. Sale signs
-// exist only while the BUY LAND tab is open, so usually there is none here: SpawnLand runs as the player.
+// Host: builds the island at (x, y) from a fresh seed and sends it to the guest with that seed (testing aid).
 void BuildAndShare(yyc::CInstance* localPlayer, LandMsg msg, const char* buyer) {
     int signId = kNoOne;
     yyc::CInstance* sign = SignAt(localPlayer, msg.x, msg.y, &signId);
@@ -133,11 +127,16 @@ void BuildAndShare(yyc::CInstance* localPlayer, LandMsg msg, const char* buyer) 
 
 }  // namespace
 
+// Only the host buys islands (docs/coop/QUESTIONS.md): on the guest the sale signs don't react.
+void __cdecl SignStepHook(yyc::CInstance* self, yyc::CInstance* other) {
+    if (g_isGuest != nullptr && g_isGuest() && net::IsConnected()) return;
+    g_origSignStep(self, other);
+}
+
 void DebugBuy(yyc::CInstance* localPlayer);
 
-// Testing aid: COOP_DEBUG_BUYLAND=1 buys the island of the nearest sale sign ~7 s into the world (on the guest:
-// asks the host, as a purchase through the sign does); =<seconds> does it that late. Sale signs exist only
-// while the BUY LAND tab of the player menu is open.
+// Testing aid: COOP_DEBUG_BUYLAND=1 (host) buys the island of the nearest sale sign ~7 s into the world;
+// =<seconds> does it that late. Sale signs exist only while the BUY LAND tab of the player menu is open.
 void DebugTick(yyc::CInstance* localPlayer) {
     static const unsigned atStep = [] {
         char value[16] = {};
@@ -146,7 +145,7 @@ void DebugTick(yyc::CInstance* localPlayer) {
         return seconds > 1 ? static_cast<unsigned>(seconds) * 60 : 420u;
     }();
     static unsigned steps = 0;
-    if (atStep == 0 || ++steps != atStep) return;
+    if (atStep == 0 || g_isHost == nullptr || !g_isHost() || ++steps != atStep) return;
     sync::WakeThen(localPlayer, kObjPurchaseLand, [localPlayer] { DebugBuy(localPlayer); });
 }
 
@@ -165,11 +164,6 @@ void DebugBuy(yyc::CInstance* localPlayer) {
     const LandMsg msg{yyc::GetBuiltinReal(sign, yyc::va::YYVar_x), yyc::GetBuiltinReal(sign, yyc::va::YYVar_y),
                       yyc::ToReal(biome), 0};
     yyc::Free(&biome);
-    if (g_isGuest != nullptr && g_isGuest()) {
-        net::Send(kGuestLand, &msg, sizeof(msg));
-        Log("land: debug bought the island at (%.0f, %.0f), biome %.0f - asking the host", msg.x, msg.y, msg.biome);
-        return;
-    }
     BuildAndShare(localPlayer, msg, "debug");
 }
 
@@ -177,23 +171,20 @@ bool InstallHooks(bool (*isHost)(), bool (*isGuest)()) {
     g_isHost = isHost;
     g_isGuest = isGuest;
     const bool ok = MH_CreateHook(yyc::At<void*>(kScriptSpawnLand), reinterpret_cast<void*>(&SpawnLandHook),
-                                  reinterpret_cast<void**>(&g_origSpawnLand)) == MH_OK;
+                                  reinterpret_cast<void**>(&g_origSpawnLand)) == MH_OK &&
+                    MH_CreateHook(yyc::At<void*>(kPurchaseSignStep), reinterpret_cast<void*>(&SignStepHook),
+                                  reinterpret_cast<void**>(&g_origSignStep)) == MH_OK;
     if (!ok) Log("land: hooks failed");
     return ok;
 }
 
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
-    if (message.type != kLand && message.type != kGuestLand) return false;
+    if (message.type != kLand) return false;
     if (message.payload.size() != sizeof(LandMsg)) return true;
     LandMsg msg{};
     memcpy(&msg, message.payload.data(), sizeof(msg));
     // The sale sign may be off-screen, i.e. deactivated: wake the signs up first.
-    if (message.type == kLand) {
-        sync::WakeThen(localPlayer, kObjPurchaseLand, [localPlayer, msg] { Apply(localPlayer, msg); });
-    } else if (g_isHost != nullptr && g_isHost()) {
-        sync::WakeThen(localPlayer, kObjPurchaseLand,
-                       [localPlayer, msg] { BuildAndShare(localPlayer, msg, "the guest"); });
-    }
+    sync::WakeThen(localPlayer, kObjPurchaseLand, [localPlayer, msg] { Apply(localPlayer, msg); });
     return true;
 }
 
