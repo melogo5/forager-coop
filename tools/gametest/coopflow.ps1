@@ -7,7 +7,8 @@ param(
   [hashtable]$GuestEnv = @{},
   [string]$GuestName = '',        # typed into the COOP screen's NAME field before joining
   [switch]$GodMode,
-  [switch]$NewWorld               # the host starts a new Classic world instead of a save
+  [switch]$NewWorld,              # the host starts a new Classic world instead of a save
+  [switch]$Cheats                 # ...with cheats on (the console's /give etc. need them)
 )
 $ErrorActionPreference = 'Stop'
 $exe = 'Z:\SteamLibrary\steamapps\common\Forager\Forager.exe'
@@ -51,6 +52,7 @@ if ($NewWorld) {
              Where-Object { $_.Name -ne 'saveData99' }).Count
   Click $hostPid ("640,{0}" -f (140 + 100 * $saves)); Start-Sleep 3
   Click $hostPid '165,370'; Start-Sleep 3
+  if ($Cheats) { Click $hostPid '640,680'; Start-Sleep 1 }   # ENABLE CHEATS
   Click $hostPid '650,575'
 } else {
   Click $hostPid ("1000,{0}" -f (38 + 100 * $HostSlotRow))

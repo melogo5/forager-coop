@@ -16,6 +16,7 @@
 #include "net.h"
 #include "character.h"
 #include "clock.h"
+#include "coins.h"
 #include "land.h"
 #include "mobs.h"
 #include "puppet.h"
@@ -152,7 +153,7 @@ void HandleMessages(yyc::CInstance* localPlayer) {
         if (sync::Handle(message, localPlayer) || mobs::Handle(message, localPlayer) ||
             storage::Handle(message, localPlayer) || land::Handle(message, localPlayer) ||
             clock::Handle(message, localPlayer) ||
-            unlocks::Handle(message, localPlayer)) {
+            unlocks::Handle(message, localPlayer) || coins::Handle(message, localPlayer)) {
             continue;
         }
         bool guestIntroduced = false;
@@ -291,6 +292,8 @@ void Tick(yyc::CInstance* localPlayer) {
     if (g_role == Role::kHost) mobs::HostTick(localPlayer);
     if (g_role == Role::kHost) clock::HostTick(localPlayer);
     if (g_role == Role::kHost) unlocks::HostTick(localPlayer);
+    if (g_role == Role::kHost) coins::HostTick(localPlayer);
+    if (g_role == Role::kGuest) coins::GuestTick(localPlayer);
     HandleMessages(localPlayer);
     if (g_steps % kSendEverySteps == 0) {
         const PlayerStateMsg state = CaptureState(localPlayer);
@@ -343,6 +346,7 @@ void Leave() {
     mobs::Reset();
     storage::Reset();
     unlocks::Reset();
+    coins::Reset();
     Log(host ? "session: stopped hosting; can create again" : "session: left the host's world; can join again");
 }
 

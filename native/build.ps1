@@ -18,7 +18,7 @@ New-Item -ItemType Directory -Force $out | Out-Null
 $mh = Join-Path $root 'third_party\minhook'
 $sources = @(
     "$root\src\dllmain.cpp", "$root\src\yyc.cpp", "$root\src\log.cpp", "$root\src\trace.cpp", "$root\src\crash.cpp",
-    "$root\src\net.cpp", "$root\src\session.cpp", "$root\src\puppet.cpp", "$root\src\world.cpp", "$root\src\sync.cpp", "$root\src\mobs.cpp", "$root\src\character.cpp", "$root\src\storage.cpp", "$root\src\land.cpp", "$root\src\clock.cpp", "$root\src\unlocks.cpp",
+    "$root\src\net.cpp", "$root\src\session.cpp", "$root\src\puppet.cpp", "$root\src\world.cpp", "$root\src\sync.cpp", "$root\src\mobs.cpp", "$root\src\character.cpp", "$root\src\storage.cpp", "$root\src\land.cpp", "$root\src\clock.cpp", "$root\src\unlocks.cpp", "$root\src\coins.cpp",
     "$root\src\gui.cpp", "$root\src\lan.cpp", "$root\src\menu.cpp",
     "$mh\src\hook.c", "$mh\src\buffer.c", "$mh\src\trampoline.c", "$mh\src\hde\hde32.c"
 ) | ForEach-Object { "`"$_`"" }
