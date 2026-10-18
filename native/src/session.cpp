@@ -20,6 +20,7 @@
 #include "mobs.h"
 #include "puppet.h"
 #include "storage.h"
+#include "unlocks.h"
 #include "sync.h"
 #include "world.h"
 #include "yyc.h"
@@ -135,7 +136,8 @@ void HandleMessages(yyc::CInstance* localPlayer) {
     for (const auto& message : inbox) {
         if (sync::Handle(message, localPlayer) || mobs::Handle(message, localPlayer) ||
             storage::Handle(message, localPlayer) || land::Handle(message, localPlayer) ||
-            clock::Handle(message, localPlayer)) {
+            clock::Handle(message, localPlayer) ||
+            unlocks::Handle(message, localPlayer)) {
             continue;
         }
         bool guestIntroduced = false;
@@ -269,6 +271,7 @@ void Tick(yyc::CInstance* localPlayer) {
     land::DebugTick(localPlayer);
     if (g_role == Role::kHost) mobs::HostTick(localPlayer);
     if (g_role == Role::kHost) clock::HostTick(localPlayer);
+    if (g_role == Role::kHost) unlocks::HostTick(localPlayer);
     HandleMessages(localPlayer);
     if (g_steps % kSendEverySteps == 0) {
         const PlayerStateMsg state = CaptureState(localPlayer);
@@ -320,6 +323,7 @@ void Leave() {
     sync::Reset();
     mobs::Reset();
     storage::Reset();
+    unlocks::Reset();
     Log(host ? "session: stopped hosting; can create again" : "session: left the host's world; can join again");
 }
 
