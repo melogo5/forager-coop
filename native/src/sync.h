@@ -6,6 +6,8 @@
 // The guest runs no world spawning of its own.
 #pragma once
 
+#include <functional>
+
 #include "net.h"
 #include "yyc.h"
 
@@ -24,6 +26,10 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer);
 // Guest: called before the game culls off-screen objects (WorldControl's Begin Step, from the CullObject hook).
 // Destroys from the host that had to wake their object up get applied here, before it is put back to sleep.
 void BeforeCull(yyc::CInstance* self);
+
+// Game thread: wakes every instance of `object` up (off-screen ones are deactivated) and runs `action` next
+// step, right before the game culls again - the only moment the woken instances are active.
+void WakeThen(yyc::CInstance* self, int object, std::function<void()> action);
 
 // Guest: the local replica of a host instance (0 if none), and creating one.
 int ReplicaOf(int hostId);

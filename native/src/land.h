@@ -1,6 +1,7 @@
-// Buying an island: whoever buys it runs SpawnLand as usual and tells the peer, which runs the same
-// SpawnLand and removes the purchase sign there. Resources on the new island reach the guest through
-// the normal object sync (the guest spawns none of its own).
+// Buying an island: the host runs SpawnLand as usual and tells the guest, which runs the same SpawnLand
+// (same seed) and removes the purchase sign there. A guest's purchase (paid from the guest's coins) is sent
+// to the host, which builds it the same way. Resources on the new island reach the guest through the
+// normal object sync (the guest spawns none of its own).
 #pragma once
 
 #include "net.h"
@@ -8,7 +9,7 @@
 
 namespace coop::land {
 
-// Creates the hooks (enabled by the caller). Only the host buys islands; the guest's sale signs are inert.
+// Creates the hooks (enabled by the caller).
 bool InstallHooks(bool (*isHost)(), bool (*isGuest)());
 
 // Game thread, every local player step (testing aid, see land.cpp).

@@ -782,8 +782,20 @@ void Tick(yyc::CInstance* localPlayer) {
     }
 }
 
+std::vector<std::function<void()>> g_afterWake;
+
+void WakeThen(yyc::CInstance* self, int object, std::function<void()> action) {
+    Builtin(self, "instance_activate_object", {double(object)});
+    g_afterWake.push_back(std::move(action));
+}
+
 void BeforeCull(yyc::CInstance* self) {
     if (IsGuest()) RetryDestroys(self, false);
+    if (!g_afterWake.empty()) {
+        std::vector<std::function<void()>> actions;
+        actions.swap(g_afterWake);
+        for (const auto& action : actions) action();
+    }
     if (g_cullTestListing != nullptr) {
         LogCullTestObjects(self, g_cullTestListing);
         g_cullTestListing = nullptr;
