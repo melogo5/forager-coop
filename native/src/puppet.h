@@ -10,6 +10,7 @@ struct State {
     float x, y;
     float imageIndex, xscale, yscale, depth;
     int sprite;
+    int tool;  // item in hand, -4 = none
 };
 
 using LocalStepFn = void (*)(yyc::CInstance* localPlayer);

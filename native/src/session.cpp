@@ -30,7 +30,7 @@ namespace coop {
 
 namespace {
 
-constexpr uint32_t kProtocolVersion = 3;
+constexpr uint32_t kProtocolVersion = 4;  // 4: PlayerStateMsg.tool
 constexpr unsigned kSendEverySteps = 3;       // 60 fps game step -> 20 updates/s
 constexpr unsigned kAnnounceEverySteps = 30;  // refresh the LAN announcement twice a second
 constexpr int kSlotGodMode = 0x54C;           // global.godMode (decompiled/code/var_slots.tsv)
@@ -40,6 +40,7 @@ constexpr int kSlotInvulFrames = 0x5A7;
 constexpr double kRespawnX = 672;  // the starting island: where a new world puts the player (rmGame centre)
 constexpr double kRespawnY = 672;
 constexpr double kRespawnInvulSteps = 120;  // ~2 s
+constexpr uint32_t kScriptToolSelected = 0x007047B0;  // ToolSelected(): the item in the player's hand
 constexpr uint32_t kScriptRestartGame = 0x004A5620;  // RestartGame(): what game over uses to reach the menu
 constexpr uint32_t kScriptIsMenuOpen = 0x00835040;
 constexpr int kObjPlayer = 22;
@@ -61,6 +62,7 @@ struct PlayerStateMsg {
     float x, y;
     float imageIndex, xscale, yscale, depth;
     int32_t sprite;
+    int32_t tool;  // item in hand (ToolSelected()), -4 = none
 };
 #pragma pack(pop)
 
@@ -107,6 +109,10 @@ PlayerStateMsg CaptureState(yyc::CInstance* player) {
     s.yscale = static_cast<float>(yyc::GetBuiltinReal(player, yyc::va::YYVar_image_yscale));
     s.depth = static_cast<float>(yyc::GetBuiltinReal(player, yyc::va::YYVar_depth));
     s.sprite = static_cast<int32_t>(yyc::GetBuiltinReal(player, yyc::va::YYVar_sprite_index));
+    yyc::RValue tool{};
+    yyc::At<yyc::ScriptFn>(kScriptToolSelected)(player, player, &tool, 0, nullptr);
+    s.tool = static_cast<int32_t>(yyc::ToReal(tool));
+    yyc::Free(&tool);
     return s;
 }
 
@@ -256,7 +262,7 @@ void Tick(yyc::CInstance* localPlayer) {
     }
     if (g_haveRemote) {
         const puppet::State target{g_remote.x,      g_remote.y,     g_remote.imageIndex, g_remote.xscale,
-                                   g_remote.yscale, g_remote.depth, g_remote.sprite};
+                                   g_remote.yscale, g_remote.depth, g_remote.sprite,    g_remote.tool};
         puppet::Update(localPlayer, target);
     }
 }

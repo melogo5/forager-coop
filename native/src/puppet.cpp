@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <cmath>
+#include <initializer_list>
 #include <cstring>
 
 #include "MinHook.h"
@@ -199,6 +200,45 @@ void EndActing() {
 
 bool IsActing() { return g_actorId != 0 && g_actorId == g_puppetId; }
 
+namespace {
+
+// The puppet draws the tool in its own toolbar (Draw_0 -> ToolSelected() with PlayerFind() = the puppet). It
+// gets a list of its own holding just the peer's tool, so the local player's toolbar is never touched.
+constexpr int kSlotToolbar = 0x897;  // decompiled/code/var_slots.tsv
+constexpr int kSlotToolSelected = 0x89C;
+int g_toolbarOf = 0;  // the puppet instance the list below belongs to
+double g_toolbarList = -1;
+int g_shownTool = -5;
+
+double CallReal(yyc::CInstance* self, const char* builtin, std::initializer_list<double> values) {
+    yyc::RValue args[4] = {};
+    int argc = 0;
+    for (const double v : values) args[argc++] = yyc::Real(v);
+    yyc::RValue result{};
+    yyc::CallBuiltin(builtin, self, argc, args, &result);
+    const double value = yyc::ToReal(result);
+    yyc::Free(&result);
+    return value;
+}
+
+void ShowTool(yyc::CInstance* localPlayer, int tool) {
+    if (g_toolbarOf != g_puppetId) {
+        g_toolbarList = CallReal(localPlayer, "ds_list_create", {});
+        g_toolbarOf = g_puppetId;
+        g_shownTool = -5;
+        yyc::RValue list = yyc::Real(g_toolbarList);
+        yyc::SetVar(g_puppetId, kSlotToolbar, &list);
+    }
+    if (tool == g_shownTool) return;
+    g_shownTool = tool;
+    CallReal(localPlayer, "ds_list_clear", {g_toolbarList});
+    if (tool >= 0) CallReal(localPlayer, "ds_list_add", {g_toolbarList, double(tool)});
+    yyc::RValue selected = yyc::Real(0);
+    yyc::SetVar(g_puppetId, kSlotToolSelected, &selected);
+}
+
+}  // namespace
+
 void Update(yyc::CInstance* localPlayer, const State& target) {
     if (g_puppetId != 0 && yyc::FindInstance(g_puppetId) != g_puppet) {
         g_puppet = nullptr;  // destroyed by the game (room change)
@@ -220,6 +260,7 @@ void Update(yyc::CInstance* localPlayer, const State& target) {
     yyc::SetBuiltinReal(g_puppet, yyc::va::YYVar_image_xscale, target.xscale);
     yyc::SetBuiltinReal(g_puppet, yyc::va::YYVar_image_yscale, target.yscale);
     yyc::SetBuiltinReal(g_puppet, yyc::va::YYVar_depth, target.depth);
+    ShowTool(localPlayer, target.tool);
 }
 
 void Destroy(yyc::CInstance* localPlayer) {
