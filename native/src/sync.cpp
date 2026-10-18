@@ -542,9 +542,14 @@ yyc::CInstance* ResolveOnHost(yyc::CInstance* self, const ObjectMsg& msg) {
     return FindAt(self, msg.object, msg.x, msg.y);
 }
 
-void ApplyHit(yyc::CInstance* self, const ObjectMsg& msg) {
+// `woken`: the second try, after waking up the object's kind (the host may have culled what the guest hit).
+void ApplyHit(yyc::CInstance* self, const ObjectMsg& msg, bool woken = false) {
     yyc::CInstance* target = ResolveOnHost(self, msg);
     yyc::CInstance* guest = puppet::Instance();
+    if (target == nullptr && guest != nullptr && !woken) {
+        WakeThen(self, msg.object, [self, msg] { ApplyHit(self, msg, true); });
+        return;
+    }
     Log("sync: guest hit object %d at (%.0f, %.0f): %s", msg.object, msg.x, msg.y,
         target == nullptr ? "not found" : guest == nullptr ? "no puppet" : "applied");
     if (target == nullptr || guest == nullptr) return;
