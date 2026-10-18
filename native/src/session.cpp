@@ -15,6 +15,7 @@
 #include "log.h"
 #include "net.h"
 #include "character.h"
+#include "clock.h"
 #include "land.h"
 #include "mobs.h"
 #include "puppet.h"
@@ -111,7 +112,8 @@ void HandleMessages(yyc::CInstance* localPlayer) {
     net::Drain(inbox);
     for (const auto& message : inbox) {
         if (sync::Handle(message, localPlayer) || mobs::Handle(message, localPlayer) ||
-            storage::Handle(message, localPlayer) || land::Handle(message, localPlayer)) {
+            storage::Handle(message, localPlayer) || land::Handle(message, localPlayer) ||
+            clock::Handle(message, localPlayer)) {
             continue;
         }
         bool guestIntroduced = false;
@@ -230,6 +232,7 @@ void Tick(yyc::CInstance* localPlayer) {
     storage::DebugTick(localPlayer);
     land::DebugTick(localPlayer);
     if (g_role == Role::kHost) mobs::HostTick(localPlayer);
+    if (g_role == Role::kHost) clock::HostTick(localPlayer);
     HandleMessages(localPlayer);
     if (g_steps % kSendEverySteps == 0) {
         const PlayerStateMsg state = CaptureState(localPlayer);
