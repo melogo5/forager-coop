@@ -16,4 +16,7 @@ void DebugTick(yyc::CInstance* localPlayer);
 // Game thread: applies a storage message; false if `message` is not one.
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer);
 
+// Forgets which chests the last peer had open.
+void Reset();
+
 }  // namespace coop::storage

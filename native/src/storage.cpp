@@ -254,4 +254,6 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     return true;
 }
 
+void Reset() { g_lockedByPeer.clear(); }
+
 }  // namespace coop::storage

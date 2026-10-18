@@ -31,4 +31,7 @@ void GuestTick(yyc::CInstance* localPlayer);
 // Sets *guestIntroduced after answering an introduction: that is the moment to send the world.
 bool HostHandle(const net::Message& message, yyc::CInstance* localPlayer, bool* guestIntroduced);
 
+// Guest: forgets the last session (stored character, swap done), for joining again.
+void Reset();
+
 }  // namespace coop::character

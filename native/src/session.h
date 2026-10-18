@@ -19,6 +19,8 @@ enum class Role { kNone, kHost, kGuest };
 void Host();
 // Guest: connect to a host; its world arrives in world::kGuestSlot.
 void Join(const std::string& address, uint16_t port);
+// Guest back in the main menu: disconnects and forgets the session, so Join works again.
+void Leave();
 
 Role CurrentRole();
 bool IsConnected();

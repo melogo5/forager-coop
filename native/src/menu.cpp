@@ -72,7 +72,6 @@ constexpr size_t kMaxNameLength = 16;
 std::string g_status;
 std::vector<lan::Server> g_servers;
 bool g_loadingWorld = false;
-bool g_guestSlotCleaned = false;
 
 bool IsCoopButton(yyc::CInstance* self) {
     return g_coopButtonId != 0 && yyc::GetBuiltinReal(self, yyc::va::YYVar_id) == g_coopButtonId;
@@ -314,11 +313,13 @@ void Step(yyc::CInstance* control) {
     gui::Begin(control);
     if (session::CurrentRole() == session::Role::kHost) lan::SetAnnouncement(false, "", 1);  // back in the menu
     EnsureCoopButton(control);
-    // A guest back in the main menu after playing: its working copy of the host's world (slot 99) goes,
-    // so it never sits in the player's own save list.
-    if (session::CurrentRole() == session::Role::kGuest && g_loadingWorld && !g_guestSlotCleaned) {
+    // A guest back in the main menu after playing: its working copy of the host's world (slot 99) goes, so it
+    // never sits in the player's own save list, and the session ends, so the guest can join again.
+    if (session::CurrentRole() == session::Role::kGuest && g_loadingWorld) {
         world::RemoveGuestSaveSlot();
-        g_guestSlotCleaned = true;
+        session::Leave();
+        g_loadingWorld = false;
+        g_status.clear();
     }
     if (session::CurrentRole() == session::Role::kGuest && !g_loadingWorld) {
         if (world::GuestWorldReady() && character::GuestReady()) {

@@ -223,6 +223,8 @@ void Tick(yyc::CInstance* localPlayer) {
         Log("session: peer gone");
         g_haveRemote = false;
         puppet::Destroy(localPlayer);
+        sync::Reset();  // a guest coming back starts over: new replicas, new drops
+        storage::Reset();
     }
     g_wasConnected = connected;
     ++g_steps;
@@ -266,6 +268,20 @@ void Join(const std::string& address, uint16_t port) {
     });
     net::SetConnectHandler(&character::GuestOnConnect);
     net::StartJoin(address, port);
+}
+
+void Leave() {
+    if (g_role != Role::kGuest) return;
+    net::Stop();
+    g_role = Role::kNone;
+    g_wasConnected = false;
+    g_haveRemote = false;
+    character::Reset();
+    world::Reset();
+    sync::Reset();
+    mobs::Reset();
+    storage::Reset();
+    Log("session: left the host's world; can join again");
 }
 
 Role CurrentRole() { return g_role; }

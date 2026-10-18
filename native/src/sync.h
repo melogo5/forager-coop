@@ -51,4 +51,7 @@ int HostIdOf(int localId);
 // 0 if there is none.
 int Resolve(yyc::CInstance* self, int hostId, int object, double x, double y);
 
+// Forgets everything about the last peer (replica ids, pending work), for the next session.
+void Reset();
+
 }  // namespace coop::sync

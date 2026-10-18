@@ -3,6 +3,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
+#include <atomic>
 #include <mutex>
 #include <thread>
 
@@ -20,6 +21,7 @@ constexpr size_t kHeaderSize = 4;              // u32 little-endian body size
 
 std::mutex g_lock;  // guards g_socket (for Send) and g_inbox
 SOCKET g_socket = INVALID_SOCKET;
+std::atomic<unsigned> g_joinGeneration{0};  // Stop() bumps it: older join threads give up
 std::vector<Message> g_inbox;
 bool g_started = false;
 ReceiveHandler g_handler = nullptr;  // set before Start*, read only by the receive thread
@@ -107,8 +109,8 @@ void HostThread(uint16_t port) {
     }
 }
 
-void JoinThread(std::string host, uint16_t port) {
-    for (;;) {
+void JoinThread(std::string host, uint16_t port, unsigned generation) {
+    while (g_joinGeneration == generation) {
         addrinfo hints{};
         hints.ai_family = AF_INET;
         hints.ai_socktype = SOCK_STREAM;
@@ -127,6 +129,10 @@ void JoinThread(std::string host, uint16_t port) {
             Sleep(kRetryMs);
             continue;
         }
+        if (g_joinGeneration != generation) {
+            closesocket(s);
+            break;
+        }
         Log("net: connected to %s:%u", host.c_str(), port);
         SetConnected(s);
         ReceiveLoop(s);
@@ -135,7 +141,7 @@ void JoinThread(std::string host, uint16_t port) {
 }
 
 bool Startup() {
-    if (g_started) return false;
+    if (g_started) return true;
     WSADATA data;
     if (WSAStartup(MAKEWORD(2, 2), &data) != 0) {
         Log("net: WSAStartup failed");
@@ -152,7 +158,14 @@ void StartHost(uint16_t port) {
 }
 
 void StartJoin(const std::string& host, uint16_t port) {
-    if (Startup()) std::thread(JoinThread, host, port).detach();
+    if (Startup()) std::thread(JoinThread, host, port, g_joinGeneration.load()).detach();
+}
+
+void Stop() {
+    ++g_joinGeneration;
+    std::lock_guard<std::mutex> guard(g_lock);
+    if (g_socket != INVALID_SOCKET) shutdown(g_socket, SD_BOTH);  // the receive loop then closes it
+    g_inbox.clear();
 }
 
 bool IsConnected() {

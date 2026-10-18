@@ -276,4 +276,9 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     return true;
 }
 
+void Reset() {
+    g_targets.clear();
+    g_received = 0;
+}
+
 }  // namespace coop::mobs

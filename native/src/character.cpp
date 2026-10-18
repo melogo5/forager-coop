@@ -224,4 +224,11 @@ bool HostHandle(const net::Message& message, yyc::CInstance* localPlayer, bool* 
     return false;
 }
 
+void Reset() {
+    g_answered = false;
+    g_hasStored = false;
+    g_swapDone = false;
+    g_settle = 0;
+}
+
 }  // namespace coop::character

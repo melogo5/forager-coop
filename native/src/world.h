@@ -31,4 +31,7 @@ void RemoveGuestSaveSlot();
 // Also clears a temporary slot left behind by a crash.
 bool InstallHooks(bool (*isGuest)());
 
+// Guest: forgets the last received world, for joining again.
+void Reset();
+
 }  // namespace coop::world

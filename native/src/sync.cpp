@@ -903,4 +903,18 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     }
 }
 
+void Reset() {
+    g_hostToLocal.clear();
+    g_localToHost.clear();
+    g_hitByGuest.clear();
+    g_destroyedOnHost.clear();
+    g_suppressing = 0;
+    g_suppressed.clear();
+    g_guestDrops.clear();
+    g_hostOwnedDrops.clear();
+    g_pendingSpawns.clear();
+    g_pendingDestroys.clear();
+    g_afterWake.clear();
+}
+
 }  // namespace coop::sync

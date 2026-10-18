@@ -17,4 +17,7 @@ void HostTick(yyc::CInstance* localPlayer);
 // Game thread: applies a mobs message; false if `message` is not one.
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer);
 
+// Forgets the last peer's enemies, for the next session.
+void Reset();
+
 }  // namespace coop::mobs

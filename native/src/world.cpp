@@ -250,4 +250,12 @@ bool HandleMessage(const net::Message& message) {
     }
 }
 
+void Reset() {
+    g_file.close();
+    g_fileRemaining = 0;
+    g_filesReceived = 0;
+    g_ready = false;
+    g_settleSteps = 0;
+}
+
 }  // namespace coop::world
