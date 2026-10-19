@@ -193,6 +193,20 @@ void ApplyDebugGodMode() {
     }
 }
 
+// Testing aid: COOP_DEBUG_CHEATS=1 turns the world's cheats on (console /give, /spawn...): a new world has them
+// off, and the mode screen's ENABLE CHEATS button does not take clicks sent by the test tools.
+void ApplyDebugCheats() {
+    constexpr int kSlotCheatsEnabled = 0x101;  // global.cheatsEnabled (decompiled/code/var_slots.tsv)
+    static const bool enabled = GetEnvironmentVariableA("COOP_DEBUG_CHEATS", nullptr, 0) > 0;
+    if (!enabled) return;
+    if (yyc::RValue* cheats = yyc::GlobalVar(kSlotCheatsEnabled)) {
+        if (yyc::ToReal(*cheats) != 0 && (cheats->kind & yyc::kKindMask) == yyc::kReal) return;
+        if ((cheats->kind & yyc::kKindMask) == yyc::kReal || (cheats->kind & yyc::kKindMask) == 0xFFFFFF) {
+            *cheats = yyc::Real(1);
+        }
+    }
+}
+
 // In a coop session a death is not a game over (which also reloads the menu and drops the peer):
 // the player gets back up on the starting island with full health. No penalty (docs/coop/SPEC.md).
 void RespawnIfDead(yyc::CInstance* localPlayer) {
@@ -252,6 +266,7 @@ yyc::RValue* __cdecl IsMenuOpenHook(yyc::CInstance* self, yyc::CInstance* other,
 // Runs after the local player's Step_0, i.e. only while in a world.
 void Tick(yyc::CInstance* localPlayer) {
     ApplyDebugGodMode();
+    ApplyDebugCheats();
     if (g_role == Role::kNone || g_leaving) return;
     if (!g_playedWorld && g_role == Role::kHost && !HostWorldAllowed(localPlayer)) {
         g_playedWorld = true;  // back in the menu this ends the session

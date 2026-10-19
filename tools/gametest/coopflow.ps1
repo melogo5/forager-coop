@@ -8,7 +8,7 @@ param(
   [string]$GuestName = '',        # typed into the COOP screen's NAME field before joining
   [switch]$GodMode,
   [switch]$NewWorld,              # the host starts a new Classic world instead of a save
-  [switch]$Cheats                 # ...with cheats on (the console's /give etc. need them)
+  [switch]$Cheats                 # cheats on for both (COOP_DEBUG_CHEATS): the console's /give etc. need them
 )
 $ErrorActionPreference = 'Stop'
 $exe = 'Z:\SteamLibrary\steamapps\common\Forager\Forager.exe'
@@ -31,9 +31,11 @@ function WaitLog([int]$id, [string]$pattern, [int]$seconds) {
 function Launch([hashtable]$envVars) {
   foreach ($k in $envVars.Keys) { Set-Item "Env:$k" $envVars[$k] }
   if ($GodMode) { $env:COOP_DEBUG_GODMODE = '1' }
+  if ($Cheats) { $env:COOP_DEBUG_CHEATS = '1' }
   $p = Start-Process -FilePath $exe -WorkingDirectory $gameDir -PassThru
   foreach ($k in $envVars.Keys) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
   Remove-Item Env:COOP_DEBUG_GODMODE -ErrorAction SilentlyContinue
+  Remove-Item Env:COOP_DEBUG_CHEATS -ErrorAction SilentlyContinue
   return $p.Id
 }
 function OpenCoop([int]$id) {
@@ -52,7 +54,6 @@ if ($NewWorld) {
              Where-Object { $_.Name -ne 'saveData99' }).Count
   Click $hostPid ("640,{0}" -f (140 + 100 * $saves)); Start-Sleep 3
   Click $hostPid '165,370'; Start-Sleep 3
-  if ($Cheats) { Click $hostPid '640,680'; Start-Sleep 1 }   # ENABLE CHEATS
   Click $hostPid '650,575'
 } else {
   Click $hostPid ("1000,{0}" -f (38 + 100 * $HostSlotRow))
