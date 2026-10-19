@@ -46,7 +46,7 @@ function OpenCoop([int]$id) {
 
 $hostPid = Launch $HostEnv
 OpenCoop $hostPid
-& $ctl -GamePid $hostPid -Click '993,114' -HoldMs 150 | Out-Null   # CREATE
+& $ctl -GamePid $hostPid -Click '993,114' -HoldMs 150 | Out-Null   # CREATE: one click only - a second one lands on save row 1's PLAY
 Start-Sleep 3
 if ($NewWorld) {
   # The "+" button sits under the saves (100 px per save row); then the Classic mode and its PLAY button.
