@@ -20,6 +20,8 @@ namespace {
 
 constexpr uint8_t kMobs = 20;  // host -> guest
 constexpr int kParEnemy = 23;
+// Streamed like enemies: parEnemy, and parCritter (fireflies, butterflies, cows...; PLAYTEST.md #15).
+constexpr int kStreamedKinds[] = {kParEnemy, 64};
 constexpr unsigned kSendEverySteps = 6;  // 10 updates/s
 constexpr size_t kMaxMobs = 2000;        // the count is a u16; more than this means something is wrong
 constexpr double kFollow = 0.5;          // replica moves this fraction of the way per step
@@ -183,11 +185,13 @@ void Follow(yyc::CInstance* mob, const MobState& s) {
 // the host does not have (dead or asleep there), or a replica the host stopped sending (it fell asleep there,
 // and its own AI would walk it around) - is a ghost the guest could see and hit for nothing: it goes.
 void PurgeGhosts(yyc::CInstance* self, const std::vector<int>& followed) {
-    const int count = static_cast<int>(Builtin(self, "instance_number", {kParEnemy}));
     std::vector<int> ghosts;
-    for (int i = 0; i < count; ++i) {
-        const int id = static_cast<int>(Builtin(self, "instance_find", {kParEnemy, double(i)}));
-        if (id != kNoOne && std::find(followed.begin(), followed.end(), id) == followed.end()) ghosts.push_back(id);
+    for (const int kind : kStreamedKinds) {
+        const int count = static_cast<int>(Builtin(self, "instance_number", {double(kind)}));
+        for (int i = 0; i < count; ++i) {
+            const int id = static_cast<int>(Builtin(self, "instance_find", {double(kind), double(i)}));
+            if (id != kNoOne && std::find(followed.begin(), followed.end(), id) == followed.end()) ghosts.push_back(id);
+        }
     }
     for (const int id : ghosts) sync::RemoveLocal(self, id);
     if (!ghosts.empty()) Log("mobs: removed %zu enemies the host does not have", ghosts.size());
@@ -265,17 +269,19 @@ void HostTick(yyc::CInstance* localPlayer) {
     constexpr unsigned kDebugSpawnStep = 600;
     if (++g_steps == kDebugSpawnStep) DebugSpawnEnemy(localPlayer);
     if (g_steps % kSendEverySteps != 0) return;
-    const int count = static_cast<int>(Builtin(localPlayer, "instance_number", {kParEnemy}));
     std::vector<uint8_t> payload(2);
     uint16_t sent = 0;
-    for (int i = 0; i < count && sent < kMaxMobs; ++i) {
-        const int id = static_cast<int>(Builtin(localPlayer, "instance_find", {kParEnemy, double(i)}));
-        yyc::CInstance* mob = yyc::FindInstance(id);
-        if (mob == nullptr) continue;
-        const MobState s = Capture(mob, id);
-        const auto* bytes = reinterpret_cast<const uint8_t*>(&s);
-        payload.insert(payload.end(), bytes, bytes + sizeof(s));
-        ++sent;
+    for (const int kind : kStreamedKinds) {
+        const int count = static_cast<int>(Builtin(localPlayer, "instance_number", {double(kind)}));
+        for (int i = 0; i < count && sent < kMaxMobs; ++i) {
+            const int id = static_cast<int>(Builtin(localPlayer, "instance_find", {double(kind), double(i)}));
+            yyc::CInstance* mob = yyc::FindInstance(id);
+            if (mob == nullptr) continue;
+            const MobState s = Capture(mob, id);
+            const auto* bytes = reinterpret_cast<const uint8_t*>(&s);
+            payload.insert(payload.end(), bytes, bytes + sizeof(s));
+            ++sent;
+        }
     }
     payload[0] = static_cast<uint8_t>(sent & 0xFF);
     payload[1] = static_cast<uint8_t>(sent >> 8);

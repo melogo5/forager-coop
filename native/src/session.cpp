@@ -341,6 +341,7 @@ void Tick(yyc::CInstance* localPlayer) {
     }
     g_wasConnected = connected;
     puppet::SetEnemiesSeeBoth(g_role == Role::kHost && connected);
+    puppet::SetFamiliarsFollowPeer(g_role == Role::kGuest && connected);
     ++g_steps;
     if (!connected) {
         HandleMessages(localPlayer);  // what arrived before the link went, e.g. the host saying goodbye

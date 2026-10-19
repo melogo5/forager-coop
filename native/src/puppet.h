@@ -23,6 +23,9 @@ bool InstallHooks(LocalStepFn onLocalStep, LocalStepFn beforeLocalStep1);
 // puppet, so it chases and attacks whoever is closer.
 void SetEnemiesSeeBoth(bool on);
 
+// Guest: familiars (lantern, halo, droids) come with the host's world and are the host's: they follow the puppet.
+void SetFamiliarsFollowPeer(bool on);
+
 // The puppet instance, or nullptr when there is none.
 yyc::CInstance* Instance();
 // While acting, PlayerFind() returns the puppet: game code run in between treats the peer as "the player".

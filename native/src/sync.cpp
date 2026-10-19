@@ -73,6 +73,7 @@ constexpr int kSyncedParents[] = {
     281,  // parResource: drops on the ground
     23,   // parEnemy
     115,  // objBridge: no parent (PLAYTEST.md #10)
+    64,   // parCritter: fireflies, butterflies, cows... (streamed by mobs like enemies; PLAYTEST.md #15)
 };
 constexpr int kParResource = 281;  // drops; `item` says what they give
 constexpr int kSlotItem = 0x5B8;   // decompiled/code/var_slots.tsv
