@@ -78,6 +78,7 @@ constexpr uint32_t YYVar_depth = 0x01AD8788;
 constexpr uint32_t YYVar_sprite_index = 0x01AD8798;
 constexpr uint32_t YYVar_image_index = 0x01AD87A8;
 constexpr uint32_t YYVar_image_speed = 0x01AD87C0;
+constexpr uint32_t YYVar_room = 0x01AD87B8;
 constexpr uint32_t YYVar_image_xscale = 0x01AD8DA8;
 constexpr uint32_t YYVar_image_yscale = 0x01AD8DB0;
 constexpr uint32_t YYVar_keyboard_string = 0x01AD8830;

@@ -90,6 +90,7 @@ unsigned g_offlineSteps = 0;
 bool g_leaving = false;  // guest: on the way back to the main menu
 std::string g_notice;    // shown on the COOP screen when back in the menu
 bool g_wasConnected = false;
+bool g_wasInWorld = true;
 bool g_haveRemote = false;
 PlayerStateMsg g_remote{};
 
@@ -311,6 +312,26 @@ yyc::RValue* __cdecl IsMenuOpenHook(yyc::CInstance* self, yyc::CInstance* other,
 
 // Runs after the local player's Step_0, i.e. only while in a world.
 
+// Testing aid: COOP_DEBUG_ROOM=<room> goes into that room ~8 s into the session (e.g. 24, the museum) and back to
+// the world ~10 s later.
+void DebugVisitRoom(yyc::CInstance* localPlayer, bool inWorld) {
+    static const int room = [] {
+        char value[16] = {};
+        return GetEnvironmentVariableA("COOP_DEBUG_ROOM", value, sizeof(value)) > 0 ? atoi(value) : 0;
+    }();
+    static unsigned steps = 0;
+    if (room == 0) return;
+    ++steps;
+    const bool go = inWorld && steps == 480;
+    const bool back = !inWorld && steps >= 1080 && steps < 1090;
+    if (!go && !back) return;
+    yyc::RValue target = yyc::Real(go ? room : 8);
+    yyc::RValue result{};
+    yyc::CallBuiltin("room_goto", localPlayer, 1, &target, &result);
+    yyc::Free(&result);
+    Log("session: debug goes to room %d", go ? room : 8);
+}
+
 void Tick(yyc::CInstance* localPlayer) {
     ApplyDebugGodMode();
     ApplyDebugCheats();
@@ -351,6 +372,16 @@ void Tick(yyc::CInstance* localPlayer) {
         return;
     }
     g_offlineSteps = 0;
+
+    // Inside a building (museum, wizard tower, druid tree) the world room sleeps: nothing here is the shared
+    // world, so nothing is synced; the peer's news waits in the inbox until we are back. (A census taken in
+    // there would make the guest remove its whole surroundings.)
+    constexpr int kRoomGame = 8;  // rmGame (decompiled/data/rooms.tsv)
+    const bool inWorld = static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_room)) == kRoomGame;
+    if (inWorld != g_wasInWorld) Log("session: %s the world room", inWorld ? "back in" : "left");
+    DebugVisitRoom(localPlayer, inWorld);
+    g_wasInWorld = inWorld;
+    if (!inWorld) return;
 
     sync::Tick(localPlayer);
     storage::DebugTick(localPlayer);
