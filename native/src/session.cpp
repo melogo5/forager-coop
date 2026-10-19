@@ -43,7 +43,7 @@ namespace coop {
 
 namespace {
 
-constexpr uint32_t kProtocolVersion = 5;  // 5: own skills per player (kSkills), unlocks both ways
+constexpr uint32_t kProtocolVersion = 5;  // 5: playtest fixes: skills, reconcile, chests, critters, hit dmg
 constexpr unsigned kSendEverySteps = 3;       // 60 fps game step -> 20 updates/s
 constexpr unsigned kAnnounceEverySteps = 30;  // refresh the LAN announcement twice a second
 constexpr int kSlotGodMode = 0x54C;           // global.godMode (decompiled/code/var_slots.tsv)
