@@ -5,10 +5,14 @@
 #include <windows.h>
 #include <shellapi.h>
 
+#pragma comment(lib, "user32.lib")  // MessageBoxW: the version warning
+
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "MinHook.h"
@@ -150,6 +154,23 @@ void GuestGoToMenu(yyc::CInstance* localPlayer, const char* why) {
     yyc::Free(&result);
 }
 
+uint32_t OurProtocol();
+
+// Different builds of the patch may go out of sync: both players are warned, the game goes on. A Windows
+// message box on its own thread, so the game keeps running behind it.
+void WarnVersion(uint32_t theirs) {
+    Log("session: the other player has protocol %u, ours is %u - playing on, with a warning", theirs, OurProtocol());
+    wchar_t text[256];
+    swprintf(text, 256,
+             L"The other player has a different version of the coop patch (theirs %u, yours %u).\n\n"
+             L"You can play, but things may go out of sync. Best to use the same version.",
+             theirs, OurProtocol());
+    std::thread([message = std::wstring(text)] {
+        const int answer = MessageBoxW(nullptr, message.c_str(), L"Forager coop", MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND);
+        Log("session: version warning closed (%d, error %lu)", answer, GetLastError());
+    }).detach();
+}
+
 // The protocol version this side speaks. Testing aid: COOP_DEBUG_PROTOCOL=<n> pretends to be another build.
 uint32_t OurProtocol() {
     static const uint32_t version = [] {
@@ -187,15 +208,7 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             HelloMsg hello{};
             memcpy(&hello, message.payload.data(), sizeof(hello));
             Log("session: peer protocol %u (ours %u)", hello.version, OurProtocol());
-            if (hello.version != OurProtocol()) {  // different builds of the patch would desync silently
-                if (g_role == Role::kGuest) {
-                    g_notice = "The host has another coop version";
-                    GuestGoToMenu(localPlayer, "the host has another protocol version");
-                    return;
-                }
-                Log("session: dropping the guest - another protocol version");
-                net::DropPeer();
-            }
+            if (hello.version != OurProtocol()) WarnVersion(hello.version);
         } else if (message.type == kPlayerState && message.payload.size() == sizeof(PlayerStateMsg)) {
             memcpy(&g_remote, message.payload.data(), sizeof(g_remote));
             g_haveRemote = true;

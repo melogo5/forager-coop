@@ -172,11 +172,6 @@ void StartJoin(const std::string& host, uint16_t port) {
     if (Startup()) std::thread(JoinThread, host, port, g_joinGeneration.load()).detach();
 }
 
-void DropPeer() {
-    std::lock_guard<std::mutex> guard(g_lock);
-    if (g_socket != INVALID_SOCKET) shutdown(g_socket, SD_BOTH);  // the receive loop then closes it
-}
-
 void Stop() {
     ++g_joinGeneration;
     ++g_hostGeneration;
