@@ -333,8 +333,30 @@ void __cdecl DestroyHook(yyc::CInstance* self, yyc::CInstance* other, int id, in
     }
 }
 
+// Dungeons are not part of coop (yet): rooms other than the world are not synced, so while connected nobody
+// enters one (QUESTIONS.md). The entrance's transition just plays and the player stays in the world.
+constexpr int kFirstDungeonRoom = 14;  // rmAncientTomb ... (decompiled/data/rooms.tsv)
+constexpr int kLastDungeonRoom = 21;   // ... rmVolcanoSpaceTower; 22-24 are interiors (wizard tower, druid tree, museum)
+yyc::BuiltinFn g_origRoomGoto = nullptr;
+
+void __cdecl RoomGotoHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstance* other, int argc,
+                          yyc::RValue* args) {
+    const int room = argc >= 1 ? static_cast<int>(yyc::ToReal(args[0])) : -1;
+    if (Connected() && room >= kFirstDungeonRoom && room <= kLastDungeonRoom) {
+        Log("sync: not entering room %d - no dungeons in coop", room);
+        return;
+    }
+    g_origRoomGoto(result, self, other, argc, args);
+}
+
 void HookBuiltins() {
     g_builtinsHooked = true;
+    if (const yyc::BuiltinFn roomGoto = yyc::BuiltinAddress("room_goto")) {
+        const bool hooked = MH_CreateHook(reinterpret_cast<void*>(roomGoto), reinterpret_cast<void*>(&RoomGotoHook),
+                                          reinterpret_cast<void**>(&g_origRoomGoto)) == MH_OK &&
+                            MH_EnableHook(reinterpret_cast<void*>(roomGoto)) == MH_OK;
+        if (!hooked) Log("sync: room_goto hook FAILED");
+    }
     const yyc::BuiltinFn create = yyc::BuiltinAddress("instance_create_depth");
     if (create == nullptr) {
         Log("sync: instance_create_depth not found");
@@ -821,6 +843,15 @@ void ApplyProgress(yyc::CInstance* localPlayer, const ProgressMsg& msg) {
     }
 }
 
+// Testing aid: COOP_DEBUG_DUNGEON=1 tries to enter the first dungeon room ~5 s in (it must be refused).
+void DebugDungeon(yyc::CInstance* localPlayer) {
+    static const bool enabled = GetEnvironmentVariableA("COOP_DEBUG_DUNGEON", nullptr, 0) > 0;
+    static unsigned steps = 0;
+    if (!enabled || ++steps != 300) return;
+    Log("sync: debug tries to enter room %d", kFirstDungeonRoom);
+    Builtin(localPlayer, "room_goto", {double(kFirstDungeonRoom)});
+}
+
 // Testing aid: COOP_DEBUG_CRAFTDROP=<item> on the guest makes a drop of that item next to it ~5 s in, the way
 // a finished craft does (inside the crafting flag), to check that it lands in the inventory.
 void DebugCraftDrop(yyc::CInstance* localPlayer) {
@@ -903,6 +934,7 @@ void Tick(yyc::CInstance* localPlayer) {
     if (IsGuest()) RetryDestroys(localPlayer, true);
     if (IsGuest()) CollectCrafted(localPlayer);
     DebugCraftDrop(localPlayer);
+    DebugDungeon(localPlayer);
     if (++g_steps % kStatsEverySteps == 0) {
         Log("sync: sent spawn %u destroy %u hit %u gone %u | applied spawn %u destroy %u hit %u gone %u",
             g_sent[kSpawn], g_sent[kDestroy], g_sent[kHit], g_sent[kGuestDestroyed], g_applied[kSpawn],
