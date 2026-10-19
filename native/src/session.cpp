@@ -195,7 +195,7 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             clock::Handle(message, localPlayer) ||
             unlocks::Handle(message, localPlayer) || coins::Handle(message, localPlayer) ||
             progress::Handle(message, localPlayer) || quests::Handle(message, localPlayer) ||
-            stations::Handle(message) || skills::Handle(message) ||
+            stations::Handle(message, localPlayer) || skills::Handle(message) ||
             reconcile::Handle(message, localPlayer) || chests::Handle(message, localPlayer)) {
             continue;
         }

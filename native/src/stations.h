@@ -15,7 +15,10 @@ bool InstallHooks();
 void Tick(yyc::CInstance* localPlayer);
 
 // Game thread: applies a station message; false if `message` is not one.
-bool Handle(const net::Message& message);
+bool Handle(const net::Message& message, yyc::CInstance* localPlayer);
+
+// The station shows the other player's craft (it must not make anything itself: the crafter gets the output).
+bool IsMirror(yyc::CInstance* station);
 
 // The local player says (speech bubble) that the other player is using what it tried to open - at most every
 // few seconds, so clicking again and again does not stack bubbles.

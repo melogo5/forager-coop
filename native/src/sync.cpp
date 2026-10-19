@@ -14,6 +14,7 @@
 #include "MinHook.h"
 #include "log.h"
 #include "puppet.h"
+#include "stations.h"
 
 namespace coop::sync {
 
@@ -412,6 +413,7 @@ yyc::RValue* __cdecl DirtProcessHook(yyc::CInstance* self, yyc::CInstance* other
 
 yyc::RValue* __cdecl HandleCraftingHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                         yyc::RValue** args) {
+    if (stations::IsMirror(self)) return result;  // the other player's craft, only shown here
     ++g_crafting;
     yyc::RValue* r = g_origHandleCrafting(self, other, result, argc, args);
     --g_crafting;
