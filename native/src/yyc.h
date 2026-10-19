@@ -124,6 +124,8 @@ RValue String(const char* text);
 std::string ToString(const RValue& value);
 
 // Element `index` of a GML array (a plain copy: fine for numbers, not for strings/arrays).
+// Reads an element. Keep `index` below the array's length: the runtime accessor grows the array otherwise,
+// which broke the game (objPlayer "index out of bounds") when a station's 2-element `crafting` was read at [2].
 RValue ArrayElement(RValue* array, int index);
 
 // event_user(n) is PerformEvent(self, other, kEvOther, kEvUser0 + n).

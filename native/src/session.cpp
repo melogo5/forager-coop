@@ -23,6 +23,7 @@
 #include "progress.h"
 #include "puppet.h"
 #include "quests.h"
+#include "stations.h"
 #include "storage.h"
 #include "unlocks.h"
 #include "sync.h"
@@ -168,7 +169,8 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             storage::Handle(message, localPlayer) || land::Handle(message, localPlayer) ||
             clock::Handle(message, localPlayer) ||
             unlocks::Handle(message, localPlayer) || coins::Handle(message, localPlayer) ||
-            progress::Handle(message, localPlayer) || quests::Handle(message, localPlayer)) {
+            progress::Handle(message, localPlayer) || quests::Handle(message, localPlayer) ||
+            stations::Handle(message)) {
             continue;
         }
         bool guestIntroduced = false;
@@ -314,6 +316,7 @@ void Tick(yyc::CInstance* localPlayer) {
         puppet::Destroy(localPlayer);
         sync::Reset();  // a guest coming back starts over: new replicas, new drops
         storage::Reset();
+        stations::Reset();
     }
     g_wasConnected = connected;
     ++g_steps;
@@ -336,6 +339,7 @@ void Tick(yyc::CInstance* localPlayer) {
     if (g_role == Role::kGuest) coins::GuestTick(localPlayer);
     progress::Tick(localPlayer);
     quests::Tick(localPlayer);
+    stations::Tick(localPlayer);
     HandleMessages(localPlayer);
     if (g_steps % kSendEverySteps == 0) {
         const PlayerStateMsg state = CaptureState(localPlayer);
@@ -391,6 +395,7 @@ void Leave() {
     coins::Reset();
     progress::Reset();
     quests::Reset();
+    stations::Reset();
     Log(host ? "session: stopped hosting; can create again" : "session: left the host's world; can join again");
 }
 
@@ -419,7 +424,7 @@ bool SessionInstall() {
     const auto isGuest = [] { return g_role == Role::kGuest; };
     if (!sync::InstallHooks(isHost, isGuest) || !mobs::InstallHooks(isHost, isGuest) ||
         !character::InstallHooks(isGuest) || !storage::InstallHooks() || !land::InstallHooks(isHost, isGuest) ||
-        !progress::InstallHooks()) {
+        !progress::InstallHooks() || !stations::InstallHooks()) {
         return false;
     }
     Role role = Role::kNone;
