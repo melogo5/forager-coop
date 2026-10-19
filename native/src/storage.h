@@ -1,5 +1,6 @@
-// Shared chests (objVault): when a player closes a storage menu, the chest's contents (its 2D `slot`
-// array) go to the peer, which overwrites its copy. The last player to close a chest wins.
+// Shared chests (objVault): when a player closes a storage menu, and whenever a chest's contents change
+// otherwise (crafting takes from vaults), the chest's contents (its 2D `slot` array) go to the peer, which
+// overwrites its copy. The last change wins.
 #pragma once
 
 #include "net.h"
@@ -10,7 +11,7 @@ namespace coop::storage {
 // Creates the storage menu hook (enabled by the caller).
 bool InstallHooks();
 
-// Game thread, every local player step (testing aid, see storage.cpp).
+// Game thread, every local player step: watches the vaults for changes (and a testing aid, see storage.cpp).
 void DebugTick(yyc::CInstance* localPlayer);
 
 // Game thread: applies a storage message; false if `message` is not one.

@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "MinHook.h"
@@ -22,6 +24,8 @@ constexpr uint32_t kVaultInteract = 0x00BC88D0;  // objVault Other_11: opens the
 constexpr uint32_t kStorageMenuDestroy = 0x00E51ED0;  // objStorageInventory Destroy_0
 constexpr int kSlotOwner = 0x6CA;                     // the menu's chest
 constexpr int kSlotContents = 0x7C4;                  // the chest's `slot` (2D array)
+constexpr int kObjVault = 114;
+constexpr unsigned kWatchEverySteps = 60;
 constexpr size_t kMaxRows = 4096;
 constexpr size_t kMaxColumns = 255;
 
@@ -39,6 +43,8 @@ struct Header {
 yyc::EventFn g_origMenuDestroy = nullptr;
 yyc::EventFn g_origVaultInteract = nullptr;
 std::vector<int> g_lockedByPeer;  // local chest ids the peer has open
+std::unordered_map<int, size_t> g_known;  // local chest id -> hash of the contents the peer has too
+unsigned g_steps = 0;
 
 bool LockedByPeer(int chestId) {
     return std::find(g_lockedByPeer.begin(), g_lockedByPeer.end(), chestId) != g_lockedByPeer.end();
@@ -94,9 +100,10 @@ void PutCell(std::vector<uint8_t>& out, const yyc::RValue& cell) {
     }
 }
 
-void SendContents(yyc::CInstance* self, int chestId) {
+// The chest's message: Header, then per row u8 columns and the cells. Empty if the chest is gone.
+std::vector<uint8_t> Encode(yyc::CInstance* self, int chestId) {
     yyc::CInstance* chest = yyc::FindInstance(chestId);
-    if (chest == nullptr) return;
+    if (chest == nullptr) return {};
     yyc::RValue contents{};
     yyc::GetVar(chestId, kSlotContents, &contents);
     const bool isArray = (contents.kind & yyc::kKindMask) == yyc::kArray;
@@ -117,9 +124,39 @@ void SendContents(yyc::CInstance* self, int chestId) {
     }
     yyc::Free(&contents);
     memcpy(payload.data(), &header, sizeof(header));
+    return payload;
+}
+
+size_t Hash(const std::vector<uint8_t>& payload) {
+    return std::hash<std::string>{}(std::string(payload.begin(), payload.end()));
+}
+
+void SendContents(yyc::CInstance* self, int chestId) {
+    const std::vector<uint8_t> payload = Encode(self, chestId);
+    if (payload.empty()) return;
     net::Send(kStorage, payload.data(), payload.size());
+    g_known[chestId] = Hash(payload);
+    Header header{};
+    memcpy(&header, payload.data(), sizeof(header));
     Log("storage: chest %d (object %d) sent, %u rows, %zu bytes", chestId, header.object, header.rows,
         payload.size());
+}
+
+// Contents also change with the menu closed - crafting takes from vaults (ItemCount/RemoveItem count them) - so
+// every second each side sends the vaults whose contents changed since both last agreed (PLAYTEST.md #12, #13).
+void WatchVaults(yyc::CInstance* self) {
+    const int count = static_cast<int>(CallReal(self, "instance_number", {yyc::Real(kObjVault)}));
+    for (int i = 0; i < count; ++i) {
+        const int chestId = static_cast<int>(CallReal(self, "instance_find", {yyc::Real(kObjVault), yyc::Real(i)}));
+        if (yyc::FindInstance(chestId) == nullptr || LockedByPeer(chestId)) continue;
+        const size_t hash = Hash(Encode(self, chestId));
+        const auto known = g_known.find(chestId);
+        if (known == g_known.end()) {
+            g_known[chestId] = hash;  // both sides start from the same save
+        } else if (known->second != hash) {
+            SendContents(self, chestId);
+        }
+    }
 }
 
 // After the menu is gone the chest holds its final contents for this visit.
@@ -162,12 +199,17 @@ bool ReadCell(const std::vector<uint8_t>& p, size_t* at, yyc::RValue* out) {
     return true;
 }
 
-void ApplyContents(yyc::CInstance* self, const net::Message& message) {
+// `woken`: the second try, after waking the chest's kind up (an off-screen chest is asleep and not found).
+void ApplyContents(yyc::CInstance* self, const net::Message& message, bool woken = false) {
     const auto& p = message.payload;
     if (p.size() < sizeof(Header)) return;
     Header header{};
     memcpy(&header, p.data(), sizeof(header));
     const int chestId = sync::Resolve(self, header.hostId, header.object, header.x, header.y);
+    if (chestId == 0 && !woken) {
+        sync::WakeThen(self, header.object, [self, message] { ApplyContents(self, message, true); });
+        return;
+    }
     if (chestId == 0) {
         Log("storage: chest object %d at (%.0f, %.0f) not found", header.object, header.x, header.y);
         return;
@@ -183,6 +225,7 @@ void ApplyContents(yyc::CInstance* self, const net::Message& message) {
             yyc::Free(&cell);
         }
     }
+    g_known[chestId] = Hash(Encode(self, chestId));  // what the peer has now: not news to send back
     yyc::RValue item{}, amount{};
     yyc::GetVarAt(chestId, kSlotContents, 0, &item);
     yyc::GetVarAt(chestId, kSlotContents, 1, &amount);
@@ -195,13 +238,15 @@ void ApplyContents(yyc::CInstance* self, const net::Message& message) {
 }  // namespace
 
 void DebugTick(yyc::CInstance* localPlayer) {
-    // Testing aid: COOP_DEBUG_STORAGE=1 opens the nearest chest ~7 s into the world and closes it 1 s later.
+    // Testing aid: COOP_DEBUG_STORAGE=1 opens the nearest chest ~7 s into the world and closes it 1 s later,
+    // then ~3 s later changes it with no menu open.
     static const bool enabled = GetEnvironmentVariableA("COOP_DEBUG_STORAGE", nullptr, 0) > 0;
     static unsigned steps = 0;
     constexpr unsigned kOpenAt = 420;
     constexpr unsigned kCloseAt = 480;
-    constexpr int kObjVault = 114;
+    constexpr unsigned kChangeAt = 660;
     constexpr int kObjStorageMenu = 234;
+    if (++g_steps % kWatchEverySteps == 0 && net::IsConnected()) WatchVaults(localPlayer);
     if (!enabled) return;
     ++steps;
     if (steps == kOpenAt) {
@@ -227,6 +272,17 @@ void DebugTick(yyc::CInstance* localPlayer) {
         }
         CallReal(localPlayer, "instance_destroy", {yyc::Real(kObjStorageMenu)});
         Log("storage: debug closed the storage menu");
+    } else if (steps == kChangeAt) {
+        // As crafting would: 2 of the 5 are taken with no menu open; the watcher must send it.
+        const double x = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_x);
+        const double y = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_y);
+        const int chest = static_cast<int>(CallReal(localPlayer, "instance_nearest",
+                                                    {yyc::Real(x), yyc::Real(y), yyc::Real(kObjVault)}));
+        if (yyc::FindInstance(chest) != nullptr) {
+            yyc::RValue amount = yyc::Real(3);
+            yyc::SetVarAt(chest, kSlotContents, 1, &amount);
+            Log("storage: debug took 2 from chest %d with no menu open", chest);
+        }
     }
 }
 
@@ -254,6 +310,10 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     return true;
 }
 
-void Reset() { g_lockedByPeer.clear(); }
+void Reset() {
+    g_lockedByPeer.clear();
+    g_known.clear();
+    g_steps = 0;
+}
 
 }  // namespace coop::storage
