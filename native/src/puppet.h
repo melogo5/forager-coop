@@ -19,6 +19,10 @@ using LocalStepFn = void (*)(yyc::CInstance* localPlayer);
 // `beforeLocalStep1` before its Step_1 (the begin step that turns hp < 1 into a game over).
 bool InstallHooks(LocalStepFn onLocalStep, LocalStepFn beforeLocalStep1);
 
+// Host with a guest: an enemy asking for "the player" (PlayerFind) gets the nearer of the local player and the
+// puppet, so it chases and attacks whoever is closer.
+void SetEnemiesSeeBoth(bool on);
+
 // The puppet instance, or nullptr when there is none.
 yyc::CInstance* Instance();
 // While acting, PlayerFind() returns the puppet: game code run in between treats the peer as "the player".

@@ -339,6 +339,7 @@ void Tick(yyc::CInstance* localPlayer) {
         reconcile::Reset();
     }
     g_wasConnected = connected;
+    puppet::SetEnemiesSeeBoth(g_role == Role::kHost && connected);
     ++g_steps;
     if (!connected) {
         HandleMessages(localPlayer);  // what arrived before the link went, e.g. the host saying goodbye

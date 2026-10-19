@@ -52,6 +52,10 @@ int g_puppetId = 0;
 bool g_creating = false;     // PlayerFind() -> calling instance, while the puppet runs Create_0
 int g_actorId = 0;           // PlayerFind() -> this instance id, when non-zero
 int g_actingDepth = 0;       // BeginActing nesting
+bool g_enemiesSeeBoth = false;  // host with a guest: enemies go for the nearer player (PLAYTEST.md #8)
+constexpr int kParEnemy = 23;   // decompiled/data/objects.tsv
+constexpr int kMaxObjects = 1024;
+int8_t g_enemyKinds[kMaxObjects] = {};  // object index -> 0 unknown, 1 enemy, -1 not
 
 yyc::EventFn g_origStep = nullptr;
 yyc::EventFn g_origStep1 = nullptr;
@@ -68,6 +72,26 @@ const char* CallerName() {
     return top != nullptr ? top->name : nullptr;
 }
 
+bool IsEnemy(yyc::CInstance* self) {
+    const int object = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_object_index));
+    if (object < 0 || object >= kMaxObjects) return false;
+    int8_t& kind = g_enemyKinds[object];
+    if (kind == 0) {
+        yyc::RValue args[2] = {yyc::Real(object), yyc::Real(kParEnemy)};
+        yyc::RValue result{};
+        yyc::CallBuiltin("object_is_ancestor", self, 2, args, &result);
+        kind = object == kParEnemy || yyc::ToReal(result) != 0 ? 1 : -1;
+        yyc::Free(&result);
+    }
+    return kind == 1;
+}
+
+double DistanceSquared(yyc::CInstance* a, yyc::CInstance* b) {
+    const double dx = yyc::GetBuiltinReal(a, yyc::va::YYVar_x) - yyc::GetBuiltinReal(b, yyc::va::YYVar_x);
+    const double dy = yyc::GetBuiltinReal(a, yyc::va::YYVar_y) - yyc::GetBuiltinReal(b, yyc::va::YYVar_y);
+    return dx * dx + dy * dy;
+}
+
 // Hot path (~350 calls per frame): a single branch when no override is active.
 yyc::RValue* __cdecl PlayerFindHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                     yyc::RValue** args) {
@@ -79,6 +103,15 @@ yyc::RValue* __cdecl PlayerFindHook(yyc::CInstance* self, yyc::CInstance* other,
         if (caller != nullptr && strcmp(caller, kCreateFrame) != 0) {
             id = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
         }
+    }
+    if (id == 0 && g_enemiesSeeBoth && g_puppet != nullptr && self != nullptr && IsEnemy(self)) {
+        g_origPlayerFind(self, other, result, argc, args);
+        yyc::CInstance* local = yyc::FindInstance(static_cast<int>(yyc::ToReal(*result)));
+        if (local == nullptr || DistanceSquared(self, g_puppet) >= DistanceSquared(self, local)) return result;
+        id = g_puppetId;
+        static bool told = false;
+        if (!told) Log("puppet: an enemy goes for the guest (nearer than the host)");
+        told = true;
     }
     if (id == 0) return g_origPlayerFind(self, other, result, argc, args);
     yyc::Free(result);
@@ -181,6 +214,8 @@ bool InstallHooks(LocalStepFn onLocalStep, LocalStepFn beforeLocalStep1) {
     }
     return ok;
 }
+
+void SetEnemiesSeeBoth(bool on) { g_enemiesSeeBoth = on; }
 
 yyc::CInstance* Instance() {
     if (g_puppet != nullptr && yyc::FindInstance(g_puppetId) != g_puppet) {
