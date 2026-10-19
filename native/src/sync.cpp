@@ -71,6 +71,7 @@ constexpr int kSyncedParents[] = {
     81,   // parHerb: bushes, flowers
     281,  // parResource: drops on the ground
     23,   // parEnemy
+    115,  // objBridge: no parent (PLAYTEST.md #10)
 };
 constexpr int kParResource = 281;  // drops; `item` says what they give
 constexpr int kSlotItem = 0x5B8;   // decompiled/code/var_slots.tsv
@@ -974,6 +975,8 @@ void WakeThen(yyc::CInstance* self, int object, std::function<void()> action) {
     Builtin(self, "instance_activate_object", {double(object)});
     g_afterWake.push_back(std::move(action));
 }
+
+void RunBeforeCull(std::function<void()> action) { g_afterWake.push_back(std::move(action)); }
 
 void BeforeCull(yyc::CInstance* self) {
     if (IsGuest()) RetryDestroys(self, false);

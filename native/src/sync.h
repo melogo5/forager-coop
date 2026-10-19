@@ -30,6 +30,8 @@ void BeforeCull(yyc::CInstance* self);
 // Game thread: wakes every instance of `object` up (off-screen ones are deactivated) and runs `action` next
 // step, right before the game culls again - the only moment the woken instances are active.
 void WakeThen(yyc::CInstance* self, int object, std::function<void()> action);
+// Game thread: runs `action` next step right before the game culls (after the caller woke something up).
+void RunBeforeCull(std::function<void()> action);
 
 // Guest: the local replica of a host instance (0 if none), and creating one.
 int ReplicaOf(int hostId);

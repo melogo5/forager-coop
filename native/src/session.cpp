@@ -27,6 +27,7 @@
 #include "progress.h"
 #include "puppet.h"
 #include "quests.h"
+#include "reconcile.h"
 #include "skills.h"
 #include "stations.h"
 #include "storage.h"
@@ -192,7 +193,8 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             clock::Handle(message, localPlayer) ||
             unlocks::Handle(message, localPlayer) || coins::Handle(message, localPlayer) ||
             progress::Handle(message, localPlayer) || quests::Handle(message, localPlayer) ||
-            stations::Handle(message) || skills::Handle(message)) {
+            stations::Handle(message) || skills::Handle(message) ||
+            reconcile::Handle(message, localPlayer)) {
             continue;
         }
         bool guestIntroduced = false;
@@ -334,6 +336,7 @@ void Tick(yyc::CInstance* localPlayer) {
         sync::Reset();  // a guest coming back starts over: new replicas, new drops
         storage::Reset();
         stations::Reset();
+        reconcile::Reset();
     }
     g_wasConnected = connected;
     ++g_steps;
@@ -352,6 +355,8 @@ void Tick(yyc::CInstance* localPlayer) {
     if (g_role == Role::kHost) mobs::HostTick(localPlayer);
     if (g_role == Role::kHost) clock::HostTick(localPlayer);
     unlocks::Tick(localPlayer);
+    if (g_role == Role::kHost) reconcile::HostTick(localPlayer);
+    reconcile::DebugTick(localPlayer);
     if (g_role == Role::kHost) coins::HostTick(localPlayer);
     if (g_role == Role::kGuest) coins::GuestTick(localPlayer);
     progress::Tick(localPlayer);
@@ -415,6 +420,7 @@ void Leave() {
     quests::Reset();
     stations::Reset();
     skills::Reset();
+    reconcile::Reset();
     Log(host ? "session: stopped hosting; can create again" : "session: left the host's world; can join again");
 }
 
