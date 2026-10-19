@@ -35,6 +35,9 @@ using Key = std::tuple<int, int, int>;  // object, x, y: the same station on bot
 std::set<Key> g_mine;  // in use on this side, as last told to the peer
 std::set<Key> g_peer;  // in use on the peer's side
 unsigned g_steps = 0;
+yyc::CInstance* g_localPlayer = nullptr;
+constexpr uint32_t kScriptDialogue = 0x0072E5A0;  // Dialogue(text): a speech bubble over self
+constexpr DWORD kSayEveryMs = 3000;
 yyc::ScriptFn g_origCreateMenu = nullptr;
 int g_opened = kNoOne;  // the station whose menu this side opened last (open while a crafting menu exists)
 
@@ -84,6 +87,7 @@ yyc::RValue* __cdecl CreateMenuHook(yyc::CInstance* self, yyc::CInstance* other,
         const Key key = KeyOf(self);
         Log("stations: %d at (%d, %d) is in use by the other player", std::get<0>(key), std::get<1>(key),
             std::get<2>(key));
+        SayBusy(g_localPlayer);
         return result;
     }
     if (self != nullptr) g_opened = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
@@ -116,6 +120,19 @@ void DebugOpen(yyc::CInstance* localPlayer) {
 
 }  // namespace
 
+void SayBusy(yyc::CInstance* player) {
+    static DWORD last = 0;
+    const DWORD now = GetTickCount();
+    if (player == nullptr || (last != 0 && now - last < kSayEveryMs)) return;
+    last = now;
+    yyc::RValue text = yyc::String("The other player is using this");
+    yyc::RValue* args[1] = {&text};
+    yyc::RValue result{};
+    yyc::At<yyc::ScriptFn>(kScriptDialogue)(player, player, &result, 1, args);
+    yyc::Free(&result);
+    yyc::Free(&text);
+}
+
 bool InstallHooks() {
     const bool ok = MH_CreateHook(yyc::At<void*>(kScriptCreateCraftingMenu), reinterpret_cast<void*>(&CreateMenuHook),
                                   reinterpret_cast<void**>(&g_origCreateMenu)) == MH_OK;
@@ -124,6 +141,7 @@ bool InstallHooks() {
 }
 
 void Tick(yyc::CInstance* localPlayer) {
+    g_localPlayer = localPlayer;
     ++g_steps;
     DebugOpen(localPlayer);
     if (g_steps % kEverySteps != 0) return;
@@ -162,6 +180,7 @@ bool Handle(const net::Message& message) {
 }
 
 void Reset() {
+    g_localPlayer = nullptr;
     g_opened = kNoOne;
     g_mine.clear();
     g_peer.clear();

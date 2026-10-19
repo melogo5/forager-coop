@@ -12,6 +12,7 @@
 #include "MinHook.h"
 #include "log.h"
 #include "net.h"
+#include "stations.h"
 #include "sync.h"
 
 namespace coop::storage {
@@ -65,6 +66,7 @@ void __cdecl VaultInteractHook(yyc::CInstance* self, yyc::CInstance* other) {
     const int chestId = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
     if (net::IsConnected() && LockedByPeer(chestId)) {
         Log("storage: chest %d is open by the other player", chestId);
+        stations::SayBusy(other);
         return;
     }
     g_origVaultInteract(self, other);

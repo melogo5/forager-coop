@@ -17,6 +17,10 @@ void Tick(yyc::CInstance* localPlayer);
 // Game thread: applies a station message; false if `message` is not one.
 bool Handle(const net::Message& message);
 
+// The local player says (speech bubble) that the other player is using what it tried to open - at most every
+// few seconds, so clicking again and again does not stack bubbles.
+void SayBusy(yyc::CInstance* player);
+
 // Forgets which stations are in use (the session is over).
 void Reset();
 
