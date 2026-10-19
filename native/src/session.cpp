@@ -21,6 +21,7 @@
 #include "mobs.h"
 #include "progress.h"
 #include "puppet.h"
+#include "quests.h"
 #include "storage.h"
 #include "unlocks.h"
 #include "sync.h"
@@ -155,7 +156,7 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             storage::Handle(message, localPlayer) || land::Handle(message, localPlayer) ||
             clock::Handle(message, localPlayer) ||
             unlocks::Handle(message, localPlayer) || coins::Handle(message, localPlayer) ||
-            progress::Handle(message, localPlayer)) {
+            progress::Handle(message, localPlayer) || quests::Handle(message, localPlayer)) {
             continue;
         }
         bool guestIntroduced = false;
@@ -313,6 +314,7 @@ void Tick(yyc::CInstance* localPlayer) {
     if (g_role == Role::kHost) coins::HostTick(localPlayer);
     if (g_role == Role::kGuest) coins::GuestTick(localPlayer);
     progress::Tick(localPlayer);
+    quests::Tick(localPlayer);
     HandleMessages(localPlayer);
     if (g_steps % kSendEverySteps == 0) {
         const PlayerStateMsg state = CaptureState(localPlayer);
@@ -367,6 +369,7 @@ void Leave() {
     unlocks::Reset();
     coins::Reset();
     progress::Reset();
+    quests::Reset();
     Log(host ? "session: stopped hosting; can create again" : "session: left the host's world; can join again");
 }
 
