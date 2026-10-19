@@ -2,18 +2,21 @@
 
 #include <windows.h>
 
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
 #include "MinHook.h"
 #include "log.h"
+#include "puppet.h"
 #include "sync.h"
 
 namespace coop::land {
 
 namespace {
 
-constexpr uint8_t kLand = 50;  // host -> guest: the host bought an island
+constexpr uint8_t kLand = 50;      // host -> guest: the host bought an island
+constexpr uint8_t kLandfill = 52;  // either way: LandfillMsg
 constexpr uint32_t kScriptSpawnLand = 0x00763750;  // SpawnLand(x, y, biome): x, y of the sale sign
 constexpr int kObjPurchaseLand = 229;              // the sign standing on an island for sale
 constexpr int kNoOne = -4;
@@ -35,6 +38,20 @@ struct LandMsg {
 constexpr uint32_t kPurchaseSignStep = 0x00E1F0F0;  // objPurchaseLand Step_0: buying happens here
 
 yyc::ScriptFn g_origSpawnLand = nullptr;
+
+// Landfill turns water into land (PlaceLandfill) and the obliterator land into water (RemoveLandfill): tiles,
+// not objects, so the peer repeats the call. It runs as the puppet there, so the energy it costs (EnergyDmg on
+// PlayerFind()) is not taken from the peer's own player.
+constexpr uint32_t kScriptPlaceLandfill = 0x007758C0;   // PlaceLandfill(x, y)
+constexpr uint32_t kScriptRemoveLandfill = 0x00777B00;  // RemoveLandfill(x, y)
+constexpr uint32_t kScriptWaterCollision = 0x004EF950;  // WaterCollision(x, y): water there
+yyc::ScriptFn g_origPlaceLandfill = nullptr;
+yyc::ScriptFn g_origRemoveLandfill = nullptr;
+
+struct LandfillMsg {
+    double x, y;
+    double remove;  // 1: RemoveLandfill
+};
 yyc::EventFn g_origSignStep = nullptr;
 bool (*g_isHost)() = nullptr;
 bool (*g_isGuest)() = nullptr;
@@ -127,6 +144,79 @@ void BuildAndShare(yyc::CInstance* localPlayer, LandMsg msg, const char* buyer) 
 
 }  // namespace
 
+yyc::RValue* ShareLandfill(yyc::ScriptFn original, bool remove, yyc::CInstance* self, yyc::CInstance* other,
+                           yyc::RValue* result, int argc, yyc::RValue** args) {
+    yyc::RValue* r = original(self, other, result, argc, args);
+    if (g_applying == 0 && argc >= 2 && net::IsConnected()) {
+        const LandfillMsg msg{yyc::ToReal(*args[0]), yyc::ToReal(*args[1]), remove ? 1.0 : 0.0};
+        net::Send(kLandfill, &msg, sizeof(msg));
+        Log("land: %s at (%.0f, %.0f) sent", remove ? "removed land" : "landfill", msg.x, msg.y);
+    }
+    return r;
+}
+
+yyc::RValue* __cdecl PlaceLandfillHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
+                                       yyc::RValue** args) {
+    return ShareLandfill(g_origPlaceLandfill, false, self, other, result, argc, args);
+}
+
+yyc::RValue* __cdecl RemoveLandfillHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
+                                        yyc::RValue** args) {
+    return ShareLandfill(g_origRemoveLandfill, true, self, other, result, argc, args);
+}
+
+bool IsWater(yyc::CInstance* self, double x, double y) {
+    yyc::RValue values[2] = {yyc::Real(x), yyc::Real(y)};
+    yyc::RValue* args[2] = {&values[0], &values[1]};
+    yyc::RValue result{};
+    yyc::At<yyc::ScriptFn>(kScriptWaterCollision)(self, self, &result, 2, args);
+    const bool water = yyc::ToReal(result) != 0;
+    yyc::Free(&result);
+    return water;
+}
+
+void ApplyLandfill(yyc::CInstance* localPlayer, const LandfillMsg& msg) {
+    yyc::RValue values[2] = {yyc::Real(msg.x), yyc::Real(msg.y)};
+    yyc::RValue* args[2] = {&values[0], &values[1]};
+    yyc::RValue result{};
+    ++g_applying;
+    puppet::BeginActing();
+    (msg.remove != 0 ? g_origRemoveLandfill : g_origPlaceLandfill)(localPlayer, localPlayer, &result, 2, args);
+    puppet::EndActing();
+    --g_applying;
+    yyc::Free(&result);
+    Log("land: the peer's %s at (%.0f, %.0f) applied; water there now: %d", msg.remove != 0 ? "removed land" : "landfill",
+        msg.x, msg.y, IsWater(localPlayer, msg.x, msg.y));
+}
+
+
+// Testing aid: COOP_DEBUG_LANDFILL=1 fills the nearest water tile (16 px grid, up to 10 tiles away) ~5 s in.
+void DebugLandfill(yyc::CInstance* localPlayer) {
+    static const bool enabled = GetEnvironmentVariableA("COOP_DEBUG_LANDFILL", nullptr, 0) > 0;
+    static unsigned steps = 0;
+    if (!enabled || ++steps != 300) return;
+    const double px = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_x);
+    const double py = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_y);
+    for (int r = 1; r <= 10; ++r) {
+        for (int dx = -r; dx <= r; ++dx) {
+            for (int dy = -r; dy <= r; ++dy) {
+                if (std::abs(dx) != r && std::abs(dy) != r) continue;
+                const double x = std::floor(px / 16) * 16 + 8 + dx * 16;
+                const double y = std::floor(py / 16) * 16 + 8 + dy * 16;
+                if (!IsWater(localPlayer, x, y)) continue;
+                yyc::RValue values[2] = {yyc::Real(x), yyc::Real(y)};
+                yyc::RValue* args[2] = {&values[0], &values[1]};
+                yyc::RValue result{};
+                PlaceLandfillHook(localPlayer, localPlayer, &result, 2, args);
+                yyc::Free(&result);
+                Log("land: debug landfill at (%.0f, %.0f); water there now: %d", x, y, IsWater(localPlayer, x, y));
+                return;
+            }
+        }
+    }
+    Log("land: debug landfill: no water nearby");
+}
+
 // Only the host buys islands (docs/coop/QUESTIONS.md): on the guest the sale signs don't react.
 void __cdecl SignStepHook(yyc::CInstance* self, yyc::CInstance* other) {
     if (g_isGuest != nullptr && g_isGuest() && net::IsConnected()) return;
@@ -138,6 +228,7 @@ void DebugBuy(yyc::CInstance* localPlayer);
 // Testing aid: COOP_DEBUG_BUYLAND=1 (host) buys the island of the nearest sale sign ~7 s into the world;
 // =<seconds> does it that late. Sale signs exist only while the BUY LAND tab of the player menu is open.
 void DebugTick(yyc::CInstance* localPlayer) {
+    DebugLandfill(localPlayer);
     static const unsigned atStep = [] {
         char value[16] = {};
         if (GetEnvironmentVariableA("COOP_DEBUG_BUYLAND", value, sizeof(value)) == 0) return 0u;
@@ -173,12 +264,24 @@ bool InstallHooks(bool (*isHost)(), bool (*isGuest)()) {
     const bool ok = MH_CreateHook(yyc::At<void*>(kScriptSpawnLand), reinterpret_cast<void*>(&SpawnLandHook),
                                   reinterpret_cast<void**>(&g_origSpawnLand)) == MH_OK &&
                     MH_CreateHook(yyc::At<void*>(kPurchaseSignStep), reinterpret_cast<void*>(&SignStepHook),
-                                  reinterpret_cast<void**>(&g_origSignStep)) == MH_OK;
+                                  reinterpret_cast<void**>(&g_origSignStep)) == MH_OK &&
+                    MH_CreateHook(yyc::At<void*>(kScriptPlaceLandfill), reinterpret_cast<void*>(&PlaceLandfillHook),
+                                  reinterpret_cast<void**>(&g_origPlaceLandfill)) == MH_OK &&
+                    MH_CreateHook(yyc::At<void*>(kScriptRemoveLandfill), reinterpret_cast<void*>(&RemoveLandfillHook),
+                                  reinterpret_cast<void**>(&g_origRemoveLandfill)) == MH_OK;
     if (!ok) Log("land: hooks failed");
     return ok;
 }
 
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
+    if (message.type == kLandfill) {
+        if (message.payload.size() == sizeof(LandfillMsg)) {
+            LandfillMsg msg{};
+            memcpy(&msg, message.payload.data(), sizeof(msg));
+            ApplyLandfill(localPlayer, msg);
+        }
+        return true;
+    }
     if (message.type != kLand) return false;
     if (message.payload.size() != sizeof(LandMsg)) return true;
     LandMsg msg{};
