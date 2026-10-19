@@ -20,6 +20,7 @@
 #include "log.h"
 #include "net.h"
 #include "character.h"
+#include "chests.h"
 #include "clock.h"
 #include "coins.h"
 #include "land.h"
@@ -194,7 +195,7 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             unlocks::Handle(message, localPlayer) || coins::Handle(message, localPlayer) ||
             progress::Handle(message, localPlayer) || quests::Handle(message, localPlayer) ||
             stations::Handle(message) || skills::Handle(message) ||
-            reconcile::Handle(message, localPlayer)) {
+            reconcile::Handle(message, localPlayer) || chests::Handle(message, localPlayer)) {
             continue;
         }
         bool guestIntroduced = false;
@@ -358,6 +359,7 @@ void Tick(yyc::CInstance* localPlayer) {
     unlocks::Tick(localPlayer);
     if (g_role == Role::kHost) reconcile::HostTick(localPlayer);
     reconcile::DebugTick(localPlayer);
+    chests::DebugTick(localPlayer);
     if (g_role == Role::kHost) coins::HostTick(localPlayer);
     if (g_role == Role::kGuest) coins::GuestTick(localPlayer);
     progress::Tick(localPlayer);
@@ -450,7 +452,7 @@ bool SessionInstall() {
     const auto isGuest = [] { return g_role == Role::kGuest; };
     if (!sync::InstallHooks(isHost, isGuest) || !mobs::InstallHooks(isHost, isGuest) ||
         !character::InstallHooks(isGuest) || !storage::InstallHooks() || !land::InstallHooks(isHost, isGuest) ||
-        !progress::InstallHooks() || !stations::InstallHooks()) {
+        !progress::InstallHooks() || !stations::InstallHooks() || !chests::InstallHooks()) {
         return false;
     }
     Role role = Role::kNone;
