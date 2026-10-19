@@ -87,6 +87,7 @@ constexpr int kNoOne = -4;
 
 constexpr uint32_t kScriptResourceSpawn = 0x00749E80;
 constexpr uint32_t kScriptResourceSpawnSingle = 0x00750710;
+constexpr uint32_t kScriptDirtProcess = 0x004BEB20;  // dirt left by broken objects grows herbs (wheat, cotton...)
 constexpr uint32_t kScriptGainXp = 0x00730600;
 constexpr uint32_t kScriptUnlockAchievement = 0x004A6DA0;  // UnlockAchievement(name): Steam achievement
 constexpr uint32_t kScriptHandleCrafting = 0x004AB790;  // a structure works on its craft; DropItem when done
@@ -109,6 +110,7 @@ std::unordered_set<int> g_destroyedOnHost;  // guest: host ids reported destroye
 
 yyc::ScriptFn g_origResourceSpawn = nullptr;
 yyc::ScriptFn g_origResourceSpawnSingle = nullptr;
+yyc::ScriptFn g_origDirtProcess = nullptr;
 yyc::ScriptFn g_origGainXp = nullptr;
 yyc::ScriptFn g_origHandleCrafting = nullptr;
 yyc::ScriptFn g_origUnlockAchievement = nullptr;
@@ -271,8 +273,10 @@ void DestroySilently(yyc::CInstance* self, int id) {
 bool CreatedByGuestAction() {
     const StackFrame* top = *yyc::At<StackFrame**>(yyc::va::StackTraceTop);
     if (top == nullptr || top->name == nullptr) return false;
+    // A seed is planted by the placement cursor UseSeed creates (objNewSeed), not by UseSeed itself.
     return strcmp(top->name, "gml_Object_objNewBuilding_Step_0") == 0 ||
-           strcmp(top->name, "gml_Script_UsePlaceableItem") == 0 || strcmp(top->name, "gml_Script_UseSeed") == 0;
+           strcmp(top->name, "gml_Script_UsePlaceableItem") == 0 || strcmp(top->name, "gml_Script_UseSeed") == 0 ||
+           strcmp(top->name, "gml_Object_objNewSeed_Step_0") == 0;
 }
 
 void __cdecl CreateHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstance* other, int argc,
@@ -393,6 +397,17 @@ yyc::RValue* __cdecl ResourceSpawnSingleHook(yyc::CInstance* self, yyc::CInstanc
                                              int argc, yyc::RValue** args) {
     if (IsGuest()) return SpawnedNothing(result);
     return g_origResourceSpawnSingle(self, other, result, argc, args);
+}
+
+// Guest: herbs growing out of dirt are the host's to spawn (PLAYTEST.md #5): ours would exist here only. The
+// dirt itself still goes away as usual.
+yyc::RValue* __cdecl DirtProcessHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
+                                     yyc::RValue** args) {
+    if (!IsGuest() || !Connected()) return g_origDirtProcess(self, other, result, argc, args);
+    BeginSuppressSpawns();
+    yyc::RValue* r = g_origDirtProcess(self, other, result, argc, args);
+    EndSuppressSpawns(self);
+    return r;
 }
 
 yyc::RValue* __cdecl HandleCraftingHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
@@ -744,6 +759,7 @@ bool InstallHooks(bool (*isHost)(), bool (*isGuest)()) {
     bool ok = Hook(kScriptResourceSpawn, reinterpret_cast<void*>(&ResourceSpawnHook), &g_origResourceSpawn);
     ok = Hook(kScriptResourceSpawnSingle, reinterpret_cast<void*>(&ResourceSpawnSingleHook),
               &g_origResourceSpawnSingle) && ok;
+    ok = Hook(kScriptDirtProcess, reinterpret_cast<void*>(&DirtProcessHook), &g_origDirtProcess) && ok;
     ok = Hook(kScriptGainXp, reinterpret_cast<void*>(&GainXpHook), &g_origGainXp) && ok;
     ok = Hook(kScriptHandleCrafting, reinterpret_cast<void*>(&HandleCraftingHook), &g_origHandleCrafting) && ok;
     ok = Hook(kScriptUnlockAchievement, reinterpret_cast<void*>(&UnlockAchievementHook), &g_origUnlockAchievement) &&
