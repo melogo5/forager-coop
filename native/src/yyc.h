@@ -117,6 +117,8 @@ bool IsSupportedBuild();
 
 RValue Real(double value);
 double ToReal(const RValue& value);
+// A real, int32 or int64: the game keeps some numbers (e.g. read from a save) as integers.
+bool IsNumber(const RValue& value);
 void Free(RValue* value);
 // A new GML string (free it with Free once the runtime has copied it, like any other RValue).
 RValue String(const char* text);

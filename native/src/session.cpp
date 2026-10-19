@@ -27,6 +27,7 @@
 #include "progress.h"
 #include "puppet.h"
 #include "quests.h"
+#include "skills.h"
 #include "stations.h"
 #include "storage.h"
 #include "unlocks.h"
@@ -40,7 +41,7 @@ namespace coop {
 
 namespace {
 
-constexpr uint32_t kProtocolVersion = 4;  // 4: PlayerStateMsg.tool
+constexpr uint32_t kProtocolVersion = 5;  // 5: own skills per player (kSkills), unlocks both ways
 constexpr unsigned kSendEverySteps = 3;       // 60 fps game step -> 20 updates/s
 constexpr unsigned kAnnounceEverySteps = 30;  // refresh the LAN announcement twice a second
 constexpr int kSlotGodMode = 0x54C;           // global.godMode (decompiled/code/var_slots.tsv)
@@ -191,13 +192,16 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             clock::Handle(message, localPlayer) ||
             unlocks::Handle(message, localPlayer) || coins::Handle(message, localPlayer) ||
             progress::Handle(message, localPlayer) || quests::Handle(message, localPlayer) ||
-            stations::Handle(message)) {
+            stations::Handle(message) || skills::Handle(message)) {
             continue;
         }
         bool guestIntroduced = false;
         if (g_role == Role::kHost && character::HostHandle(message, localPlayer, &guestIntroduced)) {
             // The guest's character answer is out; now the world, so it arrives after it.
-            if (guestIntroduced) world::HostRequestSnapshot(localPlayer);
+            if (guestIntroduced) {
+                skills::HostOnGuest(character::HostGuestName());
+                world::HostRequestSnapshot(localPlayer);
+            }
             continue;
         }
         if (message.type == kBye && g_role == Role::kGuest) {
@@ -347,12 +351,13 @@ void Tick(yyc::CInstance* localPlayer) {
     land::DebugTick(localPlayer);
     if (g_role == Role::kHost) mobs::HostTick(localPlayer);
     if (g_role == Role::kHost) clock::HostTick(localPlayer);
-    if (g_role == Role::kHost) unlocks::HostTick(localPlayer);
+    unlocks::Tick(localPlayer);
     if (g_role == Role::kHost) coins::HostTick(localPlayer);
     if (g_role == Role::kGuest) coins::GuestTick(localPlayer);
     progress::Tick(localPlayer);
     quests::Tick(localPlayer);
     stations::Tick(localPlayer);
+    skills::Tick(localPlayer);
     HandleMessages(localPlayer);
     if (g_steps % kSendEverySteps == 0) {
         const PlayerStateMsg state = CaptureState(localPlayer);
@@ -409,6 +414,7 @@ void Leave() {
     progress::Reset();
     quests::Reset();
     stations::Reset();
+    skills::Reset();
     Log(host ? "session: stopped hosting; can create again" : "session: left the host's world; can join again");
 }
 

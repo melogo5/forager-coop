@@ -61,8 +61,7 @@ bool Crafting(int station) {
     bool busy = false;
     if ((crafting.kind & yyc::kKindMask) == yyc::kArray) {
         const yyc::RValue item = yyc::ArrayElement(&crafting, 0);
-        const uint32_t kind = item.kind & yyc::kKindMask;  // the item is set as an integer while crafting
-        busy = (kind == yyc::kReal || kind == yyc::kInt32 || kind == yyc::kInt64) && yyc::ToReal(item) >= 0;
+        busy = yyc::IsNumber(item) && yyc::ToReal(item) >= 0;  // the item is set as an integer while crafting
     }
     yyc::Free(&crafting);
     return busy;

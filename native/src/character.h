@@ -18,6 +18,12 @@ bool InstallHooks(bool (*isGuest)());
 std::string SavedGuestName();
 void SetGuestName(const std::string& name);
 
+// Host: <save area>/saveData<current slot>/coop_guests/<name><extension>, for more of the guest's data.
+// Host: the name of the guest that introduced itself last.
+std::string HostGuestName();
+
+std::wstring GuestDataFile(const std::string& name, const char* extension);
+
 // Guest, network thread: right after connecting.
 void GuestOnConnect();
 // Guest, network thread: consumes the host's character answer.

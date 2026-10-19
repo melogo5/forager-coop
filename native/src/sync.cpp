@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <unordered_map>
 #include <unordered_set>
@@ -810,8 +811,8 @@ void DebugCullTest(yyc::CInstance* localPlayer) {
 }
 
 // The shared progress lives in the host's player: level, xp, xpCap (XP for the next level), xpToGain (XP still
-// being counted up), availableSkillPoints. The host sends it twice a second; the guest's player shows it -
-// except the skill points: only the host buys skills (QUESTIONS.md), so the guest always has none to spend.
+// being counted up), and (unused) a slot that is not the player's: skill points live on WorldControl and each
+// player has its own (skills.h). The host sends it twice a second; the guest's player shows it.
 constexpr int kProgressSlots[] = {0x603, 0x90E, 0x910, 0x912, 0x8F};  // decompiled/code/var_slots.tsv
 constexpr unsigned kProgressEverySteps = 30;
 
@@ -827,20 +828,44 @@ void SendProgress(yyc::CInstance* localPlayer) {
 void ApplyProgress(yyc::CInstance* localPlayer, const ProgressMsg& msg) {
     static float shownLevel = -1;
     const int id = static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_id));
-    const float values[5] = {msg.level, msg.xp, msg.xpCap, msg.xpToGain, 0};
-    for (int i = 0; i < 5; ++i) {
+    // The fifth value (skill points) is the host's own: each player has its own points (skills.h).
+    const float values[4] = {msg.level, msg.xp, msg.xpCap, msg.xpToGain};
+    // A loaded character may keep these as integers: any number is overwritten; anything else (not set up yet)
+    // is left alone.
+    for (int i = 0; i < 4; ++i) {
         yyc::RValue current{};
-        const bool number = yyc::GetVar(id, kProgressSlots[i], &current) &&
-                            (current.kind & yyc::kKindMask) == yyc::kReal;
+        const bool number = yyc::GetVar(id, kProgressSlots[i], &current) && yyc::IsNumber(current);
+        const uint32_t kind = current.kind & yyc::kKindMask;
         yyc::Free(&current);
-        if (!number) continue;
+        if (!number) {
+            static bool told[4] = {};
+            if (!told[i]) Log("sync: progress slot 0x%X is kind %u here - not set", kProgressSlots[i], kind);
+            told[i] = true;
+            continue;
+        }
         yyc::RValue value = yyc::Real(values[i]);
         yyc::SetVar(id, kProgressSlots[i], &value);
     }
     if (msg.level != shownLevel) {
-        Log("sync: shared progress: level %.0f, xp %.0f/%.0f", msg.level, msg.xp, msg.xpCap);
+        Log("sync: shared progress: level %.0f, xp %.0f/%.0f (level here now %.0f)", msg.level, msg.xp, msg.xpCap,
+            ReadVar(id, kProgressSlots[0]));
         shownLevel = msg.level;
     }
+}
+
+// Testing aid: COOP_DEBUG_XP=<amount> gives the host that much XP every ~10 s (level-ups on both sides).
+void DebugXp(yyc::CInstance* localPlayer) {
+    static const double amount = [] {
+        char text[16] = {};
+        return GetEnvironmentVariableA("COOP_DEBUG_XP", text, sizeof(text)) > 0 ? atof(text) : 0.0;
+    }();
+    if (amount <= 0 || !IsHost() || !Connected() || g_steps == 0 || g_steps % 600 != 0) return;
+    Log("sync: debug gives the host %.0f XP", amount);
+    yyc::RValue value = yyc::Real(amount);
+    yyc::RValue* args[1] = {&value};
+    yyc::RValue result{};
+    g_origGainXp(localPlayer, localPlayer, &result, 1, args);
+    yyc::Free(&result);
 }
 
 // Testing aid: COOP_DEBUG_DUNGEON=1 tries to enter the first dungeon room ~5 s in (it must be refused).
@@ -935,6 +960,7 @@ void Tick(yyc::CInstance* localPlayer) {
     if (IsGuest()) CollectCrafted(localPlayer);
     DebugCraftDrop(localPlayer);
     DebugDungeon(localPlayer);
+    DebugXp(localPlayer);
     if (++g_steps % kStatsEverySteps == 0) {
         Log("sync: sent spawn %u destroy %u hit %u gone %u | applied spawn %u destroy %u hit %u gone %u",
             g_sent[kSpawn], g_sent[kDestroy], g_sent[kHit], g_sent[kGuestDestroyed], g_applied[kSpawn],

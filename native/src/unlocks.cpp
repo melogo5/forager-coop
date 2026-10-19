@@ -12,7 +12,7 @@ namespace coop::unlocks {
 
 namespace {
 
-constexpr uint8_t kUnlocks = 70;  // host -> guest: u16 structure indices the host has unlocked
+constexpr uint8_t kUnlocks = 70;  // either way: u16 structure indices unlocked on the sender's side
 constexpr unsigned kEverySteps = 300;
 constexpr int kObjData = 2;             // the Data object (decompiled/data/objects.tsv)
 constexpr int kSlotStructures = 0x83E;  // Data.structures[]: one entry per structure
@@ -22,7 +22,7 @@ constexpr uint32_t kScriptStructureGet = 0x0070DD60;
 constexpr uint32_t kScriptStructureEdit = 0x0070CA50;
 constexpr int kNoOne = -4;
 
-std::vector<uint16_t> g_lastSent;  // host
+std::vector<uint16_t> g_lastSent;
 unsigned g_steps = 0;
 
 double CallReal(yyc::CInstance* self, const char* builtin, std::initializer_list<double> values) {
@@ -72,9 +72,9 @@ void Unlock(yyc::CInstance* self, int structure) {
 
 }  // namespace
 
-void HostTick(yyc::CInstance* localPlayer) {
+void Tick(yyc::CInstance* localPlayer) {
     if (++g_steps % kEverySteps != 0) return;
-    // Testing aid: COOP_DEBUG_UNLOCKS=1 tells the guest every structure is unlocked (the host is unchanged).
+    // Testing aid: COOP_DEBUG_UNLOCKS=1 tells the peer every structure is unlocked (this side is unchanged).
     static const bool everything = GetEnvironmentVariableA("COOP_DEBUG_UNLOCKS", nullptr, 0) > 0;
     std::vector<uint16_t> unlocked;
     const int count = StructureCount(localPlayer);
@@ -100,7 +100,7 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
         Unlock(localPlayer, s);
         ++added;
     }
-    Log("unlocks: the host has %zu structures unlocked; %zu were new here", n, added);
+    if (added > 0) Log("unlocks: the other player has %zu structures unlocked; %zu were new here", n, added);
     return true;
 }
 

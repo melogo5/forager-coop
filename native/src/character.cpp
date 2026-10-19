@@ -155,6 +155,13 @@ bool InstallHooks(bool (*isGuest)()) {
     return status == MH_OK;
 }
 
+std::string HostGuestName() { return g_guestName; }
+
+std::wstring GuestDataFile(const std::string& name, const char* extension) {
+    fs::path path = GuestFile(name);
+    return path.empty() ? std::wstring() : path.replace_extension(extension).wstring();
+}
+
 std::string SavedGuestName() {
     std::ifstream in(SaveArea() / kNameFile);
     std::string name;

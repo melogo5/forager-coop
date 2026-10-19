@@ -27,8 +27,7 @@ int PlayerId(yyc::CInstance* player) { return static_cast<int>(yyc::GetBuiltinRe
 bool ReadCoins(yyc::CInstance* player, double* value) {
     yyc::RValue coins{};
     if (!yyc::GetVar(PlayerId(player), kSlotCoins, &coins)) return false;
-    const uint32_t kind = coins.kind & yyc::kKindMask;
-    const bool number = kind == yyc::kReal || kind == yyc::kInt32 || kind == yyc::kInt64;
+    const bool number = yyc::IsNumber(coins);
     if (number) *value = yyc::ToReal(coins);
     yyc::Free(&coins);
     return number;

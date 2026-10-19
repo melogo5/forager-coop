@@ -91,6 +91,11 @@ double ToReal(const RValue& value) {
     }
 }
 
+bool IsNumber(const RValue& value) {
+    const uint32_t kind = value.kind & kKindMask;
+    return kind == kReal || kind == kInt32 || kind == kInt64;
+}
+
 void Free(RValue* value) {
     // Same test the runtime inlines (kinds 1..4 on the unmasked value); FREE_RValue itself frees only 1..3.
     if (((value->kind - 1) & 0xFFFFFC) == 0) At<FreeFn>(va::FREE_RValue)(value);
