@@ -31,6 +31,8 @@ bool GuestHandleReceive(const net::Message& message);
 // Guest: the host's answer has arrived (the world must not be loaded before).
 bool GuestReady();
 // Guest, game thread, every step in the world: periodic upload.
+// Guest: uploads the character the game saved last (e.g. by "save and exit") right away.
+void GuestUploadNow();
 void GuestTick(yyc::CInstance* localPlayer);
 
 // Host, game thread: handles guest introductions and character uploads; false for other messages.

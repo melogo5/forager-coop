@@ -195,15 +195,19 @@ bool GuestHandleReceive(const net::Message& message) {
 
 bool GuestReady() { return g_answered; }
 
-// Every minute: save into the temporary slot, then upload its Data.cin and remove the slot again.
+void GuestUploadNow() {
+    const std::vector<uint8_t> data = ReadFile(fs::path(world::GuestSlotPath()) / L"Data.cin");
+    if (data.empty()) {
+        Log("character: save produced no Data.cin");
+    } else if (!net::Send(kCharacterSave, data.data(), data.size())) {
+        Log("character: upload of %zu bytes failed", data.size());
+    }
+}
+
+// Every 15 s: save into the temporary slot, then upload its Data.cin.
 void GuestTick(yyc::CInstance* localPlayer) {
     if (g_settle > 0 && --g_settle == 0) {
-        const std::vector<uint8_t> data = ReadFile(fs::path(world::GuestSlotPath()) / L"Data.cin");
-        if (data.empty()) {
-            Log("character: save produced no Data.cin");
-        } else if (!net::Send(kCharacterSave, data.data(), data.size())) {
-            Log("character: upload of %zu bytes failed", data.size());
-        }
+        GuestUploadNow();
         return;
     }
     if (++g_steps % kUploadEverySteps != 0 || !net::IsConnected()) return;

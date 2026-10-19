@@ -19,6 +19,9 @@ namespace coop {
 
 namespace {
 
+constexpr unsigned kGuestLeaveSettleSteps = 60;  // SaveGame is asynchronous
+unsigned g_guestLeaveSteps = 0;
+
 // Main menu objects and events (decompiled/code/index.tsv, data/objects.tsv, data/sprites.tsv).
 constexpr int kObjMenuButton = 249;  // objNewMainMenuButton
 constexpr int kSprMenuPlay = 1329;   // sprMainMenuPlay: the PLAY button opens the save selection
@@ -318,7 +321,15 @@ void Step(yyc::CInstance* control) {
     // a new one. A guest's working copy of the host's world (slot 99) goes, so it never sits in the player's
     // own save list.
     if (session::CurrentRole() != session::Role::kNone && session::PlayedWorld()) {
-        if (session::CurrentRole() == session::Role::kGuest) world::RemoveGuestSaveSlot();
+        if (session::CurrentRole() == session::Role::kGuest) {
+            // "Save and exit" has just saved the guest's character into slot 99 (asynchronously): give it a
+            // moment, then send it to the host, so nothing taken in the last seconds is lost (PLAYTEST.md #2).
+            if (++g_guestLeaveSteps < kGuestLeaveSettleSteps) return;
+            g_guestLeaveSteps = 0;
+            character::GuestUploadNow();
+            Log("menu: the guest's last save sent to the host");
+            world::RemoveGuestSaveSlot();
+        }
         session::Leave();
         g_loadingWorld = false;
         g_notice = session::TakeNotice();
