@@ -109,6 +109,7 @@ $ctl = 'Z:\repos\forager-coop\tools\gametest\gamectl.ps1'
 | `COOP_DEBUG_LANDFILL=1` (любой) | через ~5 с засыпает ближайшую воду; у напарника в логе `the peer's landfill ... water there now: 0` |
 | `COOP_DEBUG_MUSEUM=<item>` (любой) | через ~5 с добавляет предмет в список музея; у напарника `progress: museum updated from the peer` |
 | `COOP_DEBUG_QUEST=1\|<секунды>` (любой) | «трогает» первого NPC (NPCSetState + hasSpoken) через ~8 с или позже; у напарника `quests: NPC ... now` |
+| `COOP_DEBUG_PROTOCOL=<n>` (любой) | сторона притворяется версией протокола n |
 | `COOP_DEBUG_CULLTEST=1` (обоим) | уничтожение объектов, усыплённых у гостя: обе стороны пишут в лог список камней, хост уничтожает дальние, обе пишут список снова — списки должны совпасть (`=85` — деревья) |
 
 ## Ещё не записано

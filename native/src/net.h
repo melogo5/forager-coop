@@ -16,6 +16,8 @@ struct Message {
 
 void StartHost(uint16_t port);
 void StartJoin(const std::string& host, uint16_t port);
+// Host: drops the current guest and keeps accepting new ones.
+void DropPeer();
 // Drops the link and stops hosting/reconnecting; a later StartHost/StartJoin starts over.
 void Stop();
 

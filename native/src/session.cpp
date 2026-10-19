@@ -6,6 +6,7 @@
 #include <shellapi.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -148,6 +149,17 @@ void GuestGoToMenu(yyc::CInstance* localPlayer, const char* why) {
     yyc::Free(&result);
 }
 
+// The protocol version this side speaks. Testing aid: COOP_DEBUG_PROTOCOL=<n> pretends to be another build.
+uint32_t OurProtocol() {
+    static const uint32_t version = [] {
+        char claimed[16] = {};
+        return GetEnvironmentVariableA("COOP_DEBUG_PROTOCOL", claimed, sizeof(claimed)) > 0
+                   ? static_cast<uint32_t>(atoi(claimed))
+                   : kProtocolVersion;
+    }();
+    return version;
+}
+
 void HandleMessages(yyc::CInstance* localPlayer) {
     std::vector<net::Message> inbox;
     net::Drain(inbox);
@@ -172,7 +184,16 @@ void HandleMessages(yyc::CInstance* localPlayer) {
         if (message.type == kHello && message.payload.size() == sizeof(HelloMsg)) {
             HelloMsg hello{};
             memcpy(&hello, message.payload.data(), sizeof(hello));
-            Log("session: peer protocol %u (ours %u)", hello.version, kProtocolVersion);
+            Log("session: peer protocol %u (ours %u)", hello.version, OurProtocol());
+            if (hello.version != OurProtocol()) {  // different builds of the patch would desync silently
+                if (g_role == Role::kGuest) {
+                    g_notice = "The host has another coop version";
+                    GuestGoToMenu(localPlayer, "the host has another protocol version");
+                    return;
+                }
+                Log("session: dropping the guest - another protocol version");
+                net::DropPeer();
+            }
         } else if (message.type == kPlayerState && message.payload.size() == sizeof(PlayerStateMsg)) {
             memcpy(&g_remote, message.payload.data(), sizeof(g_remote));
             g_haveRemote = true;
@@ -280,7 +301,7 @@ void Tick(yyc::CInstance* localPlayer) {
     const bool connected = net::IsConnected();
     if (g_role == Role::kHost && g_steps % kAnnounceEverySteps == 0) Announce(connected);
     if (connected && !g_wasConnected) {
-        const HelloMsg hello{kProtocolVersion};
+        const HelloMsg hello{OurProtocol()};
         net::Send(kHello, &hello, sizeof(hello));
     }
     if (g_role == Role::kHost) world::HostTick();
