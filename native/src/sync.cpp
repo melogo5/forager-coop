@@ -35,13 +35,14 @@ constexpr int kSlotHp = 0x573;
 constexpr int kSlotHpAlpha = 0x574;
 constexpr int kSlotHpLast = 0x575;
 constexpr int kSlotHpWhite = 0x577;
+constexpr int kSlotDmg = 0x197;  // objPlayer.dmg: what a hit takes off an object (parObject Other_10)
 
 #pragma pack(push, 1)
 struct ObjectMsg {
     int32_t id;  // the host's instance id; -1 when the sender does not know it
     int32_t object;
     float x, y;
-    float depth;    // kSpawn only
+    float depth;    // kSpawn: the depth; kHit: the guest's `dmg` (its tool's damage)
     int32_t item;   // kSpawn of a drop: its `item`; otherwise kNoItem
     int32_t owner;  // kSpawn of a drop: who may collect it (kOwnerAnyone/Host/Guest)
     float sprite;   // kSpawn: the look it rolled after creation (ore vs plain rock...); -1 = keep
@@ -97,6 +98,7 @@ bool (*g_isGuest)() = nullptr;
 yyc::CInstance* g_localPlayer = nullptr;
 bool g_builtinsHooked = false;
 int g_applyingRemote = 0;  // >0 while carrying out a peer's change: do not report it back
+bool g_dryHit = false;     // guest: inside a hit shown locally only (DryHit)
 
 int8_t g_syncedCache[kMaxObjects] = {};  // 0 unknown, 1 synced, -1 not
 std::unordered_map<int, int> g_hostToLocal;  // guest: host instance id -> replica id
@@ -302,7 +304,7 @@ void __cdecl CreateHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstanc
 // id == -1: self; otherwise an instance id (or an object index, which is not tracked).
 void __cdecl DestroyHook(yyc::CInstance* self, yyc::CInstance* other, int id, int executeEvent) {
     yyc::CInstance* target = id == -1 ? self : id >= 100000 ? yyc::FindInstance(id) : nullptr;
-    const bool report = target != nullptr && g_applyingRemote == 0 && Connected();
+    const bool report = target != nullptr && g_applyingRemote == 0 && !g_dryHit && Connected();
     InstanceInfo info{};
     bool synced = false;
     if (report) {
@@ -419,6 +421,7 @@ void CollectCrafted(yyc::CInstance* localPlayer) {
 // as kProgress.
 yyc::RValue* __cdecl GainXpHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                 yyc::RValue** args) {
+    if (g_dryHit) return result;  // the hit's XP comes from the host
     if (argc >= 1 && IsGuest() && Connected() && g_applyingRemote == 0) {
         const XpMsg msg{static_cast<float>(yyc::ToReal(*args[0]))};
         net::Send(kXp, &msg, sizeof(msg));
@@ -476,6 +479,45 @@ void ApplyHp(yyc::CInstance* self, const HpMsg& msg) {
     }
 }
 
+// Guest: a tool hit goes to the host with the guest's own damage (the puppet's would be used there otherwise).
+void SendHit(const InstanceInfo& info) {
+    const auto host = g_localToHost.find(info.id);
+    ObjectMsg msg{host != g_localToHost.end() ? host->second : -1, info.object, static_cast<float>(info.x),
+                  static_cast<float>(info.y), 0, kNoItem, kOwnerAnyone, -1, 0};
+    if (g_localPlayer != nullptr) {
+        msg.depth = ReadVar(static_cast<int>(yyc::GetBuiltinReal(g_localPlayer, yyc::va::YYVar_id)), kSlotDmg);
+    }
+    if (net::Send(kHit, &msg, sizeof(msg))) ++g_sent[kHit];
+}
+
+bool IsEnemy(yyc::CInstance* self, int object) {
+    constexpr int kParEnemy = 23;
+    return object == kParEnemy || Builtin(self, "object_is_ancestor", {double(object), double(kParEnemy)}) != 0;
+}
+
+// Guest: the hit is also shown here - shake, flash, sound, particles - by running the object's own hit event
+// with its health padded so that it cannot break, and put back afterwards. Nothing it does is reported or
+// kept: no XP, no destroys, no drops (the host decides those, PLAYTEST.md #7).
+void DryHit(yyc::CInstance* target, yyc::CInstance* player) {
+    constexpr double kPadding = 1e6;
+    const int id = static_cast<int>(yyc::GetBuiltinReal(target, yyc::va::YYVar_id));
+    yyc::RValue hp{};
+    const bool number = yyc::GetVar(id, kSlotHp, &hp) && yyc::IsNumber(hp);
+    const double before = number ? yyc::ToReal(hp) : 0;
+    yyc::Free(&hp);
+    if (!number) return;
+    yyc::RValue padded = yyc::Real(before + kPadding);
+    yyc::SetVar(id, kSlotHp, &padded);
+    g_dryHit = true;
+    BeginSuppressSpawns();
+    g_origEventUser(target, player, 0);
+    EndSuppressSpawns(target);
+    g_dryHit = false;
+    if (yyc::FindInstance(id) == nullptr) return;
+    yyc::RValue restored = yyc::Real(before);
+    yyc::SetVar(id, kSlotHp, &restored);
+}
+
 // Guest: a tool hit is `with (target) event_user(0)` with the player as `other`; the host decides its outcome.
 // Host: its own tool hits are shown on the guest's copy (health bar).
 void __cdecl EventUserHook(yyc::CInstance* self, yyc::CInstance* other, int n) {
@@ -496,9 +538,9 @@ void __cdecl EventUserHook(yyc::CInstance* self, yyc::CInstance* other, int n) {
         g_origEventUser(self, other, n);
         return;
     }
-    const auto host = g_localToHost.find(info.id);
-    Send(kHit, info, host != g_localToHost.end() ? host->second : -1);
+    SendHit(info);
     Log("sync: hit object %d at (%.0f, %.0f) sent to the host", info.object, info.x, info.y);
+    if (!IsEnemy(self, info.object)) DryHit(self, other);
 }
 
 // Host: a drop touching the guest's puppet must not land in the host's inventory; the guest collects
@@ -637,17 +679,28 @@ void ApplyHit(yyc::CInstance* self, const ObjectMsg& msg, bool woken = false) {
         WakeThen(self, msg.object, [self, msg] { ApplyHit(self, msg, true); });
         return;
     }
-    Log("sync: guest hit object %d at (%.0f, %.0f): %s", msg.object, msg.x, msg.y,
-        target == nullptr ? "not found" : guest == nullptr ? "no puppet" : "applied");
+    Log("sync: guest hit object %d at (%.0f, %.0f): %s (dmg %.1f)", msg.object, msg.x, msg.y,
+        target == nullptr ? "not found" : guest == nullptr ? "no puppet" : "applied", msg.depth);
     if (target == nullptr || guest == nullptr) return;
     const int targetId = static_cast<int>(yyc::GetBuiltinReal(target, yyc::va::YYVar_id));
     g_hitByGuest.insert(targetId);
     // Like UsePickaxe: marks the hit as the player's, which enemies need to reward XP when they die.
     yyc::RValue killedByPlayer = yyc::Real(yyc::GetBuiltinReal(target, kYYVarRoomSpeed));
     yyc::SetVar(targetId, kSlotKilledByPlayer, &killedByPlayer);
+    // The guest's tool decides the damage: the puppet carries the guest's `dmg` for this hit (PLAYTEST.md #6).
+    const int guestId = static_cast<int>(yyc::GetBuiltinReal(guest, yyc::va::YYVar_id));
+    const float puppetDmg = ReadVar(guestId, kSlotDmg);
+    if (msg.depth > 0) {
+        yyc::RValue dmg = yyc::Real(msg.depth);
+        yyc::SetVar(guestId, kSlotDmg, &dmg);
+    }
     puppet::BeginActing();
     yyc::PerformEvent(target, guest, yyc::kEvOther, yyc::kEvUser0);
     puppet::EndActing();
+    if (msg.depth > 0 && yyc::FindInstance(guestId) != nullptr) {
+        yyc::RValue dmg = yyc::Real(puppetDmg);
+        yyc::SetVar(guestId, kSlotDmg, &dmg);
+    }
     SendHp(yyc::FindInstance(targetId));  // gone if the hit destroyed it
 }
 
@@ -717,10 +770,9 @@ void DebugAutoHit(yyc::CInstance* localPlayer) {
     const int id = static_cast<int>(Builtin(localPlayer, "instance_nearest", {x, y, double(target)}));
     yyc::CInstance* enemy = id == kNoOne ? nullptr : yyc::FindInstance(id);
     if (enemy == nullptr) return;
-    const InstanceInfo info = Describe(enemy);
-    const auto host = g_localToHost.find(info.id);
-    Send(kHit, info, host != g_localToHost.end() ? host->second : -1);
-    Log("sync: debug auto-hit on object %d", info.object);
+    SendHit(Describe(enemy));
+    if (!IsEnemy(localPlayer, target)) DryHit(enemy, localPlayer);  // as a real tool hit shows it
+    Log("sync: debug auto-hit on object %d", static_cast<int>(yyc::GetBuiltinReal(enemy, yyc::va::YYVar_object_index)));
 }
 
 // Testing aid: COOP_DEBUG_BUILD=<object index> makes the guest build that object next to itself ~5 s
@@ -1031,7 +1083,7 @@ void EndSuppressSpawns(yyc::CInstance* self) {
     for (const int id : g_suppressed) {
         if (yyc::FindInstance(id) != nullptr) DestroySilently(self, id);
     }
-    Log("sync: removed %zu locally generated objects", g_suppressed.size());
+    if (!g_suppressed.empty()) Log("sync: removed %zu locally generated objects", g_suppressed.size());
     g_suppressed.clear();
 }
 
