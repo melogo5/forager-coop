@@ -107,6 +107,7 @@ $ctl = 'Z:\repos\forager-coop\tools\gametest\gamectl.ps1'
 | `COOP_DEBUG_COINS=<сумма>` (любой) | через ~5 с прибавляет монеты этой стороне, как заработанные (в новом мире для консоли нужен `-Cheats`) |
 | `COOP_DEBUG_CHEATS=1` (`coopflow -Cheats`) | включает читы мира (`global.cheatsEnabled`) — в новом мире без них не работают `/give`, `/spawn` |
 | `COOP_DEBUG_LANDFILL=1` (любой) | через ~5 с засыпает ближайшую воду; у напарника в логе `the peer's landfill ... water there now: 0` |
+| `COOP_DEBUG_MUSEUM=<item>` (любой) | через ~5 с добавляет предмет в список музея; у напарника `progress: museum updated from the peer` |
 | `COOP_DEBUG_CULLTEST=1` (обоим) | уничтожение объектов, усыплённых у гостя: обе стороны пишут в лог список камней, хост уничтожает дальние, обе пишут список снова — списки должны совпасть (`=85` — деревья) |
 
 ## Ещё не записано

@@ -19,6 +19,7 @@
 #include "coins.h"
 #include "land.h"
 #include "mobs.h"
+#include "progress.h"
 #include "puppet.h"
 #include "storage.h"
 #include "unlocks.h"
@@ -153,7 +154,8 @@ void HandleMessages(yyc::CInstance* localPlayer) {
         if (sync::Handle(message, localPlayer) || mobs::Handle(message, localPlayer) ||
             storage::Handle(message, localPlayer) || land::Handle(message, localPlayer) ||
             clock::Handle(message, localPlayer) ||
-            unlocks::Handle(message, localPlayer) || coins::Handle(message, localPlayer)) {
+            unlocks::Handle(message, localPlayer) || coins::Handle(message, localPlayer) ||
+            progress::Handle(message, localPlayer)) {
             continue;
         }
         bool guestIntroduced = false;
@@ -264,6 +266,7 @@ yyc::RValue* __cdecl IsMenuOpenHook(yyc::CInstance* self, yyc::CInstance* other,
 }
 
 // Runs after the local player's Step_0, i.e. only while in a world.
+
 void Tick(yyc::CInstance* localPlayer) {
     ApplyDebugGodMode();
     ApplyDebugCheats();
@@ -309,6 +312,7 @@ void Tick(yyc::CInstance* localPlayer) {
     if (g_role == Role::kHost) unlocks::HostTick(localPlayer);
     if (g_role == Role::kHost) coins::HostTick(localPlayer);
     if (g_role == Role::kGuest) coins::GuestTick(localPlayer);
+    progress::Tick(localPlayer);
     HandleMessages(localPlayer);
     if (g_steps % kSendEverySteps == 0) {
         const PlayerStateMsg state = CaptureState(localPlayer);
@@ -362,6 +366,7 @@ void Leave() {
     storage::Reset();
     unlocks::Reset();
     coins::Reset();
+    progress::Reset();
     Log(host ? "session: stopped hosting; can create again" : "session: left the host's world; can join again");
 }
 
