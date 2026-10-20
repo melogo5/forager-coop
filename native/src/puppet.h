@@ -15,6 +15,8 @@ struct State {
     float imageIndex, xscale, yscale, depth;
     int sprite;
     int tool;  // item in hand, -4 = none
+    float hp, hpMax;
+    char name[16];  // shown over the puppet, with its hearts; not 0-terminated when all 16 are used
 };
 
 using LocalStepFn = void (*)(yyc::CInstance* localPlayer);

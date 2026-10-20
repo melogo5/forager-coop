@@ -502,6 +502,7 @@ void DumpSprites(yyc::CInstance* control) {
         {"sprTextBox", 1266},          {"sprTextBoxDisabled", 1268}, {"sprSaveSlot", 1285},
         {"sprSaveSlotOverlay", 1286},  {"sprMainMenuButton", 1287},  {"sprMainMenuIcons", 1292},
         {"sprMenuTabWindow", 1222},    {"sprInventorySlot", 1243},   {"sprCheckbox", 1283},
+        {"sprHeart", 1269},
     };
     for (const auto& [name, index] : sprites) {
         const double sprite = index;

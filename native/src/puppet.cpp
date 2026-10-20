@@ -6,8 +6,10 @@
 #include <cmath>
 #include <initializer_list>
 #include <cstring>
+#include <string>
 
 #include "MinHook.h"
+#include "gui.h"
 #include "log.h"
 
 namespace coop::puppet {
@@ -24,6 +26,7 @@ namespace ev {
 constexpr uint32_t Step_0 = 0x009A0430;
 constexpr uint32_t Step_1 = 0x009D76D0;  // begin step: also where hp < 1 turns into a game over
 constexpr uint32_t Draw_0 = 0x009DCB00;
+constexpr uint32_t Draw_73 = 0x009F7590;  // draw end: after every instance's Draw - the labels go on top here
 }  // namespace ev
 constexpr uint32_t kSkippedEvents[] = {
     0x0099F340,  // Alarm_1
@@ -35,7 +38,6 @@ constexpr uint32_t kSkippedEvents[] = {
     0x009D9700,  // Other_10
     0x009DA130,  // Other_18
     0x009DC8B0,  // Other_4 (room start)
-    0x009F7590,  // Draw_73
 };
 constexpr int kSkippedCount = sizeof(kSkippedEvents) / sizeof(kSkippedEvents[0]);
 constexpr uint32_t kScriptDmgPlayer = 0x00727030;
@@ -54,6 +56,9 @@ struct Puppet {
     // Its toolbar (see ShowTool).
     double toolbarList = -1;
     int shownTool = -5;
+    // Its label: the player's name and hearts.
+    std::string name;
+    float hp = 0, hpMax = 0;
 };
 
 LocalStepFn g_onLocalStep = nullptr;
@@ -73,6 +78,7 @@ yyc::EventFn g_origStep = nullptr;
 yyc::EventFn g_origStep1 = nullptr;
 LocalStepFn g_beforeLocalStep1 = nullptr;
 yyc::EventFn g_origDraw = nullptr;
+yyc::EventFn g_origDrawEnd = nullptr;
 yyc::EventFn g_origSkipped[kSkippedCount] = {};
 yyc::ScriptFn g_origPlayerFind = nullptr;
 yyc::ScriptFn g_origDmgPlayer = nullptr;
@@ -213,6 +219,52 @@ yyc::RValue* __cdecl DmgPlayerHook(yyc::CInstance* self, yyc::CInstance* other, 
     return g_origDmgPlayer(self, other, result, argc, args);
 }
 
+// Over each puppet: its player's name and hearts (sprHeart: 0 full, 1 empty), in room pixels.
+constexpr int kSprHeart = 1269;
+constexpr double kHeartScale = 0.22;   // 36 px -> ~8 room px
+constexpr double kHeartStep = 8;       // room px between hearts
+constexpr double kHeartsAbove = 21;    // room px above the puppet's origin (its feet): just over the head
+constexpr double kNameAbove = 30;
+constexpr double kNameScale = 0.35;
+constexpr int kMaxHearts = 20;
+constexpr int kNameColor = gui::Rgb(255, 255, 255);
+
+void DrawLabel(const Puppet& puppet) {
+    const double x = yyc::GetBuiltinReal(puppet.instance, yyc::va::YYVar_x);
+    const double y = yyc::GetBuiltinReal(puppet.instance, yyc::va::YYVar_y);
+    if (!puppet.name.empty()) gui::Text(x, y - kNameAbove, puppet.name, kNameScale, kNameColor, gui::kAlignCenter);
+    const int hearts = static_cast<int>((std::min)(std::ceil(puppet.hpMax - 0.01), double(kMaxHearts)));
+    if (hearts <= 0) return;
+    const double size = 36 * kHeartScale;
+    double hx = x - (hearts - 1) * kHeartStep / 2;
+    for (int i = 0; i < hearts; ++i, hx += kHeartStep) {
+        gui::Call("draw_sprite_ext", {double(kSprHeart), 1, hx, y - kHeartsAbove, kHeartScale, kHeartScale, 0,
+                                      gui::kWhite, 1});
+        // This heart's share of the health: 1 full, 0 empty, in between a part of it.
+        const double fill = (std::min)(1.0, (std::max)(0.0, double(puppet.hp) - i));
+        if (fill <= 0) continue;
+        // The full heart's left part (its origin is its centre, 18,18).
+        gui::SpritePart(kSprHeart, 0, 0, 0, 36 * fill, 36, hx - size / 2, y - kHeartsAbove - size / 2, kHeartScale,
+                        kHeartScale);
+    }
+}
+
+// The local player's draw end: then every other player's label, over everything drawn this frame.
+void __cdecl DrawEndHook(yyc::CInstance* self, yyc::CInstance* other) {
+    if (IsPuppetInstance(self)) return;
+    g_origDrawEnd(self, other);
+    if (g_puppets.empty()) return;
+    __try {
+        gui::Begin(self);
+        for (const auto& puppet : g_puppets) {
+            if (yyc::FindInstance(puppet.id) == puppet.instance) DrawLabel(puppet);
+        }
+        gui::End();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log("puppet: drawing labels crashed (code 0x%08lX)", GetExceptionCode());
+    }
+}
+
 template <int N>
 void __cdecl SkippedHook(yyc::CInstance* self, yyc::CInstance* other) {
     if (!IsPuppetInstance(self)) g_origSkipped[N](self, other);
@@ -222,7 +274,7 @@ template <int... N>
 struct SkippedTable {
     static constexpr yyc::EventFn kHooks[] = {&SkippedHook<N>...};
 };
-using Skipped = SkippedTable<0, 1, 2, 3, 4, 5, 6, 7, 8, 9>;
+using Skipped = SkippedTable<0, 1, 2, 3, 4, 5, 6, 7, 8>;
 static_assert(sizeof(Skipped::kHooks) / sizeof(Skipped::kHooks[0]) == kSkippedCount, "one hook per skipped event");
 
 bool Hook(uint32_t va, void* detour, void* original) {
@@ -302,6 +354,7 @@ bool InstallHooks(LocalStepFn onLocalStep, LocalStepFn beforeLocalStep1) {
     ok = Hook(ev::Step_0, reinterpret_cast<void*>(&StepHook), &g_origStep) && ok;
     ok = Hook(ev::Step_1, reinterpret_cast<void*>(&Step1Hook), &g_origStep1) && ok;
     ok = Hook(ev::Draw_0, reinterpret_cast<void*>(&DrawHook), &g_origDraw) && ok;
+    ok = Hook(ev::Draw_73, reinterpret_cast<void*>(&DrawEndHook), &g_origDrawEnd) && ok;
     ok = Hook(kScriptDmgPlayer, reinterpret_cast<void*>(&DmgPlayerHook), &g_origDmgPlayer) && ok;
     for (int i = 0; i < kSkippedCount; ++i) {
         ok = Hook(kSkippedEvents[i], reinterpret_cast<void*>(Skipped::kHooks[i]), &g_origSkipped[i]) && ok;
@@ -380,6 +433,9 @@ void Update(yyc::CInstance* localPlayer, net::PeerId player, const State& target
     yyc::SetBuiltinReal(instance, yyc::va::YYVar_image_yscale, target.yscale);
     yyc::SetBuiltinReal(instance, yyc::va::YYVar_depth, target.depth);
     ShowTool(localPlayer, *puppet, target.tool);
+    puppet->name.assign(target.name, strnlen(target.name, sizeof(target.name)));
+    puppet->hp = target.hp;
+    puppet->hpMax = target.hpMax;
 }
 
 void Destroy(yyc::CInstance* localPlayer, net::PeerId player) {

@@ -47,7 +47,7 @@ namespace coop {
 
 namespace {
 
-constexpr uint32_t kProtocolVersion = 6;  // 6: up to 3 guests (docs/coop/MULTIPLAYER.md)
+constexpr uint32_t kProtocolVersion = 7;  // 7: names and health over the players
 constexpr unsigned kSendEverySteps = 3;       // 60 fps game step -> 20 updates/s
 constexpr unsigned kAnnounceEverySteps = 30;  // refresh the LAN announcement twice a second
 constexpr int kSlotGodMode = 0x54C;           // global.godMode (decompiled/code/var_slots.tsv)
@@ -85,6 +85,8 @@ struct PlayerStateMsg {
     float imageIndex, xscale, yscale, depth;
     int32_t sprite;
     int32_t tool;  // item in hand (ToolSelected()), -4 = none
+    float hp, hpMax;
+    char name[16];  // not 0-terminated when all 16 are used
 };
 struct PeerStateMsg {
     uint8_t player;
@@ -102,6 +104,7 @@ bool g_leaving = false;  // guest: on the way back to the main menu
 std::string g_notice;    // shown on the COOP screen when back in the menu
 bool g_wasConnected = false;
 bool g_inviteHinted = false;  // host: told about F2 in this world
+std::string g_myName;         // shown over our character on the other players' screens; set when a session starts
 std::vector<net::PeerId> g_peers;  // linked at the last step
 bool g_wasInWorld = true;
 std::map<net::PeerId, PlayerStateMsg> g_remotes;  // the other players' last state, shown as puppets
@@ -143,6 +146,15 @@ PlayerStateMsg CaptureState(yyc::CInstance* player) {
     yyc::RValue tool{};
     yyc::At<yyc::ScriptFn>(kScriptToolSelected)(player, player, &tool, 0, nullptr);
     s.tool = static_cast<int32_t>(yyc::ToReal(tool));
+    const int id = static_cast<int>(yyc::GetBuiltinReal(player, yyc::va::YYVar_id));
+    const std::pair<int, float*> health[] = {{kSlotHp, &s.hp}, {kSlotHpMax, &s.hpMax}};
+    for (const auto& [slot, field] : health) {
+        yyc::RValue value{};
+        yyc::GetVar(id, slot, &value);
+        *field = static_cast<float>(yyc::ToReal(value));
+        yyc::Free(&value);
+    }
+    memcpy(s.name, g_myName.data(), (std::min)(g_myName.size(), sizeof(s.name)));
     yyc::Free(&tool);
     return s;
 }
@@ -521,8 +533,9 @@ void Tick(yyc::CInstance* localPlayer) {
         net::Send(kPlayerState, &state, sizeof(state));
     }
     for (const auto& [player, remote] : g_remotes) {
-        const puppet::State target{remote.x,      remote.y,     remote.imageIndex, remote.xscale,
-                                   remote.yscale, remote.depth, remote.sprite,    remote.tool};
+        puppet::State target{remote.x,      remote.y,     remote.imageIndex, remote.xscale, remote.yscale,
+                             remote.depth,  remote.sprite, remote.tool,       remote.hp,     remote.hpMax};
+        memcpy(target.name, remote.name, sizeof(target.name));
         puppet::Update(localPlayer, player, target);
     }
 }
@@ -534,6 +547,7 @@ namespace session {
 void Host() {
     if (g_role != Role::kNone) return;
     g_role = Role::kHost;
+    g_myName = character::OwnName();
     net::StartHost(kGamePort, MaxGuests());
     lan::StartAnnouncing(kGamePort);
     if (steam::Ready()) {
@@ -546,6 +560,7 @@ void Host() {
 // Guest: what arrives before the game loop takes it (the host's world and our character) and what to say first.
 void PrepareGuest() {
     g_role = Role::kGuest;
+    g_myName = character::OwnName();
     net::SetReceiveHandler([](const net::Message& m) {
         return world::HandleMessage(m) || character::GuestHandleReceive(m);
     });

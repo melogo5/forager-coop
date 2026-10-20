@@ -188,6 +188,8 @@ std::string SavedGuestName() {
     return name.empty() ? SafeName(ComputerName()).substr(0, 16) : SafeName(name);
 }
 
+std::string OwnName() { return g_ownName.empty() ? SavedGuestName() : g_ownName; }
+
 void SetGuestName(const std::string& name) {
     g_ownName = SafeName(name);
     std::ofstream(SaveArea() / kNameFile, std::ios::trunc) << g_ownName << "\n";

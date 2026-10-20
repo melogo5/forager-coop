@@ -16,6 +16,8 @@ bool InstallHooks(bool (*isGuest)());
 
 // Guest: the name the host knows this player by (typed in the COOP menu, remembered between games).
 std::string SavedGuestName();
+// This player's name as the others see it: the one set for this session, else the saved one.
+std::string OwnName();
 void SetGuestName(const std::string& name);
 
 // Host: the name guest `peer` introduced itself with ("guest" if it has not yet). Kept after the guest leaves:
