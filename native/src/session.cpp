@@ -28,6 +28,7 @@
 #include "coins.h"
 #include "debugport.h"
 #include "look.h"
+#include "traps.h"
 #include "land.h"
 #include "mobs.h"
 #include "progress.h"
@@ -51,7 +52,7 @@ namespace coop {
 
 namespace {
 
-constexpr uint32_t kProtocolVersion = 9;  // 9: costumes in the player state
+constexpr uint32_t kProtocolVersion = 10;  // 10: fish traps are the host's
 constexpr unsigned kSendEverySteps = 3;       // 60 fps game step -> 20 updates/s
 constexpr unsigned kAnnounceEverySteps = 30;  // refresh the LAN announcement twice a second
 constexpr int kSlotGodMode = 0x54C;           // global.godMode (decompiled/code/var_slots.tsv)
@@ -268,7 +269,7 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             clock::Handle(message, localPlayer) ||
             unlocks::Handle(message, localPlayer) || coins::Handle(message, localPlayer) ||
             progress::Handle(message, localPlayer) || quests::Handle(message, localPlayer) ||
-            stations::Handle(message, localPlayer) || skills::Handle(message) ||
+            stations::Handle(message, localPlayer) || skills::Handle(message) || traps::Handle(message, localPlayer) ||
             reconcile::Handle(message, localPlayer) || chests::Handle(message, localPlayer)) {
             continue;
         }
@@ -664,7 +665,8 @@ bool SessionInstall() {
     const auto isGuest = [] { return g_role == Role::kGuest; };
     if (!sync::InstallHooks(isHost, isGuest) || !mobs::InstallHooks(isHost, isGuest) ||
         !character::InstallHooks(isGuest) || !storage::InstallHooks() || !land::InstallHooks(isHost, isGuest) ||
-        !progress::InstallHooks() || !stations::InstallHooks() || !chests::InstallHooks()) {
+        !progress::InstallHooks() || !stations::InstallHooks() || !chests::InstallHooks() ||
+        !traps::InstallHooks(isHost, isGuest)) {
         return false;
     }
     Role role = Role::kNone;

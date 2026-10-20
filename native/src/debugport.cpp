@@ -172,8 +172,14 @@ std::string Answer(yyc::CInstance* self, const std::string& line) {
         }
         return "ok";
     }
+    if (c == "event" && w.size() == 4) {
+        yyc::CInstance* target = yyc::FindInstance(Slot(w[1]));
+        if (target == nullptr) return "no such instance";
+        yyc::PerformEvent(target, self, Slot(w[2]), Slot(w[3]));
+        return yyc::FindInstance(Slot(w[1])) != nullptr ? "ok" : "ok (it is gone)";
+    }
     if (c == "call" && w.size() >= 2) return Call(self, w);
-    return "unknown command (ping, player, count, list, at, var, set, global, call)";
+    return "unknown command (ping, player, count, list, at, var, set, event, global, call)";
 }
 
 // One connection at a time: lines in, an answer each, until the client hangs up.
