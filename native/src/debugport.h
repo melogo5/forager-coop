@@ -9,6 +9,7 @@
 //   list <object> [x y radius]   -> "id x y" per active instance (nearest first if a point is given), ';'-separated
 //   at <object> <x> <y>          -> how many stand within 4 px of the point (doubles show as 2+)
 //   var <id> <slot> [index]      -> an instance variable (an array's element with index)
+//   set <id> <slot> [index] <n>  -> ok: sets an instance variable (an array's element with index) to a number
 //   global <slot> [index]        -> a global variable
 //   call <builtin> [numbers...]  -> a builtin's result, called as the local player
 #pragma once

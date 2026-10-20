@@ -60,11 +60,18 @@ std::string Format(const yyc::RValue& value) {
     }
 }
 
-// value, or its element `index` when one is given and the value is an array.
-std::string FormatAt(yyc::RValue value, const std::vector<std::string>& words, size_t indexWord) {
+// value, or its element `index` when one is given and the value is an array (in bounds only: reading past the end
+// grows a GML array).
+std::string FormatAt(yyc::CInstance* self, yyc::RValue value, const std::vector<std::string>& words, size_t indexWord) {
     if (words.size() <= indexWord) return Format(value);
     if ((value.kind & yyc::kKindMask) != yyc::kArray) return "not an array";
-    return Format(yyc::ArrayElement(&value, Slot(words[indexWord])));
+    yyc::RValue length{};
+    yyc::CallBuiltin("array_length_1d", self, 1, &value, &length);
+    const int n = static_cast<int>(yyc::ToReal(length));
+    yyc::Free(&length);
+    const int index = Slot(words[indexWord]);
+    if (index < 0 || index >= n) return "out of bounds (length " + std::to_string(n) + ")";
+    return Format(yyc::ArrayElement(&value, index));
 }
 
 std::string Player(yyc::CInstance* self) {
@@ -147,16 +154,26 @@ std::string Answer(yyc::CInstance* self, const std::string& line) {
     if (c == "var" && (w.size() == 3 || w.size() == 4)) {
         yyc::RValue value{};
         if (!yyc::GetVar(Slot(w[1]), Slot(w[2]), &value)) return "no such instance";
-        const std::string text = FormatAt(value, w, 3);
+        const std::string text = FormatAt(self, value, w, 3);
         yyc::Free(&value);
         return text;
     }
     if (c == "global" && (w.size() == 2 || w.size() == 3)) {
         const yyc::RValue* value = yyc::GlobalVar(Slot(w[1]));
-        return value != nullptr ? FormatAt(*value, w, 2) : "no globals";
+        return value != nullptr ? FormatAt(self, *value, w, 2) : "no globals";
+    }
+    if (c == "set" && (w.size() == 4 || w.size() == 5)) {
+        if (yyc::FindInstance(Slot(w[1])) == nullptr) return "no such instance";
+        yyc::RValue value = yyc::Real(Number(w.back()));
+        if (w.size() == 5) {
+            yyc::SetVarAt(Slot(w[1]), Slot(w[2]), Slot(w[3]), &value);
+        } else {
+            yyc::SetVar(Slot(w[1]), Slot(w[2]), &value);
+        }
+        return "ok";
     }
     if (c == "call" && w.size() >= 2) return Call(self, w);
-    return "unknown command (ping, player, count, list, at, var, global, call)";
+    return "unknown command (ping, player, count, list, at, var, set, global, call)";
 }
 
 // One connection at a time: lines in, an answer each, until the client hangs up.

@@ -5,6 +5,7 @@
 
 #include <vector>
 
+#include "look.h"
 #include "net.h"
 #include "yyc.h"
 
@@ -17,6 +18,7 @@ struct State {
     int tool;  // item in hand, -4 = none
     float hp, hpMax;
     char name[16];  // shown over the puppet, with its hearts; not 0-terminated when all 16 are used
+    look::Look look;  // what the player wears
 };
 
 using LocalStepFn = void (*)(yyc::CInstance* localPlayer);

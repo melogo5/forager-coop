@@ -27,6 +27,7 @@
 #include "clock.h"
 #include "coins.h"
 #include "debugport.h"
+#include "look.h"
 #include "land.h"
 #include "mobs.h"
 #include "progress.h"
@@ -50,7 +51,7 @@ namespace coop {
 
 namespace {
 
-constexpr uint32_t kProtocolVersion = 8;  // 8: dug ground is shared
+constexpr uint32_t kProtocolVersion = 9;  // 9: costumes in the player state
 constexpr unsigned kSendEverySteps = 3;       // 60 fps game step -> 20 updates/s
 constexpr unsigned kAnnounceEverySteps = 30;  // refresh the LAN announcement twice a second
 constexpr int kSlotGodMode = 0x54C;           // global.godMode (decompiled/code/var_slots.tsv)
@@ -90,6 +91,7 @@ struct PlayerStateMsg {
     int32_t tool;  // item in hand (ToolSelected()), -4 = none
     float hp, hpMax;
     char name[16];  // not 0-terminated when all 16 are used
+    look::Look look;  // the costume, for its puppet
 };
 struct PeerStateMsg {
     uint8_t player;
@@ -158,6 +160,7 @@ PlayerStateMsg CaptureState(yyc::CInstance* player) {
         yyc::Free(&value);
     }
     memcpy(s.name, g_myName.data(), (std::min)(g_myName.size(), sizeof(s.name)));
+    s.look = look::Read(player);
     yyc::Free(&tool);
     return s;
 }
@@ -472,6 +475,9 @@ void DebugVisitRoom(yyc::CInstance* localPlayer, bool inWorld) {
 
 void Tick(yyc::CInstance* localPlayer) {
     debugport::Tick(localPlayer);
+    constexpr int kRoomWorld = 8;  // rmGame
+    look::Tick(localPlayer, g_role == Role::kGuest,
+               static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_room)) == kRoomWorld);
     ApplyDebugGodMode();
     ApplyDebugCheats();
     if (g_role == Role::kNone || g_leaving) return;
@@ -550,6 +556,7 @@ void Tick(yyc::CInstance* localPlayer) {
         puppet::State target{remote.x,      remote.y,     remote.imageIndex, remote.xscale, remote.yscale,
                              remote.depth,  remote.sprite, remote.tool,       remote.hp,     remote.hpMax};
         memcpy(target.name, remote.name, sizeof(target.name));
+        target.look = remote.look;
         puppet::Update(localPlayer, player, target);
     }
 }
@@ -624,6 +631,7 @@ void Leave() {
     fishing::Reset();
     skills::Reset();
     reconcile::Reset();
+    look::Reset();
     Log(host ? "session: stopped hosting; can create again" : "session: left the host's world; can join again");
 }
 

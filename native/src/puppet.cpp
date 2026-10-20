@@ -60,6 +60,7 @@ struct Puppet {
     // Its label: the player's name and hearts.
     std::string name;
     float hp = 0, hpMax = 0;
+    look::Look look;  // the costume it has on
 };
 
 LocalStepFn g_onLocalStep = nullptr;
@@ -450,6 +451,10 @@ void Update(yyc::CInstance* localPlayer, net::PeerId player, const State& target
     puppet->name.assign(target.name, strnlen(target.name, sizeof(target.name)));
     puppet->hp = target.hp;
     puppet->hpMax = target.hpMax;
+    if (target.look.count > 0 && target.look != puppet->look) {
+        look::Apply(instance, target.look);
+        puppet->look = target.look;
+    }
 }
 
 void Destroy(yyc::CInstance* localPlayer, net::PeerId player) {
