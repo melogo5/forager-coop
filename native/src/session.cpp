@@ -473,6 +473,7 @@ void Tick(yyc::CInstance* localPlayer) {
         g_playedWorld = true;  // back in the menu this ends the session
         return;
     }
+    if (!g_playedWorld) Log("session: in the world");  // test scripts wait for it (the world has loaded)
     g_playedWorld = true;
     puppet::HoldLocalPlayer(skilltab::IsOpen());  // the player stands while the skill tree is open
     const std::vector<net::PeerId> peers = net::Peers();

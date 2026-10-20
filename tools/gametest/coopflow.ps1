@@ -56,9 +56,14 @@ if ($NewWorld) {
   Click $hostPid '165,370'; Start-Sleep 3
   Click $hostPid '650,575'
 } else {
-  Click $hostPid ("1000,{0}" -f (38 + 100 * $HostSlotRow))
+  # The row's PLAY: clicked again while the world does not load (a click right after the list opens can be lost).
+  for ($i = 0; $i -lt 3 -and -not (WaitLog $hostPid 'session: in the world' 1); $i++) {
+    Click $hostPid ("1000,{0}" -f (38 + 100 * $HostSlotRow))
+    if (WaitLog $hostPid 'session: in the world' 15) { break }
+  }
 }
 if (-not (WaitLog $hostPid 'session: hosting' 10)) { throw 'host did not start hosting' }
+if (-not (WaitLog $hostPid 'session: in the world' 30)) { throw 'host did not get into its world' }
 
 $guestPid = Launch $GuestEnv
 OpenCoop $guestPid
