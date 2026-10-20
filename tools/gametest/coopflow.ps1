@@ -40,8 +40,14 @@ function Launch([hashtable]$envVars) {
 }
 function OpenCoop([int]$id) {
   if (-not (WaitLog $id 'menu: COOP button' 60)) { throw "game ${id}: no COOP button" }
-  Start-Sleep 2
-  Click $id '1060,335'; Start-Sleep 2
+  # The button is logged before the splash screen is over: clicked again until the screen opens.
+  for ($i = 0; $i -lt 10; $i++) {
+    Start-Sleep 2
+    Click $id '1060,335'
+    if (WaitLog $id 'menu: COOP screen opened' 2) { break }
+  }
+  if (-not (WaitLog $id 'menu: COOP screen opened' 1)) { throw "game ${id}: the COOP screen does not open" }
+  Start-Sleep 1
 }
 
 $hostPid = Launch $HostEnv

@@ -447,17 +447,21 @@ void SteamInvites(yyc::CInstance* localPlayer) {
 // Runs after the local player's Step_0, i.e. only while in a world.
 
 // Testing aid: COOP_DEBUG_ROOM=<room> goes into that room ~8 s into the session (e.g. 24, the museum) and back to
-// the world ~10 s later.
+// the world ~10 s later; COOP_DEBUG_ROOM_AT=<seconds> goes that late instead.
 void DebugVisitRoom(yyc::CInstance* localPlayer, bool inWorld) {
     static const int room = [] {
         char value[16] = {};
         return GetEnvironmentVariableA("COOP_DEBUG_ROOM", value, sizeof(value)) > 0 ? atoi(value) : 0;
     }();
+    static const unsigned at = [] {
+        char value[16] = {};
+        return GetEnvironmentVariableA("COOP_DEBUG_ROOM_AT", value, sizeof(value)) > 0 ? atoi(value) * 60u : 480u;
+    }();
     static unsigned steps = 0;
     if (room == 0) return;
     ++steps;
-    const bool go = inWorld && steps == 480;
-    const bool back = !inWorld && steps >= 1080 && steps < 1090;
+    const bool go = inWorld && steps == at;
+    const bool back = !inWorld && steps >= at + 600 && steps < at + 610;
     if (!go && !back) return;
     yyc::RValue target = yyc::Real(go ? room : 8);
     yyc::RValue result{};

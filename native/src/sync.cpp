@@ -172,6 +172,22 @@ InstanceInfo Describe(yyc::CInstance* instance) {
 }
 
 unsigned g_sent[16] = {};
+std::unordered_map<int, unsigned> g_spawnKinds;  // host: objects sent as spawns since the last stats line, by kind
+
+// Host: what the last stats period sent as new objects, most first (PLAYTEST3: bursts of 120+ with no cause in
+// the log).
+void LogSpawnKinds() {
+    if (g_spawnKinds.empty()) return;
+    std::vector<std::pair<int, unsigned>> kinds(g_spawnKinds.begin(), g_spawnKinds.end());
+    std::sort(kinds.begin(), kinds.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+    std::string text;
+    for (size_t i = 0; i < kinds.size() && i < 6; ++i) {
+        text += " " + std::to_string(kinds[i].first) + "x" + std::to_string(kinds[i].second);
+    }
+    Log("sync: spawns sent by object:%s", text.c_str());
+    g_spawnKinds.clear();
+}
+
 unsigned g_applied[16] = {};
 unsigned g_steps = 0;
 constexpr unsigned kStatsEverySteps = 600;
@@ -246,6 +262,7 @@ void FlushSpawns(yyc::CInstance* self) {
             CollectNow(instance, self);  // the host's loot goes straight into its inventory
             continue;
         }
+        ++g_spawnKinds[info.object];
         if (owner != kOwnerGuest) {
             Send(kSpawn, info, id, item, owner);
             continue;
@@ -1088,6 +1105,7 @@ void Tick(yyc::CInstance* localPlayer) {
         Log("sync: sent spawn %u destroy %u hit %u gone %u | applied spawn %u destroy %u hit %u gone %u",
             g_sent[kSpawn], g_sent[kDestroy], g_sent[kHit], g_sent[kGuestDestroyed], g_applied[kSpawn],
             g_applied[kDestroy], g_applied[kHit], g_applied[kGuestDestroyed]);
+        LogSpawnKinds();
     }
 }
 
