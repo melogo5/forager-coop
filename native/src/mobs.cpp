@@ -102,39 +102,137 @@ void WriteCamera(const CameraBounds& c) {
     }
 }
 
-// Runs `original` with the camera bounds stretched over the guests' surroundings too. (One box over everyone:
-// players far apart keep everything between them awake - MULTIPLAYER.md, stage 5.)
-yyc::RValue* WithGuestArea(yyc::ScriptFn original, yyc::CInstance* self, yyc::CInstance* other,
-                           yyc::RValue* result, int argc, yyc::RValue** args) {
-    const std::vector<yyc::CInstance*> guests = g_isHost != nullptr && g_isHost() && net::IsConnected()
-                                                    ? puppet::Instances()
-                                                    : std::vector<yyc::CInstance*>{};
-    CameraBounds camera{};
-    if (guests.empty() || !ReadCamera(&camera)) return original(self, other, result, argc, args);
+// The host keeps awake what any player sees: its own camera and a camera-sized frame around each guest. Not
+// one box over everyone - players far apart would keep everything between them awake.
+constexpr int kSlotActive = 0x4F;     // an instance's `active` (CullObject clears it when putting it to sleep)
+constexpr double kSpareMargin = 64;   // CullObject also keeps an object's light in view: a little slack
+
+std::vector<CameraBounds> GuestFrames(const CameraBounds& camera) {
+    std::vector<CameraBounds> frames;
+    if (g_isHost == nullptr || !g_isHost() || !net::IsConnected()) return frames;
     const double halfWidth = (camera.right - camera.left) / 2;
     const double halfHeight = (camera.bottom - camera.top) / 2;
-    CameraBounds stretched = camera;
-    for (yyc::CInstance* guest : guests) {
+    for (yyc::CInstance* guest : puppet::Instances()) {
         const double gx = yyc::GetBuiltinReal(guest, yyc::va::YYVar_x);
         const double gy = yyc::GetBuiltinReal(guest, yyc::va::YYVar_y);
-        stretched = {(std::min)(stretched.left, gx - halfWidth), (std::max)(stretched.right, gx + halfWidth),
-                     (std::min)(stretched.top, gy - halfHeight), (std::max)(stretched.bottom, gy + halfHeight)};
+        frames.push_back({gx - halfWidth, gx + halfWidth, gy - halfHeight, gy + halfHeight});
     }
-    WriteCamera(stretched);
-    yyc::RValue* r = original(self, other, result, argc, args);
-    WriteCamera(camera);
-    return r;
+    return frames;
+}
+
+// While the host's CullObject runs: the guests' frames, and the instances it would have put to sleep that a guest
+// sees. For each such instance CullObject calls instance_deactivate_object, then ds_list_add twice (its cell's
+// list, global.deactivatedInstances), then clears `active`: all of it is skipped or undone.
+bool g_culling = false;
+std::vector<CameraBounds> g_cullFrames;
+std::vector<int> g_spared;
+yyc::BuiltinFn g_origDeactivate = nullptr;
+yyc::BuiltinFn g_origListAdd = nullptr;
+bool g_cullBuiltinsTried = false;
+size_t g_sparedLastStep = 0;  // instances kept awake for guests since the last LogCulling
+
+bool SeenByGuest(int id) {
+    yyc::CInstance* instance = yyc::FindInstance(id);
+    if (instance == nullptr) return false;
+    const double x = yyc::GetBuiltinReal(instance, yyc::va::YYVar_x);
+    const double y = yyc::GetBuiltinReal(instance, yyc::va::YYVar_y);
+    for (const CameraBounds& f : g_cullFrames) {
+        if (x >= f.left - kSpareMargin && x <= f.right + kSpareMargin && y >= f.top - kSpareMargin &&
+            y <= f.bottom + kSpareMargin) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void __cdecl DeactivateHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstance* other, int argc,
+                            yyc::RValue* args) {
+    if (g_culling && argc == 1) {
+        const int id = static_cast<int>(yyc::ToReal(args[0]));
+        if (SeenByGuest(id)) {
+            g_spared.push_back(id);
+            return;
+        }
+    }
+    g_origDeactivate(result, self, other, argc, args);
+}
+
+void __cdecl ListAddHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstance* other, int argc,
+                         yyc::RValue* args) {
+    if (g_culling && argc == 2 && !g_spared.empty() && static_cast<int>(yyc::ToReal(args[1])) == g_spared.back()) {
+        return;  // a spared instance is not filed as asleep
+    }
+    g_origListAdd(result, self, other, argc, args);
+}
+
+bool HookBuiltin(const char* name, void* detour, yyc::BuiltinFn* original) {
+    const yyc::BuiltinFn target = yyc::BuiltinAddress(name);
+    const bool ok = target != nullptr &&
+                    MH_CreateHook(reinterpret_cast<void*>(target), detour, reinterpret_cast<void**>(original)) ==
+                        MH_OK &&
+                    MH_EnableHook(reinterpret_cast<void*>(target)) == MH_OK;
+    if (!ok) Log("mobs: %s hook FAILED", name);
+    return ok;
+}
+
+// The builtin table is filled once the game runs: hooked on first need.
+bool CullBuiltinsReady() {
+    if (!g_cullBuiltinsTried) {
+        g_cullBuiltinsTried = true;
+        const bool ok = HookBuiltin("instance_deactivate_object", reinterpret_cast<void*>(&DeactivateHook),
+                                    &g_origDeactivate) &&
+                        HookBuiltin("ds_list_add", reinterpret_cast<void*>(&ListAddHook), &g_origListAdd);
+        Log("mobs: cull hooks %s", ok ? "enabled" : "FAILED");
+    }
+    return g_origDeactivate != nullptr && g_origListAdd != nullptr;
 }
 
 yyc::RValue* __cdecl CullObjectHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                     yyc::RValue** args) {
     sync::BeforeCull(self);
-    return WithGuestArea(g_origCullObject, self, other, result, argc, args);
+    CameraBounds camera{};
+    std::vector<CameraBounds> frames = ReadCamera(&camera) ? GuestFrames(camera) : std::vector<CameraBounds>{};
+    if (frames.empty() || !CullBuiltinsReady()) return g_origCullObject(self, other, result, argc, args);
+    g_cullFrames = std::move(frames);
+    g_spared.clear();
+    g_culling = true;
+    yyc::RValue* r = g_origCullObject(self, other, result, argc, args);
+    g_culling = false;
+    g_sparedLastStep += g_spared.size();
+    for (const int id : g_spared) {
+        yyc::RValue active = yyc::Real(1);
+        yyc::SetVar(id, kSlotActive, &active);
+    }
+    return r;
 }
 
+// Every ~10 s: how many instances the guests keep awake, and how long the game's list of sleeping instances is
+// (it must not grow while the players stand still).
+void LogCulling(yyc::CInstance* self, unsigned steps) {
+    constexpr unsigned kEvery = 600;
+    constexpr int kSlotDeactivatedInstances = 0x16C;  // global.deactivatedInstances (var_slots.tsv)
+    if (steps % kEvery != 0) return;
+    const yyc::RValue* list = yyc::GlobalVar(kSlotDeactivatedInstances);
+    const double asleep = list != nullptr ? Builtin(self, "ds_list_size", {yyc::ToReal(*list)}) : -1;
+    Log("mobs: culling: %zu kept awake for guests in the last %u steps, %.0f asleep", g_sparedLastStep, kEvery,
+        asleep);
+    g_sparedLastStep = 0;
+}
+
+// Wakes what the host's camera shows, then what each guest's frame shows.
 yyc::RValue* __cdecl ProcessCullsHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                       yyc::RValue** args) {
-    return WithGuestArea(g_origProcessCulls, self, other, result, argc, args);
+    yyc::RValue* r = g_origProcessCulls(self, other, result, argc, args);
+    CameraBounds camera{};
+    if (!ReadCamera(&camera)) return r;
+    for (const CameraBounds& frame : GuestFrames(camera)) {
+        WriteCamera(frame);
+        yyc::RValue ignored{};
+        g_origProcessCulls(self, other, &ignored, argc, args);
+        yyc::Free(&ignored);
+    }
+    WriteCamera(camera);
+    return r;
 }
 
 // ---- host: stream enemies ----
@@ -275,6 +373,7 @@ void DebugSpawnEnemy(yyc::CInstance* localPlayer) {
 void HostTick(yyc::CInstance* localPlayer) {
     constexpr unsigned kDebugSpawnStep = 600;
     if (++g_steps == kDebugSpawnStep) DebugSpawnEnemy(localPlayer);
+    LogCulling(localPlayer, g_steps);
     if (g_steps % kSendEverySteps != 0) return;
     std::vector<uint8_t> payload(2);
     uint16_t sent = 0;

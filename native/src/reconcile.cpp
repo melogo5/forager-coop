@@ -53,6 +53,7 @@ struct Local {
 };
 
 unsigned g_steps = 0;
+size_t g_nextGuest = 0;  // host: whose surroundings the next check covers
 std::set<int> g_lastExtra;    // guest: local ids the host did not have at the last check
 std::set<int> g_lastMissing;  // guest: host ids missing here at the last check
 
@@ -179,11 +180,13 @@ void DebugTick(yyc::CInstance* localPlayer) {
 }
 
 void HostTick(yyc::CInstance* localPlayer) {
-    if (++g_steps % kEverySteps != 0) return;
-    // One guest per check for now (MULTIPLAYER.md, stage 5: each in turn).
-    const std::vector<yyc::CInstance*> guests = puppet::Instances();
-    if (guests.empty()) return;
-    yyc::CInstance* guest = guests.front();
+    // The guests in turn, each checked every kEverySteps: with more guests the checks come more often, spread out.
+    const std::vector<net::PeerId> peers = net::Peers();
+    if (peers.empty()) return;
+    if (++g_steps % (std::max)(1u, kEverySteps / static_cast<unsigned>(peers.size())) != 0) return;
+    const net::PeerId peer = peers[g_nextGuest++ % peers.size()];
+    yyc::CInstance* guest = puppet::Instance(peer);
+    if (guest == nullptr) return;
     const double halfWidth = (GlobalReal(kSlotCameraRight) - GlobalReal(kSlotCameraLeft)) / 2 - kMargin;
     const double halfHeight = (GlobalReal(kSlotCameraBottom) - GlobalReal(kSlotCameraTop)) / 2 - kMargin;
     if (halfWidth <= 0 || halfHeight <= 0) return;
@@ -204,7 +207,7 @@ void HostTick(yyc::CInstance* localPlayer) {
         const auto* bytes = reinterpret_cast<const uint8_t*>(&e);
         payload.insert(payload.end(), bytes, bytes + sizeof(e));
     });
-    net::Send(kReconcile, payload.data(), payload.size());
+    net::SendTo(peer, kReconcile, payload.data(), payload.size());
 }
 
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
@@ -225,6 +228,7 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
 
 void Reset() {
     g_steps = 0;
+    g_nextGuest = 0;
     g_lastExtra.clear();
     g_lastMissing.clear();
 }
