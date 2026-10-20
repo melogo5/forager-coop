@@ -25,8 +25,12 @@ constexpr uint8_t kNetClose = 0;               // a frame of this type: the send
                                                // "connection closed" of its own); never handed up
 constexpr size_t kP2PChunk = 512 * 1024;       // a reliable Steam P2P packet takes up to 1 MB
 constexpr DWORD kSteamIdleMs = 2;              // the Steam receive thread's nap when nothing has arrived
-constexpr DWORD kSteamCheckMs = 1000;          // ... and how often it checks the sessions are still up
 constexpr DWORD kSteamGraceMs = 15000;         // a new Steam link is not checked for this long (being set up)
+constexpr uint8_t kNetPing = 0xFF;             // a frame of this type: "still here" (Steam links); never handed up
+constexpr DWORD kPingEveryMs = 1000;
+// A Steam link silent this long is gone. Steam's own session state is no help: as long as we keep sending, Steam
+// keeps "connecting" to a peer that has quit (PLAYTEST2: a guest who left stayed in the game).
+constexpr DWORD kSteamSilentMs = 10000;
 
 // One link: a TCP socket, or a Steam account reached through Steam's P2P network. Sends to it are serialized by its
 // own lock, so a long send (a world snapshot) to one guest does not hold up the others.
@@ -38,6 +42,7 @@ struct Connection {
     std::atomic<bool> dropped{false};  // Stop() let go of it: whatever still arrives is not queued
     std::vector<uint8_t> pending;      // Steam: bytes of a frame still coming (Steam receive thread only)
     DWORD since = GetTickCount();
+    std::atomic<DWORD> heard{GetTickCount()};  // Steam: when the last packet came
 };
 using ConnectionPtr = std::shared_ptr<Connection>;
 
@@ -294,7 +299,7 @@ bool FeedSteam(const ConnectionPtr& connection, const std::vector<uint8_t>& data
         if (pending.size() - at < kHeaderSize + size) break;
         const uint8_t* body = h + kHeaderSize;
         if (body[0] == kNetClose) return false;
-        Deliver(connection, body, size);
+        if (body[0] != kNetPing) Deliver(connection, body, size);
         at += kHeaderSize + size;
     }
     pending.erase(pending.begin(), pending.begin() + at);
@@ -318,13 +323,19 @@ ConnectionPtr NewSteamGuest(uint64_t steamId) {
     return RegisterSteam(steamId, id);
 }
 
-// Forgets Steam links whose session has gone (the peer quit or lost Steam) after their grace period.
+// Every second: a ping down each Steam link, and links silent for too long (the peer quit, crashed or lost Steam)
+// are forgotten once past their grace period.
 void CheckSteamLinks() {
+    const std::vector<uint8_t> ping = Frame(kNetPing, nullptr, 0);
+    const DWORD now = GetTickCount();
     for (const auto& connection : Connections()) {
-        const uint64_t steamId = connection->steamId;
-        if (steamId == 0 || GetTickCount() - connection->since < kSteamGraceMs || steam::P2PAlive(steamId)) continue;
-        Log("net: Steam link to peer %u is gone", connection->id);
-        Unregister(connection);
+        if (connection->steamId == 0) continue;
+        if (now - connection->since >= kSteamGraceMs && now - connection->heard > kSteamSilentMs) {
+            Log("net: Steam link to peer %u is gone (silent for %lu ms)", connection->id, now - connection->heard);
+            Unregister(connection);
+            continue;
+        }
+        SendFrame(*connection, ping);
     }
 }
 
@@ -338,11 +349,13 @@ void SteamThread(unsigned generation) {
             any = true;
             ConnectionPtr connection = FindSteam(from);
             if (connection == nullptr) connection = NewSteamGuest(from);
-            if (connection == nullptr || FeedSteam(connection, data)) continue;
+            if (connection == nullptr) continue;
+            connection->heard = GetTickCount();
+            if (FeedSteam(connection, data)) continue;
             Log("net: Steam link to peer %u closed", connection->id);
             Unregister(connection);
         }
-        if (GetTickCount() - lastCheck >= kSteamCheckMs) {
+        if (GetTickCount() - lastCheck >= kPingEveryMs) {
             lastCheck = GetTickCount();
             CheckSteamLinks();
         }

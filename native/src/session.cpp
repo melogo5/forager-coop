@@ -33,6 +33,7 @@
 #include "quests.h"
 #include "reconcile.h"
 #include "skills.h"
+#include "skilltab.h"
 #include "stations.h"
 #include "steam.h"
 #include "storage.h"
@@ -471,6 +472,7 @@ void Tick(yyc::CInstance* localPlayer) {
         return;
     }
     g_playedWorld = true;
+    puppet::HoldLocalPlayer(skilltab::IsOpen());  // the player stands while the skill tree is open
     const std::vector<net::PeerId> peers = net::Peers();
     const bool connected = !peers.empty();
     if (g_role == Role::kHost && g_steps % kAnnounceEverySteps == 0) Announce(peers.size());
@@ -508,6 +510,7 @@ void Tick(yyc::CInstance* localPlayer) {
     const bool inWorld = static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_room)) == kRoomGame;
     if (inWorld != g_wasInWorld) Log("session: %s the world room", inWorld ? "back in" : "left");
     DebugVisitRoom(localPlayer, inWorld);
+    skilltab::DebugTick(localPlayer);
     g_wasInWorld = inWorld;
     if (!inWorld) return;
 
@@ -587,6 +590,8 @@ void Leave() {
     if (host) net::Send(kBye, nullptr, 0);
     net::Stop();
     steam::LeaveLobby();
+    skilltab::Reset();
+    puppet::HoldLocalPlayer(false);
     g_inviteHinted = false;
     g_role = Role::kNone;
     g_playedWorld = false;
@@ -631,6 +636,7 @@ bool SessionInstall() {
         return false;
     }
     if (!world::InstallHooks([] { return g_role == Role::kGuest; })) return false;
+    if (!skilltab::InstallHooks([] { return g_role != Role::kNone; })) return false;
     const auto isHost = [] { return g_role == Role::kHost; };
     const auto isGuest = [] { return g_role == Role::kGuest; };
     if (!sync::InstallHooks(isHost, isGuest) || !mobs::InstallHooks(isHost, isGuest) ||

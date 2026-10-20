@@ -40,6 +40,7 @@ constexpr uint32_t kSkippedEvents[] = {
     0x009DC8B0,  // Other_4 (room start)
 };
 constexpr int kSkippedCount = sizeof(kSkippedEvents) / sizeof(kSkippedEvents[0]);
+constexpr int kCollisionSlot = 3;  // kSkippedEvents[3]: the collision with parEntity
 constexpr uint32_t kScriptDmgPlayer = 0x00727030;
 constexpr char kCreateFrame[] = "gml_Object_objPlayer_Create_0";
 
@@ -62,6 +63,8 @@ struct Puppet {
 };
 
 LocalStepFn g_onLocalStep = nullptr;
+bool g_holdLocal = false;
+std::vector<const yyc::CInstance*> g_inert;  // objPlayers whose events do not run (SetInert)
 std::vector<Puppet> g_puppets;  // in the order they were created
 bool g_creating = false;     // PlayerFind() -> calling instance, while a puppet runs Create_0
 int g_actorId = 0;           // PlayerFind() -> this instance id, when non-zero
@@ -102,7 +105,7 @@ bool IsPuppetInstance(const yyc::CInstance* instance) {
     for (const auto& puppet : g_puppets) {
         if (puppet.instance == instance) return true;
     }
-    return false;
+    return !g_inert.empty() && std::find(g_inert.begin(), g_inert.end(), instance) != g_inert.end();
 }
 
 const char* CallerName() {
@@ -180,7 +183,7 @@ yyc::RValue* __cdecl PlayerFindHook(yyc::CInstance* self, yyc::CInstance* other,
 
 void __cdecl StepHook(yyc::CInstance* self, yyc::CInstance* other) {
     if (IsPuppetInstance(self)) return;
-    g_origStep(self, other);
+    if (!g_holdLocal) g_origStep(self, other);
     if (g_onLocalStep == nullptr) return;
     __try {
         g_onLocalStep(self);
@@ -267,7 +270,11 @@ void __cdecl DrawEndHook(yyc::CInstance* self, yyc::CInstance* other) {
 
 template <int N>
 void __cdecl SkippedHook(yyc::CInstance* self, yyc::CInstance* other) {
-    if (!IsPuppetInstance(self)) g_origSkipped[N](self, other);
+    if (IsPuppetInstance(self)) return;
+    // The local player bumping into another player's puppet is pushed away by the game - off the island's edge
+    // into the water, where it is stuck (PLAYTEST2). Players walk through each other instead.
+    if (N == kCollisionSlot && IsPuppetInstance(other)) return;
+    g_origSkipped[N](self, other);
 }
 
 template <int... N>
@@ -363,6 +370,13 @@ bool InstallHooks(LocalStepFn onLocalStep, LocalStepFn beforeLocalStep1) {
 }
 
 void SetEnemiesSeeAll(bool on) { g_enemiesSeeAll = on; }
+
+void HoldLocalPlayer(bool hold) { g_holdLocal = hold; }
+
+void SetInert(yyc::CInstance* instance, bool inert) {
+    g_inert.erase(std::remove(g_inert.begin(), g_inert.end(), instance), g_inert.end());
+    if (inert && instance != nullptr) g_inert.push_back(instance);
+}
 
 void SetFamiliarsFollowHost(bool on) { g_familiarsFollowHost = on; }
 

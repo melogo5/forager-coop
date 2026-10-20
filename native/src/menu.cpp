@@ -366,6 +366,7 @@ void StartJoinSteam(uint64_t host) {
     }
     character::SetGuestName(g_nameText.empty() ? character::SavedGuestName() : g_nameText);
     session::JoinSteam(host);
+    g_open = true;  // the COOP screen tells how the join goes
     g_status = "Joining your friend through Steam...";
 }
 

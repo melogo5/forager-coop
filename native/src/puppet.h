@@ -29,6 +29,14 @@ bool InstallHooks(LocalStepFn onLocalStep, LocalStepFn beforeLocalStep1);
 // puppets, so it chases and attacks whoever is closest.
 void SetEnemiesSeeAll(bool on);
 
+// While held, the local player's own Step_0 does not run (the coop's step callback still does): it stands while
+// the skill tree is open in the world, with no movement or "stuck" checks of its own.
+void HoldLocalPlayer(bool hold);
+
+// An objPlayer that is neither the local player nor a puppet (the skill tree's avatar): none of its events run,
+// as for a puppet, and it is not taken for the local player.
+void SetInert(yyc::CInstance* instance, bool inert);
+
 // Guest: familiars (lantern, halo, droids) come with the host's world and are the host's: they follow the
 // host's puppet.
 void SetFamiliarsFollowHost(bool on);

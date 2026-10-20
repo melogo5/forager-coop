@@ -14,6 +14,7 @@
 #include "MinHook.h"
 #include "log.h"
 #include "puppet.h"
+#include "skilltab.h"
 #include "stations.h"
 
 namespace coop::sync {
@@ -366,6 +367,7 @@ yyc::BuiltinFn g_origRoomGoto = nullptr;
 void __cdecl RoomGotoHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstance* other, int argc,
                           yyc::RValue* args) {
     const int room = argc >= 1 ? static_cast<int>(yyc::ToReal(args[0])) : -1;
+    if (skilltab::InterceptRoomGoto(self, room)) return;  // the skill tree opens/closes in the world room
     if (Connected() && room >= kFirstDungeonRoom && room <= kLastDungeonRoom) {
         Log("sync: not entering room %d - no dungeons in coop", room);
         return;
