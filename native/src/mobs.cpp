@@ -102,18 +102,24 @@ void WriteCamera(const CameraBounds& c) {
     }
 }
 
-// Runs `original` with the camera bounds stretched over the guest's surroundings too.
+// Runs `original` with the camera bounds stretched over the guests' surroundings too. (One box over everyone:
+// players far apart keep everything between them awake - MULTIPLAYER.md, stage 5.)
 yyc::RValue* WithGuestArea(yyc::ScriptFn original, yyc::CInstance* self, yyc::CInstance* other,
                            yyc::RValue* result, int argc, yyc::RValue** args) {
-    yyc::CInstance* guest = g_isHost != nullptr && g_isHost() && net::IsConnected() ? puppet::Instance() : nullptr;
+    const std::vector<yyc::CInstance*> guests = g_isHost != nullptr && g_isHost() && net::IsConnected()
+                                                    ? puppet::Instances()
+                                                    : std::vector<yyc::CInstance*>{};
     CameraBounds camera{};
-    if (guest == nullptr || !ReadCamera(&camera)) return original(self, other, result, argc, args);
+    if (guests.empty() || !ReadCamera(&camera)) return original(self, other, result, argc, args);
     const double halfWidth = (camera.right - camera.left) / 2;
     const double halfHeight = (camera.bottom - camera.top) / 2;
-    const double gx = yyc::GetBuiltinReal(guest, yyc::va::YYVar_x);
-    const double gy = yyc::GetBuiltinReal(guest, yyc::va::YYVar_y);
-    const CameraBounds stretched{(std::min)(camera.left, gx - halfWidth), (std::max)(camera.right, gx + halfWidth),
-                                 (std::min)(camera.top, gy - halfHeight), (std::max)(camera.bottom, gy + halfHeight)};
+    CameraBounds stretched = camera;
+    for (yyc::CInstance* guest : guests) {
+        const double gx = yyc::GetBuiltinReal(guest, yyc::va::YYVar_x);
+        const double gy = yyc::GetBuiltinReal(guest, yyc::va::YYVar_y);
+        stretched = {(std::min)(stretched.left, gx - halfWidth), (std::max)(stretched.right, gx + halfWidth),
+                     (std::min)(stretched.top, gy - halfHeight), (std::max)(stretched.bottom, gy + halfHeight)};
+    }
     WriteCamera(stretched);
     yyc::RValue* r = original(self, other, result, argc, args);
     WriteCamera(camera);
@@ -257,8 +263,9 @@ bool InstallHooks(bool (*isHost)(), bool (*isGuest)()) {
 void DebugSpawnEnemy(yyc::CInstance* localPlayer) {
     char value[16] = {};
     if (GetEnvironmentVariableA("COOP_DEBUG_ENEMY", value, sizeof(value)) == 0) return;
-    yyc::CInstance* guest = puppet::Instance();
-    if (guest == nullptr) return;
+    const std::vector<yyc::CInstance*> guests = puppet::Instances();
+    if (guests.empty()) return;
+    yyc::CInstance* guest = guests.front();
     const double x = yyc::GetBuiltinReal(guest, yyc::va::YYVar_x) + 64;
     const double y = yyc::GetBuiltinReal(guest, yyc::va::YYVar_y);
     const int id = static_cast<int>(Builtin(localPlayer, "instance_create_depth", {x, y, -y, double(atoi(value))}));

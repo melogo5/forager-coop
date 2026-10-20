@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
+#include <map>
 #include <string>
 #include <thread>
 #include <vector>
@@ -68,7 +69,9 @@ constexpr int kMaxGuests = 3;
 enum MessageType : uint8_t {
     kHello = 1,
     kPlayerState = 2,
-    kBye = 7,  // host -> guest: the host left its world; the session is over
+    kBye = 7,        // host -> guest: the host left its world; the session is over
+    kPeerState = 8,  // host -> guests: another guest's PlayerStateMsg (PeerStateMsg)
+    kPeerGone = 9,   // host -> guests: u8 player - that guest left
 };
 
 #pragma pack(push, 1)
@@ -80,6 +83,10 @@ struct PlayerStateMsg {
     float imageIndex, xscale, yscale, depth;
     int32_t sprite;
     int32_t tool;  // item in hand (ToolSelected()), -4 = none
+};
+struct PeerStateMsg {
+    uint8_t player;
+    PlayerStateMsg state;
 };
 #pragma pack(pop)
 
@@ -94,8 +101,7 @@ std::string g_notice;    // shown on the COOP screen when back in the menu
 bool g_wasConnected = false;
 std::vector<net::PeerId> g_peers;  // linked at the last step
 bool g_wasInWorld = true;
-bool g_haveRemote = false;
-PlayerStateMsg g_remote{};
+std::map<net::PeerId, PlayerStateMsg> g_remotes;  // the other players' last state, shown as puppets
 
 bool ParseArgs(Role* role, std::string* address, uint16_t* port) {
     int argc = 0;
@@ -189,6 +195,20 @@ uint32_t OurProtocol() {
     return version;
 }
 
+bool IsLinked(net::PeerId peer) { return std::find(g_peers.begin(), g_peers.end(), peer) != g_peers.end(); }
+
+// A player's own state: shown as its puppet; the host passes a guest's on to the other guests. (A guest that
+// has just left may still have a state in the inbox: it would bring its puppet back, so it is dropped.)
+void OnPlayerState(net::PeerId from, const PlayerStateMsg& state) {
+    if (g_role == Role::kHost && !IsLinked(from)) return;
+    g_remotes[from] = state;
+    if (g_role != Role::kHost) return;
+    const PeerStateMsg relay{from, state};
+    for (const net::PeerId peer : g_peers) {
+        if (peer != from) net::SendTo(peer, kPeerState, &relay, sizeof(relay));
+    }
+}
+
 void HandleMessages(yyc::CInstance* localPlayer) {
     std::vector<net::Message> inbox;
     net::Drain(inbox);
@@ -221,8 +241,17 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             Log("session: player %u has protocol %u (ours %u)", message.from, hello.version, OurProtocol());
             if (hello.version != OurProtocol()) WarnVersion(hello.version);
         } else if (message.type == kPlayerState && message.payload.size() == sizeof(PlayerStateMsg)) {
-            memcpy(&g_remote, message.payload.data(), sizeof(g_remote));
-            g_haveRemote = true;
+            PlayerStateMsg state{};
+            memcpy(&state, message.payload.data(), sizeof(state));
+            OnPlayerState(message.from, state);
+        } else if (message.type == kPeerState && message.payload.size() == sizeof(PeerStateMsg) &&
+                   g_role == Role::kGuest) {
+            PeerStateMsg peer{};
+            memcpy(&peer, message.payload.data(), sizeof(peer));
+            g_remotes[peer.player] = peer.state;
+        } else if (message.type == kPeerGone && message.payload.size() == 1 && g_role == Role::kGuest) {
+            g_remotes.erase(message.payload[0]);
+            puppet::Destroy(localPlayer, message.payload[0]);
         }
     }
 }
@@ -236,8 +265,9 @@ void Announce(size_t guests) {
                          1 + MaxGuests());
 }
 
-// Greets every newly linked player (a guest: the host) and notes who left.
-void TrackPeers(const std::vector<net::PeerId>& peers) {
+// Greets every newly linked player (a guest: the host) and notes who left. The host removes a guest that left
+// and tells the others to.
+void TrackPeers(yyc::CInstance* localPlayer, const std::vector<net::PeerId>& peers) {
     const auto known = [](const std::vector<net::PeerId>& list, net::PeerId peer) {
         return std::find(list.begin(), list.end(), peer) != list.end();
     };
@@ -248,7 +278,11 @@ void TrackPeers(const std::vector<net::PeerId>& peers) {
         net::SendTo(peer, kHello, &hello, sizeof(hello));
     }
     for (const net::PeerId peer : g_peers) {
-        if (!known(peers, peer)) Log("session: player %u left", peer);
+        if (known(peers, peer)) continue;
+        Log("session: player %u left", peer);
+        g_remotes.erase(peer);
+        puppet::Destroy(localPlayer, peer);
+        if (g_role == Role::kHost) net::Send(kPeerGone, &peer, sizeof(peer));
     }
     g_peers = peers;
 }
@@ -380,23 +414,23 @@ void Tick(yyc::CInstance* localPlayer) {
     const std::vector<net::PeerId> peers = net::Peers();
     const bool connected = !peers.empty();
     if (g_role == Role::kHost && g_steps % kAnnounceEverySteps == 0) Announce(peers.size());
-    TrackPeers(peers);
+    TrackPeers(localPlayer, peers);
     if (g_role == Role::kHost) world::HostTick();
     if (g_role == Role::kGuest) {
         character::GuestTick(localPlayer);
     }
     if (!connected && g_wasConnected) {
         Log("session: peer gone");
-        g_haveRemote = false;
-        puppet::Destroy(localPlayer);
+        g_remotes.clear();
+        puppet::DestroyAll(localPlayer);
         sync::Reset();  // a guest coming back starts over: new replicas, new drops
         storage::Reset();
         stations::Reset();
         reconcile::Reset();
     }
     g_wasConnected = connected;
-    puppet::SetEnemiesSeeBoth(g_role == Role::kHost && connected);
-    puppet::SetFamiliarsFollowPeer(g_role == Role::kGuest && connected);
+    puppet::SetEnemiesSeeAll(g_role == Role::kHost && connected);
+    puppet::SetFamiliarsFollowHost(g_role == Role::kGuest && connected);
     ++g_steps;
     if (!connected) {
         HandleMessages(localPlayer);  // what arrived before the link went, e.g. the host saying goodbye
@@ -437,10 +471,10 @@ void Tick(yyc::CInstance* localPlayer) {
         const PlayerStateMsg state = CaptureState(localPlayer);
         net::Send(kPlayerState, &state, sizeof(state));
     }
-    if (g_haveRemote) {
-        const puppet::State target{g_remote.x,      g_remote.y,     g_remote.imageIndex, g_remote.xscale,
-                                   g_remote.yscale, g_remote.depth, g_remote.sprite,    g_remote.tool};
-        puppet::Update(localPlayer, target);
+    for (const auto& [player, remote] : g_remotes) {
+        const puppet::State target{remote.x,      remote.y,     remote.imageIndex, remote.xscale,
+                                   remote.yscale, remote.depth, remote.sprite,    remote.tool};
+        puppet::Update(localPlayer, player, target);
     }
 }
 
@@ -478,7 +512,7 @@ void Leave() {
     g_offlineSteps = 0;
     g_wasConnected = false;
     g_peers.clear();
-    g_haveRemote = false;
+    g_remotes.clear();
     character::Reset();
     world::Reset();
     sync::Reset();

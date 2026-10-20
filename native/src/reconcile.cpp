@@ -158,7 +158,8 @@ void DebugTick(yyc::CInstance* localPlayer) {
     static const bool enabled = GetEnvironmentVariableA("COOP_DEBUG_DESYNC", nullptr, 0) > 0;
     static unsigned steps = 0;
     if (!enabled || ++steps != 480) return;
-    yyc::CInstance* guest = puppet::Instance() != nullptr ? puppet::Instance() : localPlayer;
+    const std::vector<yyc::CInstance*> puppets = puppet::Instances();
+    yyc::CInstance* guest = !puppets.empty() ? puppets.front() : localPlayer;
     const double gx = yyc::GetBuiltinReal(guest, yyc::va::YYVar_x);
     const double gy = yyc::GetBuiltinReal(guest, yyc::va::YYVar_y);
     const Area around{static_cast<float>(gx - 80), static_cast<float>(gy - 60), static_cast<float>(gx + 80),
@@ -169,7 +170,7 @@ void DebugTick(yyc::CInstance* localPlayer) {
     });
     std::sort(nearby.begin(), nearby.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
     // The host removes the nearest three, the guest the next three: both directions get repaired.
-    const size_t first = puppet::Instance() != nullptr ? 0 : 3;
+    const size_t first = !puppets.empty() ? 0 : 3;
     for (size_t i = first; i < first + 3 && i < nearby.size(); ++i) {
         const Local& l = nearby[i].second;
         Log("reconcile: debug removes object %d at (%.0f, %.0f) here only", l.object, l.x, l.y);
@@ -179,8 +180,10 @@ void DebugTick(yyc::CInstance* localPlayer) {
 
 void HostTick(yyc::CInstance* localPlayer) {
     if (++g_steps % kEverySteps != 0) return;
-    yyc::CInstance* guest = puppet::Instance();
-    if (guest == nullptr) return;
+    // One guest per check for now (MULTIPLAYER.md, stage 5: each in turn).
+    const std::vector<yyc::CInstance*> guests = puppet::Instances();
+    if (guests.empty()) return;
+    yyc::CInstance* guest = guests.front();
     const double halfWidth = (GlobalReal(kSlotCameraRight) - GlobalReal(kSlotCameraLeft)) / 2 - kMargin;
     const double halfHeight = (GlobalReal(kSlotCameraBottom) - GlobalReal(kSlotCameraTop)) / 2 - kMargin;
     if (halfWidth <= 0 || halfHeight <= 0) return;

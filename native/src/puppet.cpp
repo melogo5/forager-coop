@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <initializer_list>
 #include <cstring>
@@ -17,7 +18,7 @@ constexpr int kObjPlayer = 22;
 constexpr double kFollow = 0.35;       // fraction of the remaining distance covered per step
 constexpr double kSnapDistance = 256;  // teleport instead of gliding across the map
 
-// objPlayer events that must not run for the puppet (its state comes from the network).
+// objPlayer events that must not run for a puppet (its state comes from the network).
 // Create/PreCreate/CleanUp run normally; Draw_0 runs with PlayerFind() pointing at the puppet.
 namespace ev {
 constexpr uint32_t Step_0 = 0x009A0430;
@@ -46,14 +47,22 @@ struct StackFrame {
     int line;
 };
 
+struct Puppet {
+    net::PeerId player = net::kHostPeer;
+    int id = 0;
+    yyc::CInstance* instance = nullptr;  // valid while `id`'s instance exists; checked by Prune every local step
+    // Its toolbar (see ShowTool).
+    double toolbarList = -1;
+    int shownTool = -5;
+};
+
 LocalStepFn g_onLocalStep = nullptr;
-yyc::CInstance* g_puppet = nullptr;  // valid while g_puppetId's instance exists; checked every local step
-int g_puppetId = 0;
-bool g_creating = false;     // PlayerFind() -> calling instance, while the puppet runs Create_0
+std::vector<Puppet> g_puppets;  // in the order they were created
+bool g_creating = false;     // PlayerFind() -> calling instance, while a puppet runs Create_0
 int g_actorId = 0;           // PlayerFind() -> this instance id, when non-zero
 int g_actingDepth = 0;       // BeginActing nesting
-bool g_enemiesSeeBoth = false;     // host with a guest: enemies go for the nearer player (PLAYTEST.md #8)
-bool g_familiarsFollowPeer = false;  // guest: familiars are the host's (PLAYTEST.md #14)
+bool g_enemiesSeeAll = false;       // host with guests: enemies go for the nearest player (PLAYTEST.md #8)
+bool g_familiarsFollowHost = false;  // guest: familiars are the host's (PLAYTEST.md #14)
 constexpr int kParEnemy = 23;        // decompiled/data/objects.tsv
 constexpr int kParFamiliar = 74;     // lantern, halo, droids...
 constexpr int kMaxObjects = 1024;
@@ -68,7 +77,27 @@ yyc::EventFn g_origSkipped[kSkippedCount] = {};
 yyc::ScriptFn g_origPlayerFind = nullptr;
 yyc::ScriptFn g_origDmgPlayer = nullptr;
 
-bool IsPuppet(const yyc::CInstance* instance) { return instance != nullptr && instance == g_puppet; }
+Puppet* Find(net::PeerId player) {
+    for (auto& puppet : g_puppets) {
+        if (puppet.player == player) return &puppet;
+    }
+    return nullptr;
+}
+
+// Forgets puppets the game destroyed (a room change).
+void Prune() {
+    g_puppets.erase(std::remove_if(g_puppets.begin(), g_puppets.end(),
+                                   [](const Puppet& p) { return yyc::FindInstance(p.id) != p.instance; }),
+                    g_puppets.end());
+}
+
+bool IsPuppetInstance(const yyc::CInstance* instance) {
+    if (instance == nullptr) return false;
+    for (const auto& puppet : g_puppets) {
+        if (puppet.instance == instance) return true;
+    }
+    return false;
+}
 
 const char* CallerName() {
     const StackFrame* top = *yyc::At<StackFrame**>(yyc::va::StackTraceTop);
@@ -98,28 +127,43 @@ double DistanceSquared(yyc::CInstance* a, yyc::CInstance* b) {
     return dx * dx + dy * dy;
 }
 
+// The puppet nearer to `enemy` than the local player (`localId`) and every other puppet, or 0.
+int NearestPuppetId(yyc::CInstance* enemy, int localId) {
+    yyc::CInstance* local = yyc::FindInstance(localId);
+    double best = local != nullptr ? DistanceSquared(enemy, local) : 1e300;
+    int bestId = 0;
+    for (const auto& puppet : g_puppets) {
+        if (yyc::FindInstance(puppet.id) != puppet.instance) continue;  // gone with a room change, not pruned yet
+        const double d = DistanceSquared(enemy, puppet.instance);
+        if (d < best) {
+            best = d;
+            bestId = puppet.id;
+        }
+    }
+    return bestId;
+}
+
 // Hot path (~350 calls per frame): a single branch when no override is active.
 yyc::RValue* __cdecl PlayerFindHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                     yyc::RValue** args) {
     int id = g_actorId;
     if (id == 0 && g_creating) {
-        // The puppet's Create_0 edits "the player's" gear: point it at the puppet itself. Create_0's own
+        // A puppet's Create_0 edits "the player's" gear: point it at the puppet itself. Create_0's own
         // checks ("am I the main player?" -> create uiToolbar/familiars) must keep seeing the local player.
         const char* caller = CallerName();
         if (caller != nullptr && strcmp(caller, kCreateFrame) != 0) {
             id = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
         }
     }
-    if (id == 0 && g_familiarsFollowPeer && g_puppet != nullptr && self != nullptr && KindOf(self) == kFamiliar) {
-        id = g_puppetId;
+    if (id == 0 && g_familiarsFollowHost && !g_puppets.empty() && self != nullptr && KindOf(self) == kFamiliar) {
+        if (const Puppet* host = Find(net::kHostPeer)) id = host->id;
     }
-    if (id == 0 && g_enemiesSeeBoth && g_puppet != nullptr && self != nullptr && KindOf(self) == kEnemy) {
+    if (id == 0 && g_enemiesSeeAll && !g_puppets.empty() && self != nullptr && KindOf(self) == kEnemy) {
         g_origPlayerFind(self, other, result, argc, args);
-        yyc::CInstance* local = yyc::FindInstance(static_cast<int>(yyc::ToReal(*result)));
-        if (local == nullptr || DistanceSquared(self, g_puppet) >= DistanceSquared(self, local)) return result;
-        id = g_puppetId;
+        id = NearestPuppetId(self, static_cast<int>(yyc::ToReal(*result)));
+        if (id == 0) return result;
         static bool told = false;
-        if (!told) Log("puppet: an enemy goes for the guest (nearer than the host)");
+        if (!told) Log("puppet: an enemy goes for a guest (nearer than the host)");
         told = true;
     }
     if (id == 0) return g_origPlayerFind(self, other, result, argc, args);
@@ -129,7 +173,7 @@ yyc::RValue* __cdecl PlayerFindHook(yyc::CInstance* self, yyc::CInstance* other,
 }
 
 void __cdecl StepHook(yyc::CInstance* self, yyc::CInstance* other) {
-    if (IsPuppet(self)) return;
+    if (IsPuppetInstance(self)) return;
     g_origStep(self, other);
     if (g_onLocalStep == nullptr) return;
     __try {
@@ -140,7 +184,7 @@ void __cdecl StepHook(yyc::CInstance* self, yyc::CInstance* other) {
 }
 
 void __cdecl Step1Hook(yyc::CInstance* self, yyc::CInstance* other) {
-    if (IsPuppet(self)) return;
+    if (IsPuppetInstance(self)) return;
     if (g_beforeLocalStep1 != nullptr) {
         __try {
             g_beforeLocalStep1(self);
@@ -152,25 +196,26 @@ void __cdecl Step1Hook(yyc::CInstance* self, yyc::CInstance* other) {
 }
 
 void __cdecl DrawHook(yyc::CInstance* self, yyc::CInstance* other) {
-    if (!IsPuppet(self)) {
+    if (!IsPuppetInstance(self)) {
         g_origDraw(self, other);
         return;
     }
-    g_actorId = g_puppetId;
+    const int previous = g_actorId;
+    g_actorId = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
     g_origDraw(self, other);
-    g_actorId = 0;
+    g_actorId = previous;
 }
 
-// Damage meant for the puppet must not land on the local player (for now it is dropped).
+// Damage meant for a puppet must not land on the local player (for now it is dropped).
 yyc::RValue* __cdecl DmgPlayerHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                    yyc::RValue** args) {
-    if (IsPuppet(other)) return result;
+    if (IsPuppetInstance(other)) return result;
     return g_origDmgPlayer(self, other, result, argc, args);
 }
 
 template <int N>
 void __cdecl SkippedHook(yyc::CInstance* self, yyc::CInstance* other) {
-    if (!IsPuppet(self)) g_origSkipped[N](self, other);
+    if (!IsPuppetInstance(self)) g_origSkipped[N](self, other);
 }
 
 template <int... N>
@@ -186,26 +231,66 @@ bool Hook(uint32_t va, void* detour, void* original) {
     return status == MH_OK;
 }
 
-yyc::CInstance* Create(yyc::CInstance* localPlayer, const State& at) {
+Puppet* Create(yyc::CInstance* localPlayer, net::PeerId player, const State& at) {
     yyc::RValue args[4] = {yyc::Real(at.x), yyc::Real(at.y), yyc::Real(at.depth), yyc::Real(kObjPlayer)};
     yyc::RValue result{};
     g_creating = true;
     const bool called = yyc::CallBuiltin("instance_create_depth", localPlayer, 4, args, &result);
     g_creating = false;
     if (!called) return nullptr;
-    g_puppetId = static_cast<int>(yyc::ToReal(result));
+    Puppet puppet;
+    puppet.player = player;
+    puppet.id = static_cast<int>(yyc::ToReal(result));
     yyc::Free(&result);
-    g_puppet = yyc::FindInstance(g_puppetId);
-    if (g_puppet != nullptr) {
-        yyc::SetBuiltinReal(g_puppet, yyc::va::YYVar_image_speed, 0);
-        Log("puppet: objPlayer %d created", g_puppetId);
-    }
-    return g_puppet;
+    puppet.instance = yyc::FindInstance(puppet.id);
+    if (puppet.instance == nullptr) return nullptr;
+    yyc::SetBuiltinReal(puppet.instance, yyc::va::YYVar_image_speed, 0);
+    Log("puppet: objPlayer %d created for player %u", puppet.id, player);
+    g_puppets.push_back(puppet);
+    return &g_puppets.back();
 }
 
-void Approach(uint32_t yyvar, double target) {
-    const double current = yyc::GetBuiltinReal(g_puppet, yyvar);
-    yyc::SetBuiltinReal(g_puppet, yyvar, current + (target - current) * kFollow);
+void Approach(yyc::CInstance* instance, uint32_t yyvar, double target) {
+    const double current = yyc::GetBuiltinReal(instance, yyvar);
+    yyc::SetBuiltinReal(instance, yyvar, current + (target - current) * kFollow);
+}
+
+// The puppet draws the tool in its own toolbar (Draw_0 -> ToolSelected() with PlayerFind() = the puppet). It
+// gets a list of its own holding just its player's tool, so the local player's toolbar is never touched.
+constexpr int kSlotToolbar = 0x897;  // decompiled/code/var_slots.tsv
+constexpr int kSlotToolSelected = 0x89C;
+
+double CallReal(yyc::CInstance* self, const char* builtin, std::initializer_list<double> values) {
+    yyc::RValue args[4] = {};
+    int argc = 0;
+    for (const double v : values) args[argc++] = yyc::Real(v);
+    yyc::RValue result{};
+    yyc::CallBuiltin(builtin, self, argc, args, &result);
+    const double value = yyc::ToReal(result);
+    yyc::Free(&result);
+    return value;
+}
+
+void ShowTool(yyc::CInstance* localPlayer, Puppet& puppet, int tool) {
+    if (puppet.toolbarList < 0) {
+        puppet.toolbarList = CallReal(localPlayer, "ds_list_create", {});
+        yyc::RValue list = yyc::Real(puppet.toolbarList);
+        yyc::SetVar(puppet.id, kSlotToolbar, &list);
+    }
+    if (tool == puppet.shownTool) return;
+    puppet.shownTool = tool;
+    CallReal(localPlayer, "ds_list_clear", {puppet.toolbarList});
+    if (tool >= 0) CallReal(localPlayer, "ds_list_add", {puppet.toolbarList, double(tool)});
+    yyc::RValue selected = yyc::Real(0);
+    yyc::SetVar(puppet.id, kSlotToolSelected, &selected);
+}
+
+void DestroyInstance(yyc::CInstance* localPlayer, const Puppet& puppet) {
+    if (yyc::FindInstance(puppet.id) != puppet.instance) return;
+    yyc::RValue id = yyc::Real(puppet.id);
+    yyc::RValue result{};
+    yyc::CallBuiltin("instance_destroy", localPlayer, 1, &id, &result);
+    yyc::Free(&result);
 }
 
 }  // namespace
@@ -224,112 +309,84 @@ bool InstallHooks(LocalStepFn onLocalStep, LocalStepFn beforeLocalStep1) {
     return ok;
 }
 
-void SetEnemiesSeeBoth(bool on) { g_enemiesSeeBoth = on; }
+void SetEnemiesSeeAll(bool on) { g_enemiesSeeAll = on; }
 
-void SetFamiliarsFollowPeer(bool on) { g_familiarsFollowPeer = on; }
+void SetFamiliarsFollowHost(bool on) { g_familiarsFollowHost = on; }
 
-yyc::CInstance* Instance() {
-    if (g_puppet != nullptr && yyc::FindInstance(g_puppetId) != g_puppet) {
-        g_puppet = nullptr;
-        g_puppetId = 0;
-    }
-    return g_puppet;
+yyc::CInstance* Instance(net::PeerId player) {
+    Prune();
+    const Puppet* puppet = Find(player);
+    return puppet != nullptr ? puppet->instance : nullptr;
 }
 
-void BeginActing() {
-    if (++g_actingDepth == 1 && Instance() != nullptr) g_actorId = g_puppetId;
+std::vector<yyc::CInstance*> Instances() {
+    Prune();
+    std::vector<yyc::CInstance*> instances;
+    for (const auto& puppet : g_puppets) instances.push_back(puppet.instance);
+    return instances;
+}
+
+bool IsPuppet(const yyc::CInstance* instance) { return IsPuppetInstance(instance); }
+
+void BeginActing(net::PeerId player) {
+    if (++g_actingDepth != 1) return;
+    g_actorId = Instance(player) != nullptr ? Find(player)->id : 0;
 }
 
 void EndActing() {
     if (g_actingDepth > 0 && --g_actingDepth == 0) g_actorId = 0;
 }
 
-bool IsActing() { return g_actorId != 0 && g_actorId == g_puppetId; }
+bool IsActing() { return g_actorId != 0; }
 
-int PauseActing() {
-    const int depth = g_actingDepth;
+Acting PauseActing() {
+    const Acting acting{g_actingDepth, g_actorId};
     g_actingDepth = 0;
     g_actorId = 0;
-    return depth;
+    return acting;
 }
 
-void ResumeActing(int depth) {
-    g_actingDepth = depth;
-    if (depth > 0 && Instance() != nullptr) g_actorId = g_puppetId;
+void ResumeActing(const Acting& acting) {
+    g_actingDepth = acting.depth;
+    g_actorId = acting.depth > 0 && yyc::FindInstance(acting.actorId) != nullptr ? acting.actorId : 0;
 }
 
-namespace {
+void Update(yyc::CInstance* localPlayer, net::PeerId player, const State& target) {
+    Prune();
+    Puppet* puppet = Find(player);
+    if (puppet == nullptr) puppet = Create(localPlayer, player, target);
+    if (puppet == nullptr) return;
+    yyc::CInstance* instance = puppet->instance;
 
-// The puppet draws the tool in its own toolbar (Draw_0 -> ToolSelected() with PlayerFind() = the puppet). It
-// gets a list of its own holding just the peer's tool, so the local player's toolbar is never touched.
-constexpr int kSlotToolbar = 0x897;  // decompiled/code/var_slots.tsv
-constexpr int kSlotToolSelected = 0x89C;
-int g_toolbarOf = 0;  // the puppet instance the list below belongs to
-double g_toolbarList = -1;
-int g_shownTool = -5;
-
-double CallReal(yyc::CInstance* self, const char* builtin, std::initializer_list<double> values) {
-    yyc::RValue args[4] = {};
-    int argc = 0;
-    for (const double v : values) args[argc++] = yyc::Real(v);
-    yyc::RValue result{};
-    yyc::CallBuiltin(builtin, self, argc, args, &result);
-    const double value = yyc::ToReal(result);
-    yyc::Free(&result);
-    return value;
-}
-
-void ShowTool(yyc::CInstance* localPlayer, int tool) {
-    if (g_toolbarOf != g_puppetId) {
-        g_toolbarList = CallReal(localPlayer, "ds_list_create", {});
-        g_toolbarOf = g_puppetId;
-        g_shownTool = -5;
-        yyc::RValue list = yyc::Real(g_toolbarList);
-        yyc::SetVar(g_puppetId, kSlotToolbar, &list);
-    }
-    if (tool == g_shownTool) return;
-    g_shownTool = tool;
-    CallReal(localPlayer, "ds_list_clear", {g_toolbarList});
-    if (tool >= 0) CallReal(localPlayer, "ds_list_add", {g_toolbarList, double(tool)});
-    yyc::RValue selected = yyc::Real(0);
-    yyc::SetVar(g_puppetId, kSlotToolSelected, &selected);
-}
-
-}  // namespace
-
-void Update(yyc::CInstance* localPlayer, const State& target) {
-    if (g_puppetId != 0 && yyc::FindInstance(g_puppetId) != g_puppet) {
-        g_puppet = nullptr;  // destroyed by the game (room change)
-        g_puppetId = 0;
-    }
-    if (g_puppet == nullptr && Create(localPlayer, target) == nullptr) return;
-
-    const double dx = target.x - yyc::GetBuiltinReal(g_puppet, yyc::va::YYVar_x);
-    const double dy = target.y - yyc::GetBuiltinReal(g_puppet, yyc::va::YYVar_y);
+    const double dx = target.x - yyc::GetBuiltinReal(instance, yyc::va::YYVar_x);
+    const double dy = target.y - yyc::GetBuiltinReal(instance, yyc::va::YYVar_y);
     if (std::sqrt(dx * dx + dy * dy) > kSnapDistance) {
-        yyc::SetBuiltinReal(g_puppet, yyc::va::YYVar_x, target.x);
-        yyc::SetBuiltinReal(g_puppet, yyc::va::YYVar_y, target.y);
+        yyc::SetBuiltinReal(instance, yyc::va::YYVar_x, target.x);
+        yyc::SetBuiltinReal(instance, yyc::va::YYVar_y, target.y);
     } else {
-        Approach(yyc::va::YYVar_x, target.x);
-        Approach(yyc::va::YYVar_y, target.y);
+        Approach(instance, yyc::va::YYVar_x, target.x);
+        Approach(instance, yyc::va::YYVar_y, target.y);
     }
-    yyc::SetBuiltinReal(g_puppet, yyc::va::YYVar_sprite_index, target.sprite);
-    yyc::SetBuiltinReal(g_puppet, yyc::va::YYVar_image_index, target.imageIndex);
-    yyc::SetBuiltinReal(g_puppet, yyc::va::YYVar_image_xscale, target.xscale);
-    yyc::SetBuiltinReal(g_puppet, yyc::va::YYVar_image_yscale, target.yscale);
-    yyc::SetBuiltinReal(g_puppet, yyc::va::YYVar_depth, target.depth);
-    ShowTool(localPlayer, target.tool);
+    yyc::SetBuiltinReal(instance, yyc::va::YYVar_sprite_index, target.sprite);
+    yyc::SetBuiltinReal(instance, yyc::va::YYVar_image_index, target.imageIndex);
+    yyc::SetBuiltinReal(instance, yyc::va::YYVar_image_xscale, target.xscale);
+    yyc::SetBuiltinReal(instance, yyc::va::YYVar_image_yscale, target.yscale);
+    yyc::SetBuiltinReal(instance, yyc::va::YYVar_depth, target.depth);
+    ShowTool(localPlayer, *puppet, target.tool);
 }
 
-void Destroy(yyc::CInstance* localPlayer) {
-    if (g_puppet != nullptr && yyc::FindInstance(g_puppetId) == g_puppet) {
-        yyc::RValue id = yyc::Real(g_puppetId);
-        yyc::RValue result{};
-        yyc::CallBuiltin("instance_destroy", localPlayer, 1, &id, &result);
-        yyc::Free(&result);
-    }
-    g_puppet = nullptr;
-    g_puppetId = 0;
+void Destroy(yyc::CInstance* localPlayer, net::PeerId player) {
+    const auto found = std::find_if(g_puppets.begin(), g_puppets.end(),
+                                    [player](const Puppet& p) { return p.player == player; });
+    if (found == g_puppets.end()) return;
+    DestroyInstance(localPlayer, *found);
+    Log("puppet: player %u's puppet removed", player);
+    g_puppets.erase(found);
+}
+
+void DestroyAll(yyc::CInstance* localPlayer) {
+    for (const auto& puppet : g_puppets) DestroyInstance(localPlayer, puppet);
+    g_puppets.clear();
 }
 
 }  // namespace coop::puppet

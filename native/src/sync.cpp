@@ -106,7 +106,7 @@ bool g_dryHit = false;     // guest: inside a hit shown locally only (DryHit)
 int8_t g_syncedCache[kMaxObjects] = {};  // 0 unknown, 1 synced, -1 not
 std::unordered_map<int, int> g_hostToLocal;  // guest: host instance id -> replica id
 std::unordered_map<int, int> g_localToHost;
-std::unordered_set<int> g_hitByGuest;  // host: instances the guest hit last
+std::unordered_map<int, net::PeerId> g_hitByGuest;  // host: instances a guest hit last, and which guest
 std::unordered_set<int> g_destroyedOnHost;  // guest: host ids reported destroyed (ids are never reused)
 
 yyc::ScriptFn g_origResourceSpawn = nullptr;
@@ -317,9 +317,13 @@ void __cdecl DestroyHook(yyc::CInstance* self, yyc::CInstance* other, int id, in
         info = Describe(target);
         synced = IsSynced(self, info.object);
     }
-    // XP and rewards from destroying something the guest hit go to the guest (PlayerFind -> puppet).
-    const bool forGuest = synced && IsHost() && g_hitByGuest.erase(info.id) > 0;
-    if (forGuest) puppet::BeginActing();
+    // XP and rewards from destroying something a guest hit go to that guest (PlayerFind -> its puppet).
+    const auto hitter = synced && IsHost() ? g_hitByGuest.find(info.id) : g_hitByGuest.end();
+    const bool forGuest = hitter != g_hitByGuest.end();
+    if (forGuest) {
+        puppet::BeginActing(hitter->second);
+        g_hitByGuest.erase(hitter);
+    }
     g_origDestroy(self, other, id, executeEvent);
     if (forGuest) puppet::EndActing();
     if (!synced) return;
@@ -446,9 +450,9 @@ yyc::RValue* __cdecl GainXpHook(yyc::CInstance* self, yyc::CInstance* other, yyc
         return result;
     }
     if (!IsHost() || !puppet::IsActing()) return g_origGainXp(self, other, result, argc, args);
-    const int depth = puppet::PauseActing();
+    const puppet::Acting acting = puppet::PauseActing();
     yyc::RValue* r = g_origGainXp(self, other, result, argc, args);
-    puppet::ResumeActing(depth);
+    puppet::ResumeActing(acting);
     return r;
 }
 
@@ -564,7 +568,7 @@ void __cdecl EventUserHook(yyc::CInstance* self, yyc::CInstance* other, int n) {
 // Host: a drop touching the guest's puppet must not land in the host's inventory; the guest collects
 // its own copy and reports it (kGuestDestroyed).
 void __cdecl CollectHook(yyc::CInstance* self, yyc::CInstance* other) {
-    if (IsHost() && other != nullptr && other == puppet::Instance()) return;
+    if (IsHost() && puppet::IsPuppet(other)) return;
     if (Connected()) {
         const int id = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
         if (IsHost() && g_guestDrops.count(id) > 0) return;      // the guest's loot
@@ -690,18 +694,18 @@ yyc::CInstance* ResolveOnHost(yyc::CInstance* self, const ObjectMsg& msg) {
 }
 
 // `woken`: the second try, after waking up the object's kind (the host may have culled what the guest hit).
-void ApplyHit(yyc::CInstance* self, const ObjectMsg& msg, bool woken = false) {
+void ApplyHit(yyc::CInstance* self, net::PeerId from, const ObjectMsg& msg, bool woken = false) {
     yyc::CInstance* target = ResolveOnHost(self, msg);
-    yyc::CInstance* guest = puppet::Instance();
+    yyc::CInstance* guest = puppet::Instance(from);
     if (target == nullptr && guest != nullptr && !woken) {
-        WakeThen(self, msg.object, [self, msg] { ApplyHit(self, msg, true); });
+        WakeThen(self, msg.object, [self, from, msg] { ApplyHit(self, from, msg, true); });
         return;
     }
-    Log("sync: guest hit object %d at (%.0f, %.0f): %s (dmg %.1f)", msg.object, msg.x, msg.y,
-        target == nullptr ? "not found" : guest == nullptr ? "no puppet" : "applied", msg.depth);
+    Log("sync: guest hit object %d at (%.0f, %.0f): %s (dmg %.1f, guest %u)", msg.object, msg.x, msg.y,
+        target == nullptr ? "not found" : guest == nullptr ? "no puppet" : "applied", msg.depth, from);
     if (target == nullptr || guest == nullptr) return;
     const int targetId = static_cast<int>(yyc::GetBuiltinReal(target, yyc::va::YYVar_id));
-    g_hitByGuest.insert(targetId);
+    g_hitByGuest[targetId] = from;
     // Like UsePickaxe: marks the hit as the player's, which enemies need to reward XP when they die.
     yyc::RValue killedByPlayer = yyc::Real(yyc::GetBuiltinReal(target, kYYVarRoomSpeed));
     yyc::SetVar(targetId, kSlotKilledByPlayer, &killedByPlayer);
@@ -712,7 +716,7 @@ void ApplyHit(yyc::CInstance* self, const ObjectMsg& msg, bool woken = false) {
         yyc::RValue dmg = yyc::Real(msg.depth);
         yyc::SetVar(guestId, kSlotDmg, &dmg);
     }
-    puppet::BeginActing();
+    puppet::BeginActing(from);
     yyc::PerformEvent(target, guest, yyc::kEvOther, yyc::kEvUser0);
     puppet::EndActing();
     if (msg.depth > 0 && yyc::FindInstance(guestId) != nullptr) {
@@ -724,8 +728,8 @@ void ApplyHit(yyc::CInstance* self, const ObjectMsg& msg, bool woken = false) {
 
 // Host: build what the guest built (as the guest, for anything that asks who "the player" is) and tell
 // the guest which instance it became.
-void ApplyGuestSpawn(yyc::CInstance* self, const ObjectMsg& msg) {
-    puppet::BeginActing();
+void ApplyGuestSpawn(yyc::CInstance* self, net::PeerId from, const ObjectMsg& msg) {
+    puppet::BeginActing(from);
     ++g_applyingRemote;
     const int id = static_cast<int>(
         Builtin(self, "instance_create_depth", {msg.x, msg.y, msg.depth, double(msg.object)}));
@@ -733,8 +737,8 @@ void ApplyGuestSpawn(yyc::CInstance* self, const ObjectMsg& msg) {
     puppet::EndActing();
     if (yyc::FindInstance(id) == nullptr) return;
     const ObjectMsg ack{id, msg.object, msg.x, msg.y, msg.depth, msg.id};
-    net::Send(kGuestSpawnAck, &ack, sizeof(ack));
-    Log("sync: guest built object %d at (%.0f, %.0f) -> %d", msg.object, msg.x, msg.y, id);
+    net::SendTo(from, kGuestSpawnAck, &ack, sizeof(ack));
+    Log("sync: guest built object %d at (%.0f, %.0f) -> %d (guest %u)", msg.object, msg.x, msg.y, id, from);
 }
 
 void ApplyGuestDestroyed(yyc::CInstance* self, const ObjectMsg& msg) {
@@ -817,7 +821,14 @@ void DebugBuild(yyc::CInstance* localPlayer) {
 // COOP_DEBUG_CULLTEST=<object index> on another object (85 = trees). Both sides list those objects at the
 // start; the guest deactivates the ones away from itself, as CullObject does (usually the game already has);
 // the host destroys the ones away from both players; both sides list them again - the lists must match.
-std::vector<int> FarInstances(yyc::CInstance* self, int object, std::initializer_list<yyc::CInstance*> players) {
+// `localPlayer` and every puppet.
+std::vector<yyc::CInstance*> WithPuppets(yyc::CInstance* localPlayer) {
+    std::vector<yyc::CInstance*> players = puppet::Instances();
+    players.insert(players.begin(), localPlayer);
+    return players;
+}
+
+std::vector<int> FarInstances(yyc::CInstance* self, int object, const std::vector<yyc::CInstance*>& players) {
     constexpr double kNear = 150;
     std::vector<int> distant;
     const int count = static_cast<int>(Builtin(self, "instance_number", {double(object)}));
@@ -1062,7 +1073,7 @@ void BeforeCull(yyc::CInstance* self) {
     }
     if (g_cullTestDestroy && g_localPlayer != nullptr) {
         g_cullTestDestroy = false;
-        const std::vector<int> distant = FarInstances(self, CullTestObject(), {g_localPlayer, puppet::Instance()});
+        const std::vector<int> distant = FarInstances(self, CullTestObject(), WithPuppets(g_localPlayer));
         for (const int id : distant) Builtin(self, "instance_destroy", {double(id)});
         Log("sync: cull test: destroyed %zu distant objects", distant.size());
     }
@@ -1132,7 +1143,7 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
             if (size == sizeof(ObjectMsg) && IsGuest()) ApplyDestroy(localPlayer, ReadObject(message));
             return true;
         case kHit:
-            if (size == sizeof(ObjectMsg) && IsHost()) ApplyHit(localPlayer, ReadObject(message));
+            if (size == sizeof(ObjectMsg) && IsHost()) ApplyHit(localPlayer, message.from, ReadObject(message));
             return true;
         case kGuestDestroyed:
             if (size == sizeof(ObjectMsg) && IsHost()) ApplyGuestDestroyed(localPlayer, ReadObject(message));
@@ -1145,7 +1156,7 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
             }
             return true;
         case kGuestSpawn:
-            if (size == sizeof(ObjectMsg) && IsHost()) ApplyGuestSpawn(localPlayer, ReadObject(message));
+            if (size == sizeof(ObjectMsg) && IsHost()) ApplyGuestSpawn(localPlayer, message.from, ReadObject(message));
             return true;
         case kGuestSpawnAck:
             if (size == sizeof(ObjectMsg) && IsGuest()) {

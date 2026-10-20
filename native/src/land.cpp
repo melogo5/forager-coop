@@ -175,12 +175,12 @@ bool IsWater(yyc::CInstance* self, double x, double y) {
     return water;
 }
 
-void ApplyLandfill(yyc::CInstance* localPlayer, const LandfillMsg& msg) {
+void ApplyLandfill(yyc::CInstance* localPlayer, net::PeerId from, const LandfillMsg& msg) {
     yyc::RValue values[2] = {yyc::Real(msg.x), yyc::Real(msg.y)};
     yyc::RValue* args[2] = {&values[0], &values[1]};
     yyc::RValue result{};
     ++g_applying;
-    puppet::BeginActing();
+    puppet::BeginActing(from);
     (msg.remove != 0 ? g_origRemoveLandfill : g_origPlaceLandfill)(localPlayer, localPlayer, &result, 2, args);
     puppet::EndActing();
     --g_applying;
@@ -278,7 +278,7 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
         if (message.payload.size() == sizeof(LandfillMsg)) {
             LandfillMsg msg{};
             memcpy(&msg, message.payload.data(), sizeof(msg));
-            ApplyLandfill(localPlayer, msg);
+            ApplyLandfill(localPlayer, message.from, msg);
         }
         return true;
     }
