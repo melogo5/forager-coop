@@ -5,6 +5,7 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -45,8 +46,8 @@ bool g_swapDone = false;
 unsigned g_steps = 0;
 unsigned g_settle = 0;
 
-// Host state.
-std::string g_guestName;
+// Host state: the name each guest introduced itself with.
+std::map<net::PeerId, std::string> g_guestNames;
 
 // Guest: our own name (set from the COOP menu before joining).
 std::string g_ownName;
@@ -155,7 +156,10 @@ bool InstallHooks(bool (*isGuest)()) {
     return status == MH_OK;
 }
 
-std::string HostGuestName() { return g_guestName; }
+std::string HostGuestName(net::PeerId peer) {
+    const auto found = g_guestNames.find(peer);
+    return found != g_guestNames.end() ? found->second : "guest";
+}
 
 std::wstring GuestDataFile(const std::string& name, const char* extension) {
     fs::path path = GuestFile(name);
@@ -174,9 +178,9 @@ void SetGuestName(const std::string& name) {
     std::ofstream(SaveArea() / kNameFile, std::ios::trunc) << g_ownName << "\n";
 }
 
-void GuestOnConnect() {
+void GuestOnConnect(net::PeerId host) {
     const std::string name = g_ownName.empty() ? SavedGuestName() : g_ownName;
-    net::Send(kGuestHello, name.data(), name.size());
+    net::SendTo(host, kGuestHello, name.data(), name.size());
     Log("character: introduced as '%s'", name.c_str());
 }
 
@@ -217,19 +221,21 @@ void GuestTick(yyc::CInstance* localPlayer) {
 
 bool HostHandle(const net::Message& message, yyc::CInstance* localPlayer, bool* guestIntroduced) {
     if (message.type == kGuestHello) {
-        g_guestName = SafeName(std::string(message.payload.begin(), message.payload.end()));
-        const std::vector<uint8_t> stored = ReadFile(GuestFile(g_guestName));
+        const std::string name = SafeName(std::string(message.payload.begin(), message.payload.end()));
+        g_guestNames[message.from] = name;
+        const std::vector<uint8_t> stored = ReadFile(GuestFile(name));
         std::vector<uint8_t> payload{static_cast<uint8_t>(stored.empty() ? 0 : 1)};
         payload.insert(payload.end(), stored.begin(), stored.end());
-        net::Send(kCharacter, payload.data(), payload.size());
-        Log("character: guest '%s' (%s)", g_guestName.c_str(), stored.empty() ? "new" : "stored character sent");
+        net::SendTo(message.from, kCharacter, payload.data(), payload.size());
+        Log("character: guest %u is '%s' (%s)", message.from, name.c_str(),
+            stored.empty() ? "new" : "stored character sent");
         *guestIntroduced = true;
         return true;
     }
     if (message.type == kCharacterSave) {
-        WriteFile(GuestFile(g_guestName.empty() ? "guest" : g_guestName), message.payload.data(),
-                  message.payload.size());
-        Log("character: saved guest '%s' (%zu bytes)", g_guestName.c_str(), message.payload.size());
+        const std::string name = HostGuestName(message.from);
+        WriteFile(GuestFile(name), message.payload.data(), message.payload.size());
+        Log("character: saved guest '%s' (%zu bytes)", name.c_str(), message.payload.size());
         return true;
     }
     return false;
@@ -240,6 +246,7 @@ void Reset() {
     g_hasStored = false;
     g_swapDone = false;
     g_settle = 0;
+    g_guestNames.clear();
 }
 
 }  // namespace coop::character

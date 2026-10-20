@@ -38,6 +38,7 @@ std::map<std::string, Entry> g_servers;  // key: address:port
 bool g_announceActive = false;
 std::string g_worldName;
 int g_players = 1;
+int g_capacity = 2;
 uint32_t g_nonce = 0;  // identifies our own announcements
 bool g_announcing = false;
 bool g_listening = false;
@@ -84,7 +85,9 @@ std::vector<in_addr> BroadcastAddresses() {
     return result;
 }
 
-std::vector<uint8_t> BuildPacket(uint16_t port, const std::string& host, const std::string& world, int players) {
+// The capacity byte goes last: older builds, which have no such byte, still read the rest.
+std::vector<uint8_t> BuildPacket(uint16_t port, const std::string& host, const std::string& world, int players,
+                                 int capacity) {
     std::vector<uint8_t> p(kMagic, kMagic + kMagicSize);
     p.push_back(static_cast<uint8_t>(port & 0xFF));
     p.push_back(static_cast<uint8_t>(port >> 8));
@@ -95,6 +98,7 @@ std::vector<uint8_t> BuildPacket(uint16_t port, const std::string& host, const s
         p.insert(p.end(), s->begin(), s->begin() + n);
     }
     for (int i = 0; i < 4; ++i) p.push_back(static_cast<uint8_t>(g_nonce >> (8 * i)));
+    p.push_back(static_cast<uint8_t>(capacity));
     return p;
 }
 
@@ -111,8 +115,9 @@ bool ParsePacket(const uint8_t* p, size_t size, Server* out, uint32_t* nonce) {
         s->assign(reinterpret_cast<const char*>(p + at), n);
         at += n;
     }
-    if (at + 4 != size) return false;
+    if (at + 4 != size && at + 5 != size) return false;
     *nonce = p[at] | (p[at + 1] << 8) | (p[at + 2] << 16) | (static_cast<uint32_t>(p[at + 3]) << 24);
+    out->capacity = at + 5 == size ? p[at + 4] : 2;  // a build without the byte takes two players
     return out->port != 0;
 }
 
@@ -125,7 +130,7 @@ void AnnounceThread(uint16_t port) {
         std::vector<uint8_t> packet;
         {
             std::lock_guard<std::mutex> guard(g_lock);
-            if (g_announceActive) packet = BuildPacket(port, host, g_worldName, g_players);
+            if (g_announceActive) packet = BuildPacket(port, host, g_worldName, g_players, g_capacity);
         }
         if (!packet.empty()) {
             for (const in_addr& target : BroadcastAddresses()) {
@@ -188,11 +193,12 @@ void StartAnnouncing(uint16_t gamePort) {
     std::thread(AnnounceThread, gamePort).detach();
 }
 
-void SetAnnouncement(bool active, const std::string& worldName, int players) {
+void SetAnnouncement(bool active, const std::string& worldName, int players, int capacity) {
     std::lock_guard<std::mutex> guard(g_lock);
     g_announceActive = active;
     g_worldName = worldName;
     g_players = players;
+    g_capacity = capacity;
 }
 
 void StartListening() {

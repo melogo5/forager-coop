@@ -62,6 +62,8 @@ constexpr int kObjPlayer = 22;
 constexpr int kParMenu = 238;
 constexpr int kLuiBaseClass = 227;
 constexpr int kMaxObjects = 512;
+constexpr int kGuestsSupported = 1;  // the rest of the game sync knows one guest so far (docs/coop/MULTIPLAYER.md)
+constexpr int kMaxGuests = 3;
 
 enum MessageType : uint8_t {
     kHello = 1,
@@ -90,6 +92,7 @@ unsigned g_offlineSteps = 0;
 bool g_leaving = false;  // guest: on the way back to the main menu
 std::string g_notice;    // shown on the COOP screen when back in the menu
 bool g_wasConnected = false;
+std::vector<net::PeerId> g_peers;  // linked at the last step
 bool g_wasInWorld = true;
 bool g_haveRemote = false;
 PlayerStateMsg g_remote{};
@@ -203,8 +206,8 @@ void HandleMessages(yyc::CInstance* localPlayer) {
         if (g_role == Role::kHost && character::HostHandle(message, localPlayer, &guestIntroduced)) {
             // The guest's character answer is out; now the world, so it arrives after it.
             if (guestIntroduced) {
-                skills::HostOnGuest(character::HostGuestName());
-                world::HostRequestSnapshot(localPlayer);
+                skills::HostOnGuest(character::HostGuestName(message.from), message.from);
+                world::HostRequestSnapshot(localPlayer, message.from);
             }
             continue;
         }
@@ -215,7 +218,7 @@ void HandleMessages(yyc::CInstance* localPlayer) {
         if (message.type == kHello && message.payload.size() == sizeof(HelloMsg)) {
             HelloMsg hello{};
             memcpy(&hello, message.payload.data(), sizeof(hello));
-            Log("session: peer protocol %u (ours %u)", hello.version, OurProtocol());
+            Log("session: player %u has protocol %u (ours %u)", message.from, hello.version, OurProtocol());
             if (hello.version != OurProtocol()) WarnVersion(hello.version);
         } else if (message.type == kPlayerState && message.payload.size() == sizeof(PlayerStateMsg)) {
             memcpy(&g_remote, message.payload.data(), sizeof(g_remote));
@@ -224,10 +227,43 @@ void HandleMessages(yyc::CInstance* localPlayer) {
     }
 }
 
-void Announce(bool connected) {
+int MaxGuests();
+
+void Announce(size_t guests) {
     const yyc::RValue* slot = yyc::GlobalVar(yyc::slot::saveFile);
     const int slotNumber = slot != nullptr ? static_cast<int>(yyc::ToReal(*slot)) : 0;
-    lan::SetAnnouncement(true, "World " + std::to_string(slotNumber + 1), connected ? 2 : 1);
+    lan::SetAnnouncement(true, "World " + std::to_string(slotNumber + 1), 1 + static_cast<int>(guests),
+                         1 + MaxGuests());
+}
+
+// Greets every newly linked player (a guest: the host) and notes who left.
+void TrackPeers(const std::vector<net::PeerId>& peers) {
+    const auto known = [](const std::vector<net::PeerId>& list, net::PeerId peer) {
+        return std::find(list.begin(), list.end(), peer) != list.end();
+    };
+    for (const net::PeerId peer : peers) {
+        if (known(g_peers, peer)) continue;
+        Log("session: player %u joined", peer);
+        const HelloMsg hello{OurProtocol()};
+        net::SendTo(peer, kHello, &hello, sizeof(hello));
+    }
+    for (const net::PeerId peer : g_peers) {
+        if (!known(peers, peer)) Log("session: player %u left", peer);
+    }
+    g_peers = peers;
+}
+
+// Guests the host takes at once. Testing aid: COOP_DEBUG_MAX_GUESTS=<n> (up to 3) lets more in than the game
+// sync handles yet, to check the links.
+int MaxGuests() {
+    static const int guests = [] {
+        char value[16] = {};
+        const int wanted = GetEnvironmentVariableA("COOP_DEBUG_MAX_GUESTS", value, sizeof(value)) > 0
+                               ? atoi(value)
+                               : kGuestsSupported;
+        return (std::min)((std::max)(wanted, 1), kMaxGuests);
+    }();
+    return guests;
 }
 
 // Testing aid: COOP_DEBUG_GODMODE=1 keeps the game's own god mode on, so test runs survive enemies.
@@ -341,12 +377,10 @@ void Tick(yyc::CInstance* localPlayer) {
         return;
     }
     g_playedWorld = true;
-    const bool connected = net::IsConnected();
-    if (g_role == Role::kHost && g_steps % kAnnounceEverySteps == 0) Announce(connected);
-    if (connected && !g_wasConnected) {
-        const HelloMsg hello{OurProtocol()};
-        net::Send(kHello, &hello, sizeof(hello));
-    }
+    const std::vector<net::PeerId> peers = net::Peers();
+    const bool connected = !peers.empty();
+    if (g_role == Role::kHost && g_steps % kAnnounceEverySteps == 0) Announce(peers.size());
+    TrackPeers(peers);
     if (g_role == Role::kHost) world::HostTick();
     if (g_role == Role::kGuest) {
         character::GuestTick(localPlayer);
@@ -417,7 +451,7 @@ namespace session {
 void Host() {
     if (g_role != Role::kNone) return;
     g_role = Role::kHost;
-    net::StartHost(kGamePort);
+    net::StartHost(kGamePort, MaxGuests());
     lan::StartAnnouncing(kGamePort);
     Log("session: hosting on port %u", kGamePort);
 }
@@ -443,6 +477,7 @@ void Leave() {
     g_leaving = false;
     g_offlineSteps = 0;
     g_wasConnected = false;
+    g_peers.clear();
     g_haveRemote = false;
     character::Reset();
     world::Reset();

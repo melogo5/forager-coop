@@ -11,8 +11,8 @@
 
 namespace coop::skills {
 
-// Host, game thread: the guest has introduced itself as `name`; sends what is stored for it.
-void HostOnGuest(const std::string& name);
+// Host, game thread: guest `peer` has introduced itself as `name`; sends it what is stored for it.
+void HostOnGuest(const std::string& name, net::PeerId peer);
 
 // Game thread, every local player step while connected (both sides; the work is the guest's).
 void Tick(yyc::CInstance* localPlayer);

@@ -9,8 +9,8 @@
 
 namespace coop::world {
 
-// Host, game thread: save the game now and send the slot to the guest once the async save has finished.
-void HostRequestSnapshot(yyc::CInstance* localPlayer);
+// Host, game thread: save the game now and send the slot to guest `peer` once the async save has finished.
+void HostRequestSnapshot(yyc::CInstance* localPlayer, net::PeerId peer);
 // Host, game thread: call every step.
 void HostTick();
 

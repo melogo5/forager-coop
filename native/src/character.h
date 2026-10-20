@@ -18,14 +18,15 @@ bool InstallHooks(bool (*isGuest)());
 std::string SavedGuestName();
 void SetGuestName(const std::string& name);
 
-// Host: <save area>/saveData<current slot>/coop_guests/<name><extension>, for more of the guest's data.
-// Host: the name of the guest that introduced itself last.
-std::string HostGuestName();
+// Host: the name guest `peer` introduced itself with ("guest" if it has not yet). Kept after the guest leaves:
+// its last upload may still be in the inbox.
+std::string HostGuestName(net::PeerId peer);
 
+// Host: <save area>/saveData<current slot>/coop_guests/<name><extension>, for more of the guest's data.
 std::wstring GuestDataFile(const std::string& name, const char* extension);
 
 // Guest, network thread: right after connecting.
-void GuestOnConnect();
+void GuestOnConnect(net::PeerId host);
 // Guest, network thread: consumes the host's character answer.
 bool GuestHandleReceive(const net::Message& message);
 // Guest: the host's answer has arrived (the world must not be loaded before).
@@ -39,7 +40,7 @@ void GuestTick(yyc::CInstance* localPlayer);
 // Sets *guestIntroduced after answering an introduction: that is the moment to send the world.
 bool HostHandle(const net::Message& message, yyc::CInstance* localPlayer, bool* guestIntroduced);
 
-// Guest: forgets the last session (stored character, swap done), for joining again.
+// Forgets the last session (guest: stored character, swap done; host: guest names), to start again.
 void Reset();
 
 }  // namespace coop::character

@@ -17,11 +17,12 @@ struct Server {
     std::string hostName;
     std::string worldName;
     int players = 1;
+    int capacity = 2;  // players the session takes
 };
 
 // Host side. Announcements go out only while active (the host is in its world).
 void StartAnnouncing(uint16_t gamePort);
-void SetAnnouncement(bool active, const std::string& worldName, int players);
+void SetAnnouncement(bool active, const std::string& worldName, int players, int capacity);
 
 // Menu side.
 void StartListening();

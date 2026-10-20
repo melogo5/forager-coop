@@ -168,9 +168,9 @@ void Draw(yyc::CInstance* self) {
         const double cy = (row.y1 + row.y2) / 2;
         gui::Text(row.x1 + 20 * s, cy - 14 * s, server.hostName, textScale, color::kText);
         gui::Text(row.x1 + 20 * s, cy + 16 * s, server.worldName + "   " + server.address, 1.5 * s, color::kDim);
-        gui::Text(l.joins[i].x1 - 30 * s, cy, std::to_string(server.players) + "/2", textScale, color::kText,
+        gui::Text(l.joins[i].x1 - 30 * s, cy, std::to_string(server.players) + "/" + std::to_string(server.capacity), textScale, color::kText,
                   gui::kAlignRight);
-        Button(l.joins[i], "JOIN", server.players < 2 ? color::kGreen : color::kGrey, mx, my, textScale);
+        Button(l.joins[i], "JOIN", server.players < server.capacity ? color::kGreen : color::kGrey, mx, my, textScale);
     }
 
     Button(l.back, "BACK", color::kPurple, mx, my, textScale);
@@ -306,7 +306,7 @@ void HandleInput(yyc::CInstance* control) {
         ConnectByIp();
     } else {
         for (size_t i = 0; i < l.joins.size(); ++i) {
-            if (l.joins[i].Contains(mx, my) && g_servers[i].players < 2) {
+            if (l.joins[i].Contains(mx, my) && g_servers[i].players < g_servers[i].capacity) {
                 StartJoin(g_servers[i].address, g_servers[i].port);
             }
         }
@@ -315,7 +315,7 @@ void HandleInput(yyc::CInstance* control) {
 
 void Step(yyc::CInstance* control) {
     gui::Begin(control);
-    if (session::CurrentRole() == session::Role::kHost) lan::SetAnnouncement(false, "", 1);  // back in the menu
+    if (session::CurrentRole() == session::Role::kHost) lan::SetAnnouncement(false, "", 1, 2);  // back in the menu
     EnsureCoopButton(control);
     // Back in the main menu after playing, the session is over: the host tells the guest, and both can start
     // a new one. A guest's working copy of the host's world (slot 99) goes, so it never sits in the player's

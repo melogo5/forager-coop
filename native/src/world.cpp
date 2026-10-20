@@ -36,6 +36,7 @@ constexpr char kMarkerName[] = "coop_world.txt";
 // Host state (game thread).
 int g_settleSteps = 0;
 int g_pendingSlot = 0;
+std::vector<net::PeerId> g_pendingPeers;  // guests waiting for the save in progress
 
 // Guest state (game thread).
 bool (*g_isGuest)() = nullptr;
@@ -73,7 +74,7 @@ void Put32(std::vector<uint8_t>& out, uint32_t v) {
 
 uint32_t Get32(const uint8_t* p) { return p[0] | (p[1] << 8) | (p[2] << 16) | (static_cast<uint32_t>(p[3]) << 24); }
 
-bool SendFile(const fs::path& root, const fs::path& file) {
+bool SendFile(net::PeerId peer, const fs::path& root, const fs::path& file) {
     const std::string relative = fs::relative(file, root).generic_u8string();
     std::ifstream in(file, std::ios::binary);
     std::vector<uint8_t> data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -84,15 +85,15 @@ bool SendFile(const fs::path& root, const fs::path& file) {
     header.push_back(static_cast<uint8_t>(relative.size() >> 8));
     header.insert(header.end(), relative.begin(), relative.end());
     Put32(header, static_cast<uint32_t>(data.size()));
-    if (!net::Send(kWorldFile, header.data(), header.size())) return false;
+    if (!net::SendTo(peer, kWorldFile, header.data(), header.size())) return false;
     for (size_t offset = 0; offset < data.size(); offset += kChunkSize) {
         const size_t size = (std::min)(kChunkSize, data.size() - offset);
-        if (!net::Send(kWorldChunk, data.data() + offset, size)) return false;
+        if (!net::SendTo(peer, kWorldChunk, data.data() + offset, size)) return false;
     }
     return true;
 }
 
-void SendSnapshot(int slotNumber) {
+void SendSnapshot(int slotNumber, std::vector<net::PeerId> peers) {
     const std::string slot = "saveData" + std::to_string(slotNumber);
     const fs::path root = SaveRoot() / fs::u8path(slot);
     std::error_code error;
@@ -109,10 +110,13 @@ void SendSnapshot(int slotNumber) {
     }
     std::vector<uint8_t> begin;
     Put32(begin, static_cast<uint32_t>(files.size()));
-    bool ok = net::Send(kWorldBegin, begin.data(), begin.size());
-    for (const auto& file : files) ok = ok && SendFile(root, file);
-    ok = ok && net::Send(kWorldEnd, nullptr, 0);
-    Log("world: snapshot of %s (%zu files) %s", slot.c_str(), files.size(), ok ? "sent" : "FAILED");
+    for (const net::PeerId peer : peers) {
+        bool ok = net::SendTo(peer, kWorldBegin, begin.data(), begin.size());
+        for (const auto& file : files) ok = ok && SendFile(peer, root, file);
+        ok = ok && net::SendTo(peer, kWorldEnd, nullptr, 0);
+        Log("world: snapshot of %s (%zu files) to guest %u %s", slot.c_str(), files.size(), peer,
+            ok ? "sent" : "FAILED");
+    }
 }
 
 fs::path GuestSlotDir() {
@@ -183,10 +187,16 @@ void WriteChunk(const std::vector<uint8_t>& payload) {
 
 }  // namespace
 
-void HostRequestSnapshot(yyc::CInstance* localPlayer) {
+void HostRequestSnapshot(yyc::CInstance* localPlayer, net::PeerId peer) {
+    g_pendingPeers.push_back(peer);
+    if (g_settleSteps > 0) {  // a save is under way: it serves this guest too (reconcile fixes the moment's lag)
+        Log("world: guest %u waits for the save in progress", peer);
+        return;
+    }
     const yyc::RValue* saveFile = yyc::GlobalVar(yyc::slot::saveFile);
     if (saveFile == nullptr || (saveFile->kind & yyc::kKindMask) != yyc::kReal) {
         Log("world: global.saveFile is not a slot number; no snapshot");
+        g_pendingPeers.clear();
         return;
     }
     g_pendingSlot = static_cast<int>(saveFile->real);
@@ -194,12 +204,13 @@ void HostRequestSnapshot(yyc::CInstance* localPlayer) {
     yyc::At<yyc::ScriptFn>(yyc::va::Script_SaveGame)(localPlayer, localPlayer, &result, 0, nullptr);
     yyc::Free(&result);
     g_settleSteps = kSaveSettleSteps;
-    Log("world: saving slot %d for the guest", g_pendingSlot);
+    Log("world: saving slot %d for guest %u", g_pendingSlot, peer);
 }
 
 void HostTick() {
     if (g_settleSteps == 0 || --g_settleSteps != 0) return;
-    std::thread(SendSnapshot, g_pendingSlot).detach();
+    std::thread(SendSnapshot, g_pendingSlot, std::move(g_pendingPeers)).detach();
+    g_pendingPeers.clear();
 }
 
 bool GuestWorldReady() { return g_ready; }
@@ -256,6 +267,7 @@ void Reset() {
     g_filesReceived = 0;
     g_ready = false;
     g_settleSteps = 0;
+    g_pendingPeers.clear();
 }
 
 }  // namespace coop::world

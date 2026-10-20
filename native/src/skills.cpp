@@ -230,19 +230,17 @@ void DebugLearn(yyc::CInstance* localPlayer, unsigned steps) {
 }
 
 // Host.
-std::string g_guestName;
 unsigned g_hostSteps = 0;
 
 }  // namespace
 
-void HostOnGuest(const std::string& name) {
-    g_guestName = name;
+void HostOnGuest(const std::string& name, net::PeerId peer) {
     std::ifstream in(character::GuestDataFile(name, ".skills"), std::ios::binary);
     const std::vector<uint8_t> stored((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     State state;
     const bool ok = !stored.empty() && Decode(stored.data(), stored.size(), &state);
     const std::vector<uint8_t> payload = ok ? Encode(kStored, state) : std::vector<uint8_t>{kNothingStored};
-    net::Send(kSkills, payload.data(), payload.size());
+    net::SendTo(peer, kSkills, payload.data(), payload.size());
     Log("skills: guest '%s': %s", name.c_str(), ok ? "stored skills sent" : "nothing stored");
 }
 
@@ -264,10 +262,11 @@ bool Handle(const net::Message& message) {
     if (p[0] == kUpload) {  // host
         State state;
         if (!Decode(p.data() + 1, p.size() - 1, &state)) return true;
-        const std::wstring path = character::GuestDataFile(g_guestName, ".skills");
+        const std::string name = character::HostGuestName(message.from);
+        const std::wstring path = character::GuestDataFile(name, ".skills");
         std::ofstream(path, std::ios::binary | std::ios::trunc)
             .write(reinterpret_cast<const char*>(p.data() + 1), static_cast<std::streamsize>(p.size() - 1));
-        Log("skills: kept guest '%s' skills (%d learned, %u points earned)", g_guestName.c_str(),
+        Log("skills: kept guest '%s' skills (%d learned, %u points earned)", name.c_str(),
             Learned(state.skills), state.earned);
         return true;
     }
