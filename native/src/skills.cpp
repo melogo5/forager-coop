@@ -26,9 +26,9 @@ constexpr unsigned kApplyEverySteps = 30;
 constexpr unsigned kUploadEverySteps = 300;
 constexpr int kSlotSkillUnlocked = 0x7BF;  // global.skillUnlocked[skill] (var_slots.tsv)
 constexpr int kSlotLearnedSkills = 0x601;  // global.learnedSkills: skills bought (objSkill Step_0 adds 1)
-constexpr int kSlotSkillPoints = 0x8F;     // WorldControl.availableSkillPoints
+constexpr int kSlotSkillPoints = 0x7BD;    // objPlayer.skills: the points to spend (the tree shows and spends these;
+                                           // WorldControl.availableSkillPoints is set once and never used)
 constexpr int kSlotLevel = 0x603;          // objPlayer.level
-constexpr int kWorldControl = 3;           // decompiled/data/objects.tsv
 constexpr int kMaxSkills = 512;
 // global.skillUnlocked values: a new world has the first skill of each 16-skill tree available, the rest locked.
 constexpr int8_t kLocked = -1;
@@ -120,7 +120,6 @@ int Learned(const std::vector<int8_t>& values) {
     return learned;
 }
 
-int WorldControlId(yyc::CInstance* self) { return static_cast<int>(CallReal(self, "instance_find", {kWorldControl, 0})); }
 
 std::vector<uint8_t> Encode(uint8_t kind, const State& state) {
     std::vector<uint8_t> out{kind};
@@ -187,20 +186,22 @@ void Apply(yyc::CInstance* localPlayer) {
         Learned(own.skills), own.earned, level);
 }
 
-// Guest: a point per shared level-up; the points to spend are what was earned minus what was bought.
+// Guest: a point per level above the first, as the game gives the host (the level is shared); the points to spend
+// are those minus what was bought. Counted from the level, not added up per level-up: a rejoin restores the stored
+// count and then sees the level "rise" from 1 again (PLAYTEST3.md: 20 points at level 11).
 void KeepPoints(yyc::CInstance* localPlayer) {
     const int player = static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_id));
     const double level = ReadNumber(player, kSlotLevel);
-    if (level > g_lastLevel) {
-        g_earned += static_cast<uint32_t>(level - g_lastLevel);
-        Log("skills: level %.0f - %u points earned", level, g_earned);
-    }
+    const uint32_t earned = level > 1 ? static_cast<uint32_t>(level - 1) : 0;
+    if (earned != g_earned) Log("skills: level %.0f - %u points earned", level, earned);
+    g_earned = earned;
     g_lastLevel = level;
-    const int world = WorldControlId(localPlayer);
-    if (world == kNoOne) return;
     const double learned = ReadGlobal(kSlotLearnedSkills);
     const double points = g_earned > learned ? g_earned - learned : 0;
-    if (ReadNumber(world, kSlotSkillPoints) != points) WriteNumber(world, kSlotSkillPoints, points);
+    if (ReadNumber(player, kSlotSkillPoints) != points) {
+        Log("skills: %g points to spend (were %g here)", points, ReadNumber(player, kSlotSkillPoints));
+        WriteNumber(player, kSlotSkillPoints, points);
+    }
 }
 
 void Upload(yyc::CInstance* localPlayer) {
