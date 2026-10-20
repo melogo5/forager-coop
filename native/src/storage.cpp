@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <string>
@@ -21,11 +22,13 @@ namespace {
 
 constexpr uint8_t kStorage = 40;      // contents on close; also releases the chest
 constexpr uint8_t kStorageLock = 41;  // the sender opened this chest
+constexpr uint8_t kStorageDenied = 42;  // host -> guest: someone else had that chest open first; close it
 constexpr uint32_t kVaultInteract = 0x00BC88D0;  // objVault Other_11: opens the storage menu
 constexpr uint32_t kStorageMenuDestroy = 0x00E51ED0;  // objStorageInventory Destroy_0
 constexpr int kSlotOwner = 0x6CA;                     // the menu's chest
 constexpr int kSlotContents = 0x7C4;                  // the chest's `slot` (2D array)
 constexpr int kObjVault = 114;
+constexpr int kObjStorageMenu = 234;
 constexpr unsigned kWatchEverySteps = 60;
 constexpr size_t kMaxRows = 4096;
 constexpr size_t kMaxColumns = 255;
@@ -45,6 +48,8 @@ yyc::EventFn g_origMenuDestroy = nullptr;
 yyc::EventFn g_origVaultInteract = nullptr;
 std::vector<int> g_lockedByPeer;  // local chest ids another player has open
 std::unordered_map<int, net::PeerId> g_lockOwners;  // host: which guest has each of those open
+int g_ownOpen = 0;          // the chest this side has open (0 = none)
+bool g_closingDenied = false;  // closing a chest the host refused us: its contents are not news
 std::unordered_map<int, size_t> g_known;  // local chest id -> hash of the contents the peer has too
 unsigned g_steps = 0;
 
@@ -63,15 +68,24 @@ Header Describe(int chestId, yyc::CInstance* chest, uint16_t rows) {
             static_cast<float>(yyc::GetBuiltinReal(chest, yyc::va::YYVar_y)), rows};
 }
 
-// Only one player at a time may have a chest open.
+// Testing aid: COOP_DEBUG_IGNORE_BUSY=1 opens chests and stations other players have open, as a player who
+// clicked at the same moment as another would (the host then refuses).
+bool IgnoreBusy() {
+    static const bool ignore = GetEnvironmentVariableA("COOP_DEBUG_IGNORE_BUSY", nullptr, 0) > 0;
+    return ignore;
+}
+
+// Only one player at a time may have a chest open. Two guests may still click the same chest at once: the host
+// decides (Handle) and the later one closes it again.
 void __cdecl VaultInteractHook(yyc::CInstance* self, yyc::CInstance* other) {
     const int chestId = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
-    if (net::IsConnected() && LockedByPeer(chestId)) {
+    if (net::IsConnected() && LockedByPeer(chestId) && !IgnoreBusy()) {
         Log("storage: chest %d is open by the other player", chestId);
         stations::SayBusy(other);
         return;
     }
     g_origVaultInteract(self, other);
+    g_ownOpen = chestId;
     if (!net::IsConnected()) return;
     const Header header = Describe(chestId, self, 0);
     net::Send(kStorageLock, &header, sizeof(header));
@@ -171,7 +185,8 @@ void __cdecl MenuDestroyHook(yyc::CInstance* self, yyc::CInstance* other) {
     const int chestId = static_cast<int>(yyc::ToReal(owner));
     yyc::Free(&owner);
     g_origMenuDestroy(self, other);
-    if (!net::IsConnected() || chestId < 100000) return;
+    if (chestId == g_ownOpen) g_ownOpen = 0;
+    if (!net::IsConnected() || chestId < 100000 || g_closingDenied) return;
     __try {
         SendContents(self, chestId);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -239,17 +254,44 @@ void ApplyContents(yyc::CInstance* self, const net::Message& message, bool woken
     yyc::Free(&amount);
 }
 
+// Host: guest `from` opened `chestId`. Fine unless the host or another guest had it open first: then that guest
+// is told to close it again.
+bool AllowLock(int chestId, net::PeerId from, const Header& header) {
+    const auto owner = g_lockOwners.find(chestId);
+    const bool takenByGuest = owner != g_lockOwners.end() && owner->second != from;
+    if (chestId != g_ownOpen && !takenByGuest) return true;
+    net::SendTo(from, kStorageDenied, &header, sizeof(header));
+    Log("storage: guest %u opened chest %d, which %s has open - told to close it", from, chestId,
+        takenByGuest ? "another guest" : "the host");
+    return false;
+}
+
+// Guest: the host refused the chest we just opened. Closed without sending its contents: they are the other
+// player's to change.
+void CloseDenied(yyc::CInstance* localPlayer, int chestId) {
+    g_closingDenied = true;
+    CallReal(localPlayer, "instance_destroy", {yyc::Real(kObjStorageMenu)});
+    g_closingDenied = false;
+    g_ownOpen = 0;
+    if (!LockedByPeer(chestId)) g_lockedByPeer.push_back(chestId);
+    stations::SayBusy(localPlayer);
+    Log("storage: chest %d was opened by someone else first; closed", chestId);
+}
+
 }  // namespace
 
 void DebugTick(yyc::CInstance* localPlayer) {
     // Testing aid: COOP_DEBUG_STORAGE=1 opens the nearest chest ~7 s into the world and closes it 1 s later,
-    // then ~3 s later changes it with no menu open.
-    static const bool enabled = GetEnvironmentVariableA("COOP_DEBUG_STORAGE", nullptr, 0) > 0;
+    // then ~3 s later changes it with no menu open. COOP_DEBUG_STORAGE=2 opens it and keeps it open.
+    static const int mode = [] {
+        char value[16] = {};
+        return GetEnvironmentVariableA("COOP_DEBUG_STORAGE", value, sizeof(value)) > 0 ? atoi(value) : 0;
+    }();
+    const bool enabled = mode > 0;
     static unsigned steps = 0;
     constexpr unsigned kOpenAt = 420;
     constexpr unsigned kCloseAt = 480;
     constexpr unsigned kChangeAt = 660;
-    constexpr int kObjStorageMenu = 234;
     if (++g_steps % kWatchEverySteps == 0 && net::IsConnected()) WatchVaults(localPlayer);
     if (!enabled) return;
     ++steps;
@@ -262,7 +304,7 @@ void DebugTick(yyc::CInstance* localPlayer) {
             yyc::PerformEvent(instance, localPlayer, yyc::kEvOther, yyc::kEvUser0 + 1);
             Log("storage: debug opened chest %d", chest);
         }
-    } else if (steps == kCloseAt) {
+    } else if (steps == kCloseAt && mode == 1) {
         // As if the player put 5 of item #1 in the first cell: [item, amount, ...].
         const double x = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_x);
         const double y = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_y);
@@ -276,7 +318,7 @@ void DebugTick(yyc::CInstance* localPlayer) {
         }
         CallReal(localPlayer, "instance_destroy", {yyc::Real(kObjStorageMenu)});
         Log("storage: debug closed the storage menu");
-    } else if (steps == kChangeAt) {
+    } else if (steps == kChangeAt && mode == 1) {
         // As crafting would: 2 of the 5 are taken with no menu open; the watcher must send it.
         const double x = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_x);
         const double y = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_y);
@@ -305,8 +347,23 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
             Header header{};
             memcpy(&header, message.payload.data(), sizeof(header));
             const int chestId = sync::Resolve(localPlayer, header.hostId, header.object, header.x, header.y);
+            if (message.from != net::kHostPeer && chestId != 0 && !AllowLock(chestId, message.from, header)) {
+                return true;
+            }
             if (chestId != 0 && !LockedByPeer(chestId)) g_lockedByPeer.push_back(chestId);
             if (chestId != 0) g_lockOwners[chestId] = message.from;
+            if (message.from != net::kHostPeer) {
+                net::SendExcept(message.from, kStorageLock, message.payload.data(), message.payload.size());
+            }
+        }
+        return true;
+    }
+    if (message.type == kStorageDenied) {
+        if (message.payload.size() >= sizeof(Header)) {
+            Header header{};
+            memcpy(&header, message.payload.data(), sizeof(header));
+            const int chestId = sync::Resolve(localPlayer, header.hostId, header.object, header.x, header.y);
+            if (chestId != 0 && chestId == g_ownOpen) CloseDenied(localPlayer, chestId);
         }
         return true;
     }
@@ -339,6 +396,7 @@ void OnPeerLeft(yyc::CInstance* localPlayer, net::PeerId peer) {
 void Reset() {
     g_lockedByPeer.clear();
     g_lockOwners.clear();
+    g_ownOpen = 0;
     g_known.clear();
     g_steps = 0;
 }

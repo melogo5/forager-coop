@@ -196,22 +196,21 @@ uint32_t OurProtocol() {
 }
 
 // Messages either side sends about the shared world (each module's own type). With more than one guest, the
-// host passes a guest's on to the other guests, as if it had sent them itself.
+// host passes a guest's on to the other guests, as if it had sent them itself. (Taking a chest or a station is
+// passed on by storage/stations themselves, once the host has allowed it.)
 constexpr uint8_t kSharedTypes[] = {
-    40, 41,  // storage: contents, opened
-    52,      // land: landfill
-    70,      // unlocks
-    90,      // progress: museum lists
-    91,      // quests
-    92, 94,  // stations: in use, craft state
-    93,      // chests: a treasure chest opened
+    40,  // storage: contents
+    52,  // land: landfill
+    70,  // unlocks
+    90,  // progress: museum lists
+    91,  // quests
+    94,  // stations: craft state
+    93,  // chests: a treasure chest opened
 };
 
 void Relay(const net::Message& message) {
     if (std::find(std::begin(kSharedTypes), std::end(kSharedTypes), message.type) == std::end(kSharedTypes)) return;
-    for (const net::PeerId peer : g_peers) {
-        if (peer != message.from) net::SendTo(peer, message.type, message.payload.data(), message.payload.size());
-    }
+    net::SendExcept(message.from, message.type, message.payload.data(), message.payload.size());
 }
 
 bool IsLinked(net::PeerId peer) { return std::find(g_peers.begin(), g_peers.end(), peer) != g_peers.end(); }

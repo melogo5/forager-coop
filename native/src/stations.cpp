@@ -21,6 +21,7 @@ namespace {
 
 constexpr uint8_t kStation = 92;       // either way: StationMsg
 constexpr uint8_t kStationState = 94;  // either way: a craft running at the sender's station (see SendState)
+constexpr uint8_t kStationDenied = 95;  // host -> guest: someone else took that station first; leave it
 constexpr unsigned kStateEverySteps = 10;
 // What a station's craft and its progress bar are drawn from (var_slots.tsv): craftingOriginal, craftingTime,
 // craftingTimer, craftingTimerTarget, craftingTimerVisual.
@@ -192,9 +193,15 @@ void Send(const Key& key, bool inUse) {
     net::Send(kStation, &msg, sizeof(msg));
 }
 
+// Testing aid: COOP_DEBUG_IGNORE_BUSY=1 (see storage.cpp).
+bool IgnoreBusy() {
+    static const bool ignore = GetEnvironmentVariableA("COOP_DEBUG_IGNORE_BUSY", nullptr, 0) > 0;
+    return ignore;
+}
+
 yyc::RValue* __cdecl CreateMenuHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                     yyc::RValue** args) {
-    if (self != nullptr && net::IsConnected() && g_peer.count(KeyOf(self)) > 0) {
+    if (self != nullptr && net::IsConnected() && g_peer.count(KeyOf(self)) > 0 && !IgnoreBusy()) {
         const Key key = KeyOf(self);
         Log("stations: %d at (%d, %d) is in use by the other player", std::get<0>(key), std::get<1>(key),
             std::get<2>(key));
@@ -206,7 +213,7 @@ yyc::RValue* __cdecl CreateMenuHook(yyc::CInstance* self, yyc::CInstance* other,
 }
 
 // Testing aid: COOP_DEBUG_STATION=<seconds> opens the nearest station's menu that late, as interacting does
-// (its Other_11 with the player as `other`).
+// (its Other_11 with the player as `other`); COOP_DEBUG_STATION_OBJECT=<object> picks the nearest of that kind.
 void DebugOpen(yyc::CInstance* localPlayer) {
     static const unsigned atStep = [] {
         char value[16] = {};
@@ -214,10 +221,15 @@ void DebugOpen(yyc::CInstance* localPlayer) {
                    ? static_cast<unsigned>(atoi(value)) * 60
                    : 0u;
     }();
+    static const int object = [] {
+        char value[16] = {};
+        return GetEnvironmentVariableA("COOP_DEBUG_STATION_OBJECT", value, sizeof(value)) > 0 ? atoi(value)
+                                                                                              : kParStructure;
+    }();
     if (atStep == 0 || g_steps != atStep) return;
     const double x = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_x);
     const double y = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_y);
-    const int id = static_cast<int>(CallReal(localPlayer, "instance_nearest", {x, y, kParStructure}));
+    const int id = static_cast<int>(CallReal(localPlayer, "instance_nearest", {x, y, double(object)}));
     yyc::CInstance* station = id == kNoOne ? nullptr : yyc::FindInstance(id);
     if (station == nullptr) {
         Log("stations: debug: no station nearby");
@@ -334,16 +346,60 @@ bool IsMirror(yyc::CInstance* station) {
     return false;
 }
 
+// Host: is the station at `key` this side's (menu open or crafting here)?
+bool UsedHere(yyc::CInstance* self, const Key& key) {
+    if (g_mine.count(key) > 0) return true;
+    const int open = OpenMenuStation(self);
+    yyc::CInstance* station = open == kNoOne ? nullptr : yyc::FindInstance(open);
+    return station != nullptr && KeyOf(station) == key;
+}
+
+// Host: a guest's word about a station. Taking one the host or another guest has is refused (two players can
+// click it at the same moment); leaving one only counts from the guest that has it. What stands is passed on to
+// the other guests.
+bool Arbitrate(yyc::CInstance* self, const net::Message& message, const StationMsg& msg, const Key& key) {
+    const auto owner = g_peerOwners.find(key);
+    const bool otherGuest = owner != g_peerOwners.end() && owner->second != message.from;
+    if (msg.inUse != 0 && (otherGuest || UsedHere(self, key))) {
+        net::SendTo(message.from, kStationDenied, &msg, sizeof(msg));
+        Log("stations: guest %u took station %d at (%d, %d), which %s has - told to leave it", message.from,
+            msg.object, msg.x, msg.y, otherGuest ? "another guest" : "the host");
+        return false;
+    }
+    const bool ownsIt = owner != g_peerOwners.end() && owner->second == message.from;
+    if (msg.inUse == 0 && !ownsIt) return false;  // not that guest's to free (it may have been refused it)
+    net::SendExcept(message.from, kStation, &msg, sizeof(msg));
+    return true;
+}
+
+// Guest: the host refused the station whose menu we just opened.
+void LeaveDenied(yyc::CInstance* self, const Key& key) {
+    const int open = OpenMenuStation(self);
+    yyc::CInstance* station = open == kNoOne ? nullptr : yyc::FindInstance(open);
+    if (station == nullptr || KeyOf(station) != key) return;
+    CallReal(self, "instance_destroy", {kUiCrafting});
+    g_opened = kNoOne;
+    g_peer.insert(key);
+    SayBusy(g_localPlayer);
+    Log("stations: station %d at (%d, %d) was taken by someone else first; menu closed", std::get<0>(key),
+        std::get<1>(key), std::get<2>(key));
+}
+
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     if (message.type == kStationState) {
         ApplyState(localPlayer, message.payload);
         return true;
     }
-    if (message.type != kStation) return false;
+    if (message.type != kStation && message.type != kStationDenied) return false;
     if (message.payload.size() != sizeof(StationMsg)) return true;
     StationMsg msg{};
     memcpy(&msg, message.payload.data(), sizeof(msg));
     const Key key{msg.object, msg.x, msg.y};
+    if (message.type == kStationDenied) {
+        LeaveDenied(localPlayer, key);
+        return true;
+    }
+    if (message.from != net::kHostPeer && !Arbitrate(localPlayer, message, msg, key)) return true;
     if (msg.inUse != 0) {
         g_peer.insert(key);
         g_peerOwners[key] = message.from;

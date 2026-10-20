@@ -283,6 +283,14 @@ bool SendTo(PeerId peer, uint8_t type, const void* payload, size_t size) {
     return false;
 }
 
+void SendExcept(PeerId except, uint8_t type, const void* payload, size_t size) {
+    if (size + 1 > kMaxBody) return;
+    const std::vector<uint8_t> frame = Frame(type, payload, size);
+    for (const auto& connection : Connections()) {
+        if (connection->id != except) SendFrame(*connection, frame);
+    }
+}
+
 void SetReceiveHandler(ReceiveHandler handler) { g_handler = handler; }
 void SetConnectHandler(ConnectHandler handler) { g_onConnect = handler; }
 

@@ -35,6 +35,8 @@ std::vector<PeerId> Peers();
 bool Send(uint8_t type, const void* payload, size_t size);
 // To one peer only; false if it is not connected or the send failed.
 bool SendTo(PeerId peer, uint8_t type, const void* payload, size_t size);
+// Host: to every guest but `except` (passing on what that guest said).
+void SendExcept(PeerId except, uint8_t type, const void* payload, size_t size);
 // Moves every message received since the last call into `out`.
 void Drain(std::vector<Message>& out);
 
