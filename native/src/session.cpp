@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
+#include <iterator>
 #include <map>
 #include <string>
 #include <thread>
@@ -194,7 +195,34 @@ uint32_t OurProtocol() {
     return version;
 }
 
+// Messages either side sends about the shared world (each module's own type). With more than one guest, the
+// host passes a guest's on to the other guests, as if it had sent them itself.
+constexpr uint8_t kSharedTypes[] = {
+    40, 41,  // storage: contents, opened
+    52,      // land: landfill
+    70,      // unlocks
+    90,      // progress: museum lists
+    91,      // quests
+    92, 94,  // stations: in use, craft state
+    93,      // chests: a treasure chest opened
+};
+
+void Relay(const net::Message& message) {
+    if (std::find(std::begin(kSharedTypes), std::end(kSharedTypes), message.type) == std::end(kSharedTypes)) return;
+    for (const net::PeerId peer : g_peers) {
+        if (peer != message.from) net::SendTo(peer, message.type, message.payload.data(), message.payload.size());
+    }
+}
+
 bool IsLinked(net::PeerId peer) { return std::find(g_peers.begin(), g_peers.end(), peer) != g_peers.end(); }
+
+// Host: a chest or station taken by a guest that has left meanwhile (still in the inbox) would stay taken: its
+// things were freed when it left (storage/stations::OnPeerLeft).
+bool IsStaleClaim(const net::Message& message) {
+    constexpr uint8_t kStorageLock = 41, kStation = 92;
+    return g_role == Role::kHost && message.from != net::kHostPeer && !IsLinked(message.from) &&
+           (message.type == kStorageLock || message.type == kStation);
+}
 
 // A player's own state: shown as its puppet; the host passes a guest's on to the other guests. (A guest that
 // has just left may still have a state in the inbox: it would bring its puppet back, so it is dropped.)
@@ -212,6 +240,8 @@ void HandleMessages(yyc::CInstance* localPlayer) {
     std::vector<net::Message> inbox;
     net::Drain(inbox);
     for (const auto& message : inbox) {
+        if (IsStaleClaim(message)) continue;
+        if (g_role == Role::kHost && message.from != net::kHostPeer) Relay(message);
         if (sync::Handle(message, localPlayer) || mobs::Handle(message, localPlayer) ||
             storage::Handle(message, localPlayer) || land::Handle(message, localPlayer) ||
             clock::Handle(message, localPlayer) ||
@@ -275,13 +305,20 @@ void TrackPeers(yyc::CInstance* localPlayer, const std::vector<net::PeerId>& pee
         Log("session: player %u joined", peer);
         const HelloMsg hello{OurProtocol()};
         net::SendTo(peer, kHello, &hello, sizeof(hello));
+        if (g_role == Role::kHost) {
+            stations::OnPeerJoined(peer);
+            storage::OnPeerJoined(peer);
+        }
     }
     for (const net::PeerId peer : g_peers) {
         if (known(peers, peer)) continue;
         Log("session: player %u left", peer);
         g_remotes.erase(peer);
         puppet::Destroy(localPlayer, peer);
-        if (g_role == Role::kHost) net::Send(kPeerGone, &peer, sizeof(peer));
+        if (g_role != Role::kHost) continue;
+        net::Send(kPeerGone, &peer, sizeof(peer));
+        storage::OnPeerLeft(localPlayer, peer);
+        stations::OnPeerLeft(peer);
     }
     g_peers = peers;
 }

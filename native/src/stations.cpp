@@ -46,7 +46,8 @@ struct StationMsg {
 
 using Key = std::tuple<int, int, int>;  // object, x, y: the same station on both sides
 std::set<Key> g_mine;  // in use on this side, as last told to the peer
-std::set<Key> g_peer;  // in use on the peer's side
+std::set<Key> g_peer;  // in use by another player
+std::map<Key, net::PeerId> g_peerOwners;  // host: the guest using each of those
 std::map<Key, int> g_crafting;  // stations crafting here (local ids), as of the last scan
 std::map<Key, int> g_mirrors;   // stations showing the peer's craft here (local ids): they make nothing
 unsigned g_steps = 0;
@@ -345,8 +346,10 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     const Key key{msg.object, msg.x, msg.y};
     if (msg.inUse != 0) {
         g_peer.insert(key);
+        g_peerOwners[key] = message.from;
     } else {
         g_peer.erase(key);
+        g_peerOwners.erase(key);
         EndMirror(key);
     }
     Log("stations: the other player %s station %d at (%d, %d)", msg.inUse != 0 ? "uses" : "left", msg.object, msg.x,
@@ -354,8 +357,34 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     return true;
 }
 
+void OnPeerJoined(net::PeerId peer) {
+    std::set<Key> inUse = g_mine;
+    inUse.insert(g_peer.begin(), g_peer.end());
+    for (const Key& key : inUse) {
+        const StationMsg msg{std::get<0>(key), std::get<1>(key), std::get<2>(key), 1};
+        net::SendTo(peer, kStation, &msg, sizeof(msg));
+    }
+    if (!inUse.empty()) Log("stations: told guest %u about %zu stations in use", peer, inUse.size());
+}
+
+void OnPeerLeft(net::PeerId peer) {
+    std::vector<Key> freed;
+    for (const auto& [key, owner] : g_peerOwners) {
+        if (owner == peer) freed.push_back(key);
+    }
+    for (const Key& key : freed) {
+        g_peer.erase(key);
+        g_peerOwners.erase(key);
+        EndMirror(key);
+        Send(key, false);  // the other guests heard it was in use
+        Log("stations: station %d at (%d, %d) was used by guest %u, who left; free again", std::get<0>(key),
+            std::get<1>(key), std::get<2>(key), peer);
+    }
+}
+
 void Reset() {
     g_localPlayer = nullptr;
+    g_peerOwners.clear();
     g_opened = kNoOne;
     g_mine.clear();
     g_peer.clear();

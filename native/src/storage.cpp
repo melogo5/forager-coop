@@ -43,7 +43,8 @@ struct Header {
 
 yyc::EventFn g_origMenuDestroy = nullptr;
 yyc::EventFn g_origVaultInteract = nullptr;
-std::vector<int> g_lockedByPeer;  // local chest ids the peer has open
+std::vector<int> g_lockedByPeer;  // local chest ids another player has open
+std::unordered_map<int, net::PeerId> g_lockOwners;  // host: which guest has each of those open
 std::unordered_map<int, size_t> g_known;  // local chest id -> hash of the contents the peer has too
 unsigned g_steps = 0;
 
@@ -53,6 +54,7 @@ bool LockedByPeer(int chestId) {
 
 void Release(int chestId) {
     g_lockedByPeer.erase(std::remove(g_lockedByPeer.begin(), g_lockedByPeer.end(), chestId), g_lockedByPeer.end());
+    g_lockOwners.erase(chestId);
 }
 
 Header Describe(int chestId, yyc::CInstance* chest, uint16_t rows) {
@@ -304,6 +306,7 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
             memcpy(&header, message.payload.data(), sizeof(header));
             const int chestId = sync::Resolve(localPlayer, header.hostId, header.object, header.x, header.y);
             if (chestId != 0 && !LockedByPeer(chestId)) g_lockedByPeer.push_back(chestId);
+            if (chestId != 0) g_lockOwners[chestId] = message.from;
         }
         return true;
     }
@@ -312,8 +315,30 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     return true;
 }
 
+void OnPeerJoined(net::PeerId peer) {
+    for (const int chestId : g_lockedByPeer) {
+        yyc::CInstance* chest = yyc::FindInstance(chestId);
+        if (chest == nullptr) continue;
+        const Header header = Describe(chestId, chest, 0);
+        net::SendTo(peer, kStorageLock, &header, sizeof(header));
+    }
+}
+
+void OnPeerLeft(yyc::CInstance* localPlayer, net::PeerId peer) {
+    std::vector<int> freed;
+    for (const auto& [chestId, owner] : g_lockOwners) {
+        if (owner == peer) freed.push_back(chestId);
+    }
+    for (const int chestId : freed) {
+        Release(chestId);
+        Log("storage: chest %d was open by guest %u, who left; free again", chestId, peer);
+        SendContents(localPlayer, chestId);  // releases it for the other guests too
+    }
+}
+
 void Reset() {
     g_lockedByPeer.clear();
+    g_lockOwners.clear();
     g_known.clear();
     g_steps = 0;
 }

@@ -25,6 +25,11 @@ bool IsMirror(yyc::CInstance* station);
 void SayBusy(yyc::CInstance* player);
 
 // Forgets which stations are in use (the session is over).
+// Host: a guest that has just joined hears which stations are in use (by the host or another guest).
+void OnPeerJoined(net::PeerId peer);
+// Host: guest `peer` left; stations it used are free again, for everyone.
+void OnPeerLeft(net::PeerId peer);
+
 void Reset();
 
 }  // namespace coop::stations

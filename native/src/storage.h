@@ -18,6 +18,11 @@ void DebugTick(yyc::CInstance* localPlayer);
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer);
 
 // Forgets which chests the last peer had open.
+// Host: a guest that has just joined hears which chests other guests have open.
+void OnPeerJoined(net::PeerId peer);
+// Host: guest `peer` left; chests it had open are free again (for everyone: their contents go out).
+void OnPeerLeft(yyc::CInstance* localPlayer, net::PeerId peer);
+
 void Reset();
 
 }  // namespace coop::storage
