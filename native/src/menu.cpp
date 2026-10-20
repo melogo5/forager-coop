@@ -3,11 +3,13 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <fstream>
 #include <string>
 #include <vector>
 
 #include "MinHook.h"
 #include "character.h"
+#include "coop_button_png.h"
 #include "gui.h"
 #include "lan.h"
 #include "log.h"
@@ -33,7 +35,11 @@ constexpr uint32_t kButtonStep = 0x00EFCAC0;
 constexpr uint32_t kButtonDraw = 0x00F01060;
 constexpr uint32_t kButtonUser0 = 0x00EFFA20;
 
-constexpr double kCoopButtonOffsetX = -96;  // room pixels: centred between EXIT and MODDING
+constexpr int kObjFeaturedFanArt = 254;           // the FEATURED FAN ART picture: COOP takes its place
+constexpr double kCoopButtonAboveModding = 78;    // room pixels: the fan art's spot, above MODDING
+constexpr int kSlotText = 0x866;                  // a menu button's `text` (var_slots.tsv)
+constexpr double kCoopSpriteOriginX = 49, kCoopSpriteOriginY = 13;  // as sprMainMenuModding
+constexpr wchar_t kCoopSpriteFile[] = L"coop_button.png";            // written into the save area, then loaded
 constexpr size_t kMaxAddressLength = 21;    // "255.255.255.255:65535"
 constexpr double kCoopButtonTextScale = 1;  // room pixels; the menu room is 320x180
 
@@ -65,6 +71,7 @@ yyc::EventFn g_origButtonDraw = nullptr;
 yyc::EventFn g_origButtonUser0 = nullptr;
 
 int g_coopButtonId = 0;
+int g_coopSprite = -1;  // the COOP button's sprite (sprite_add); -1 not loaded yet, -2 could not be loaded
 bool g_open = false;
 bool g_ipFocused = false;
 std::string g_ipText;
@@ -95,14 +102,64 @@ yyc::CInstance* FindMenuButton(yyc::CInstance* self, int sprite) {
     return nullptr;
 }
 
-// A copy of the MODDING button next to it; its click is redirected to the Coop screen.
+// The COOP button's own sprite, made like the game's menu buttons (native/assets/coop_button.png, embedded):
+// written next to the saves, where the game's file functions look, and added as a 2-frame sprite.
+bool CoopSpriteReady(yyc::CInstance* self) {
+    if (g_coopSprite != -1) return g_coopSprite >= 0;
+    g_coopSprite = -2;
+    wchar_t local[MAX_PATH] = {};
+    const DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) return false;
+    {
+        std::ofstream out(std::wstring(local) + L"\\Forager\\" + kCoopSpriteFile, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(kCoopButtonPng), sizeof(kCoopButtonPng));
+        if (!out) {
+            Log("menu: cannot write the COOP button sprite");
+            return false;
+        }
+    }
+    yyc::RValue args[6] = {yyc::String("coop_button.png"), yyc::Real(2), yyc::Real(0), yyc::Real(0),
+                           yyc::Real(kCoopSpriteOriginX), yyc::Real(kCoopSpriteOriginY)};
+    yyc::RValue result{};
+    yyc::CallBuiltin("sprite_add", self, 6, args, &result);
+    const int sprite = static_cast<int>(yyc::ToReal(result));
+    yyc::Free(&result);
+    yyc::Free(&args[0]);
+    if (sprite >= 0) g_coopSprite = sprite;
+    Log("menu: COOP button sprite %s (%d)", sprite >= 0 ? "loaded" : "NOT loaded", sprite);
+    return sprite >= 0;
+}
+
+// The FEATURED FAN ART picture goes: the COOP button stands in its place.
+void RemoveFanArt() {
+    if (gui::Call("instance_number", {kObjFeaturedFanArt}) > 0) gui::Call("instance_destroy", {kObjFeaturedFanArt});
+}
+
+// Once the button has set itself up as MODDING (its Alarm_0 fills `text`), it gets its own look: our sprite and,
+// for languages the game writes over a blank button, the word.
+void DressCoopButton(yyc::CInstance* control) {
+    yyc::CInstance* button = g_coopButtonId != 0 ? yyc::FindInstance(g_coopButtonId) : nullptr;
+    if (button == nullptr || !CoopSpriteReady(control)) return;
+    if (yyc::GetBuiltinReal(button, yyc::va::YYVar_sprite_index) == g_coopSprite) return;
+    yyc::RValue text{};
+    yyc::GetVar(g_coopButtonId, kSlotText, &text);
+    const bool setUp = (text.kind & yyc::kKindMask) == yyc::kString;
+    yyc::Free(&text);
+    if (!setUp) return;
+    yyc::SetBuiltinReal(button, yyc::va::YYVar_sprite_index, g_coopSprite);
+    yyc::RValue word = yyc::String("COOP");
+    yyc::SetVar(g_coopButtonId, kSlotText, &word);
+    yyc::Free(&word);
+}
+
+// A copy of the MODDING button in the fan art's place; its click is redirected to the Coop screen.
 void EnsureCoopButton(yyc::CInstance* control) {
     if (g_coopButtonId != 0 && yyc::FindInstance(g_coopButtonId) != nullptr) return;
     g_coopButtonId = 0;
     yyc::CInstance* modding = FindMenuButton(control, kSprMenuModding);
     if (modding == nullptr) return;
-    const double x = yyc::GetBuiltinReal(modding, yyc::va::YYVar_x) + kCoopButtonOffsetX;
-    const double y = yyc::GetBuiltinReal(modding, yyc::va::YYVar_y);
+    const double x = yyc::GetBuiltinReal(modding, yyc::va::YYVar_x);
+    const double y = yyc::GetBuiltinReal(modding, yyc::va::YYVar_y) - kCoopButtonAboveModding;
     const double depth = yyc::GetBuiltinReal(modding, yyc::va::YYVar_depth);
     g_coopButtonId = static_cast<int>(gui::Call("instance_create_depth", {x, y, depth, kObjMenuButton}));
     if (yyc::CInstance* button = yyc::FindInstance(g_coopButtonId)) {
@@ -313,10 +370,49 @@ void HandleInput(yyc::CInstance* control) {
     }
 }
 
+// Testing aid: COOP_DEBUG_DUMPSPRITES=1 saves the main menu's sprites as PNGs (one per frame) into
+// %LOCALAPPDATA%\Forager (coop_sprite_*.png), the material the COOP button's sprite is made from. Drawn onto a
+// surface and saved from it (sprite_save does nothing for sprites on texture pages). Draw event only.
+void DumpSprites(yyc::CInstance* control) {
+    static bool done = false;
+    if (done || GetEnvironmentVariableA("COOP_DEBUG_DUMPSPRITES", nullptr, 0) == 0) return;
+    done = true;
+    gui::Begin(control);
+    const std::pair<const char*, int> sprites[] = {
+        {"sprPlayerIdle", 0},          {"sprMainMenuExit", 1325},    {"sprMainMenuExtras", 1326},
+        {"sprMainMenuModding", 1327},  {"sprMainMenuOptions", 1328}, {"sprMainMenuPlay", 1329},
+        {"sprMainMenuRoadmap", 1330},  {"sprMainMenuCommunity", 1331}, {"sprMainMenuCredits", 1333},
+    };
+    for (const auto& [name, index] : sprites) {
+        const double sprite = index;
+        const int frames = static_cast<int>(gui::Call("sprite_get_number", {sprite}));
+        const double w = gui::Call("sprite_get_width", {sprite}), h = gui::Call("sprite_get_height", {sprite});
+        const double ox = gui::Call("sprite_get_xoffset", {sprite}), oy = gui::Call("sprite_get_yoffset", {sprite});
+        Log("menu: sprite %s: %d frames, %gx%g, origin (%g, %g)", name, frames, w, h, ox, oy);
+        for (int i = 0; i < frames; ++i) {
+            const double surface = gui::Call("surface_create", {w, h});
+            gui::Call("surface_set_target", {surface});
+            gui::Call("draw_clear_alpha", {0, 0});
+            gui::Call("draw_sprite", {sprite, double(i), ox, oy});
+            gui::Call("surface_reset_target", {});
+            const std::string file = std::string("coop_sprite_") + name + "_" + std::to_string(i) + ".png";
+            yyc::RValue args[2] = {yyc::Real(surface), yyc::String(file.c_str())};
+            yyc::RValue result{};
+            yyc::CallBuiltin("surface_save", control, 2, args, &result);
+            yyc::Free(&result);
+            yyc::Free(&args[1]);
+            gui::Call("surface_free", {surface});
+        }
+    }
+    Log("menu: debug sprites saved");
+}
+
 void Step(yyc::CInstance* control) {
     gui::Begin(control);
     if (session::CurrentRole() == session::Role::kHost) lan::SetAnnouncement(false, "", 1, 2);  // back in the menu
+    RemoveFanArt();
     EnsureCoopButton(control);
+    DressCoopButton(control);
     // Back in the main menu after playing, the session is over: the host tells the guest, and both can start
     // a new one. A guest's working copy of the host's world (slot 99) goes, so it never sits in the player's
     // own save list.
@@ -359,6 +455,7 @@ void __cdecl ControlStepHook(yyc::CInstance* self, yyc::CInstance* other) {
 
 void __cdecl ControlDrawGuiHook(yyc::CInstance* self, yyc::CInstance* other) {
     g_origControlDrawGui(self, other);
+    DumpSprites(self);
     if (!g_open) return;
     __try {
         Draw(self);
@@ -373,8 +470,8 @@ void __cdecl ButtonStepHook(yyc::CInstance* self, yyc::CInstance* other) {
     if (!g_open) g_origButtonStep(self, other);
 }
 
-// The menu buttons' words are part of their sprites, so the COOP button is drawn here instead
-// (room coordinates, over the MODDING-sized collision box it inherited).
+// Without its sprite (it could not be loaded) the COOP button is drawn here instead: the menu buttons' words are
+// part of their sprites (room coordinates, over the MODDING-sized collision box it inherited).
 void DrawCoopButton(yyc::CInstance* self) {
     gui::Begin(self);
     const gui::Rect box{yyc::GetBuiltinReal(self, yyc::va::YYVar_bbox_left),
@@ -394,6 +491,11 @@ void DrawCoopButton(yyc::CInstance* self) {
 void __cdecl ButtonDrawHook(yyc::CInstance* self, yyc::CInstance* other) {
     if (!IsCoopButton(self)) {
         g_origButtonDraw(self, other);
+        return;
+    }
+    if (g_coopSprite >= 0) {
+        // Drawn by the game like the other buttons - once it wears our sprite (until then it would say MODDING).
+        if (yyc::GetBuiltinReal(self, yyc::va::YYVar_sprite_index) == g_coopSprite) g_origButtonDraw(self, other);
         return;
     }
     __try {
