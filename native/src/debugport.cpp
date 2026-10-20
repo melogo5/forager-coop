@@ -1,0 +1,236 @@
+#include "debugport.h"
+
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <condition_variable>
+#include <cstdio>
+#include <cstdlib>
+#include <deque>
+#include <memory>
+#include <mutex>
+#include <sstream>
+#include <string>
+#include <thread>
+#include <utility>
+#include <vector>
+
+#include "gui.h"
+#include "log.h"
+
+#pragma comment(lib, "ws2_32.lib")
+
+namespace coop::debugport {
+
+namespace {
+
+constexpr auto kAnswerTimeout = std::chrono::seconds(5);  // the game may be in a menu, where Tick does not run
+constexpr size_t kMaxLine = 1024;
+constexpr size_t kMaxListed = 100;
+constexpr double kSameSpot = 4;  // pixels, as sync and reconcile match objects
+constexpr int kNoOne = -4;
+
+struct Request {
+    std::string line;
+    std::string reply;
+    bool done = false;
+};
+
+std::mutex g_lock;
+std::condition_variable g_answered;
+std::deque<std::shared_ptr<Request>> g_queue;
+
+double Number(const std::string& text) { return std::strtod(text.c_str(), nullptr); }
+int Slot(const std::string& text) { return static_cast<int>(std::strtol(text.c_str(), nullptr, 0)); }
+
+std::string Format(const yyc::RValue& value) {
+    char text[64] = {};
+    if (yyc::IsNumber(value)) {
+        snprintf(text, sizeof(text), "%.10g", yyc::ToReal(value));
+        return text;
+    }
+    switch (value.kind & yyc::kKindMask) {
+        case yyc::kString: return "\"" + yyc::ToString(value) + "\"";
+        case yyc::kArray: return "array";
+        case yyc::kBool: return yyc::ToReal(value) != 0 ? "true" : "false";
+        default: return "undefined";
+    }
+}
+
+// value, or its element `index` when one is given and the value is an array.
+std::string FormatAt(yyc::RValue value, const std::vector<std::string>& words, size_t indexWord) {
+    if (words.size() <= indexWord) return Format(value);
+    if ((value.kind & yyc::kKindMask) != yyc::kArray) return "not an array";
+    return Format(yyc::ArrayElement(&value, Slot(words[indexWord])));
+}
+
+std::string Player(yyc::CInstance* self) {
+    char text[128] = {};
+    snprintf(text, sizeof(text), "%.0f %.1f %.1f %.0f", yyc::GetBuiltinReal(self, yyc::va::YYVar_id),
+             yyc::GetBuiltinReal(self, yyc::va::YYVar_x), yyc::GetBuiltinReal(self, yyc::va::YYVar_y),
+             yyc::GetBuiltinReal(self, yyc::va::YYVar_room));
+    return text;
+}
+
+struct Found {
+    int id;
+    double x, y, distance;
+};
+
+// Active instances of `object`; with a point, only those within `radius` of it, nearest first.
+std::vector<Found> Instances(int object, bool aroundPoint, double px, double py, double radius) {
+    std::vector<Found> found;
+    const int count = static_cast<int>(gui::Call("instance_number", {double(object)}));
+    for (int i = 0; i < count; ++i) {
+        const int id = static_cast<int>(gui::Call("instance_find", {double(object), double(i)}));
+        yyc::CInstance* instance = id == kNoOne ? nullptr : yyc::FindInstance(id);
+        if (instance == nullptr) continue;
+        const double x = yyc::GetBuiltinReal(instance, yyc::va::YYVar_x);
+        const double y = yyc::GetBuiltinReal(instance, yyc::va::YYVar_y);
+        const double distance = aroundPoint ? std::hypot(x - px, y - py) : 0;
+        if (aroundPoint && distance > radius) continue;
+        found.push_back({id, x, y, distance});
+    }
+    if (aroundPoint) {
+        std::sort(found.begin(), found.end(), [](const Found& a, const Found& b) { return a.distance < b.distance; });
+    }
+    return found;
+}
+
+std::string List(const std::vector<std::string>& w) {
+    const bool aroundPoint = w.size() >= 5;
+    const std::vector<Found> found =
+        Instances(Slot(w[1]), aroundPoint, aroundPoint ? Number(w[2]) : 0, aroundPoint ? Number(w[3]) : 0, aroundPoint ? Number(w[4]) : 0);
+    std::ostringstream out;
+    out << found.size() << ":";
+    for (size_t i = 0; i < found.size() && i < kMaxListed; ++i) {
+        char item[96] = {};
+        snprintf(item, sizeof(item), " %d %.1f %.1f;", found[i].id, found[i].x, found[i].y);
+        out << item;
+    }
+    return out.str();
+}
+
+std::string Call(yyc::CInstance* self, const std::vector<std::string>& w) {
+    std::vector<yyc::RValue> args;
+    for (size_t i = 2; i < w.size(); ++i) args.push_back(yyc::Real(Number(w[i])));
+    yyc::RValue result{};
+    if (!yyc::CallBuiltin(w[1].c_str(), self, static_cast<int>(args.size()), args.data(), &result)) {
+        return "no builtin " + w[1];
+    }
+    const std::string text = Format(result);
+    yyc::Free(&result);
+    return text;
+}
+
+std::string Answer(yyc::CInstance* self, const std::string& line) {
+    std::istringstream in(line);
+    std::vector<std::string> w;
+    for (std::string word; in >> word;) w.push_back(word);
+    if (w.empty()) return "empty";
+    const std::string& c = w[0];
+    gui::Begin(self);
+    if (c == "ping") return "pong";
+    if (c == "player") return Player(self);
+    if (c == "count" && w.size() == 2) {
+        char text[32] = {};
+        snprintf(text, sizeof(text), "%.0f", gui::Call("instance_number", {double(Slot(w[1]))}));
+        return text;
+    }
+    if (c == "list" && (w.size() == 2 || w.size() == 5)) return List(w);
+    if (c == "at" && w.size() == 4) {
+        return std::to_string(Instances(Slot(w[1]), true, Number(w[2]), Number(w[3]), kSameSpot).size());
+    }
+    if (c == "var" && (w.size() == 3 || w.size() == 4)) {
+        yyc::RValue value{};
+        if (!yyc::GetVar(Slot(w[1]), Slot(w[2]), &value)) return "no such instance";
+        const std::string text = FormatAt(value, w, 3);
+        yyc::Free(&value);
+        return text;
+    }
+    if (c == "global" && (w.size() == 2 || w.size() == 3)) {
+        const yyc::RValue* value = yyc::GlobalVar(Slot(w[1]));
+        return value != nullptr ? FormatAt(*value, w, 2) : "no globals";
+    }
+    if (c == "call" && w.size() >= 2) return Call(self, w);
+    return "unknown command (ping, player, count, list, at, var, global, call)";
+}
+
+// One connection at a time: lines in, an answer each, until the client hangs up.
+void Serve(SOCKET client) {
+    std::string pending;
+    char buffer[512];
+    for (;;) {
+        const int got = recv(client, buffer, sizeof(buffer), 0);
+        if (got <= 0) break;
+        pending.append(buffer, got);
+        if (pending.size() > kMaxLine * 4) break;
+        for (size_t end; (end = pending.find('\n')) != std::string::npos;) {
+            std::string line = pending.substr(0, end);
+            pending.erase(0, end + 1);
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            auto request = std::make_shared<Request>();
+            request->line = line.substr(0, kMaxLine);
+            std::unique_lock<std::mutex> lock(g_lock);
+            g_queue.push_back(request);
+            const bool done = g_answered.wait_for(lock, kAnswerTimeout, [&request] { return request->done; });
+            const std::string reply = (done ? request->reply : "timeout (not in a world?)") + "\n";
+            lock.unlock();
+            send(client, reply.data(), static_cast<int>(reply.size()), 0);
+        }
+    }
+    closesocket(client);
+}
+
+void Listen(SOCKET server) {
+    for (;;) {
+        const SOCKET client = accept(server, nullptr, nullptr);
+        if (client == INVALID_SOCKET) break;
+        Serve(client);
+    }
+}
+
+}  // namespace
+
+void Start() {
+    static bool started = false;
+    if (started || GetEnvironmentVariableA("COOP_DEBUG_PORT", nullptr, 0) == 0) return;
+    started = true;
+    WSADATA data;
+    if (WSAStartup(MAKEWORD(2, 2), &data) != 0) return;
+    const SOCKET server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);  // this PC only
+    address.sin_port = 0;                              // any free port: two games run side by side in tests
+    int size = sizeof(address);
+    if (server == INVALID_SOCKET || bind(server, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0 ||
+        listen(server, 1) != 0 || getsockname(server, reinterpret_cast<sockaddr*>(&address), &size) != 0) {
+        Log("debugport: could not listen (error %d)", WSAGetLastError());
+        if (server != INVALID_SOCKET) closesocket(server);
+        return;
+    }
+    Log("debugport: listening on 127.0.0.1:%u", ntohs(address.sin_port));
+    std::thread(Listen, server).detach();
+}
+
+void Tick(yyc::CInstance* localPlayer) {
+    std::deque<std::shared_ptr<Request>> requests;
+    {
+        std::lock_guard<std::mutex> lock(g_lock);
+        if (g_queue.empty()) return;
+        requests.swap(g_queue);
+    }
+    for (const auto& request : requests) {
+        const std::string reply = Answer(localPlayer, request->line);
+        std::lock_guard<std::mutex> lock(g_lock);
+        request->reply = reply;
+        request->done = true;
+    }
+    g_answered.notify_all();
+}
+
+}  // namespace coop::debugport

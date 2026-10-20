@@ -26,6 +26,7 @@
 #include "chests.h"
 #include "clock.h"
 #include "coins.h"
+#include "debugport.h"
 #include "land.h"
 #include "mobs.h"
 #include "progress.h"
@@ -466,6 +467,7 @@ void DebugVisitRoom(yyc::CInstance* localPlayer, bool inWorld) {
 }
 
 void Tick(yyc::CInstance* localPlayer) {
+    debugport::Tick(localPlayer);
     ApplyDebugGodMode();
     ApplyDebugCheats();
     if (g_role == Role::kNone || g_leaving) return;
@@ -635,6 +637,7 @@ bool IsConnected() { return net::IsConnected(); }
 }  // namespace session
 
 bool SessionInstall() {
+    debugport::Start();
     if (!puppet::InstallHooks(&Tick, &RespawnIfDead)) return false;
     if (MH_CreateHook(yyc::At<void*>(kScriptIsMenuOpen), reinterpret_cast<void*>(&IsMenuOpenHook),
                       reinterpret_cast<void**>(&g_origIsMenuOpen)) != MH_OK) {
