@@ -16,6 +16,7 @@
 #include "lan.h"
 #include "log.h"
 #include "session.h"
+#include "steam.h"
 #include "world.h"
 #include "yyc.h"
 
@@ -516,6 +517,7 @@ void DumpSprites(yyc::CInstance* control) {
 
 void Step(yyc::CInstance* control) {
     gui::Begin(control);
+    steam::Tick(control);
     if (session::CurrentRole() == session::Role::kHost) lan::SetAnnouncement(false, "", 1, 2);  // back in the menu
     RemoveFanArt();
     EnsureCoopButton(control);
