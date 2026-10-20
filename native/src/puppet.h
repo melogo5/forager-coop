@@ -43,6 +43,8 @@ bool IsPuppet(const yyc::CInstance* instance);
 void BeginActing(net::PeerId player);
 void EndActing();
 bool IsActing();
+// The player being acted as (only meaningful while IsActing()).
+net::PeerId ActingPlayer();
 // Lets something run as the local player in the middle of acting; ResumeActing takes what it returned.
 struct Acting {
     int depth;

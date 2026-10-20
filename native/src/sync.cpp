@@ -45,7 +45,7 @@ struct ObjectMsg {
     float x, y;
     float depth;    // kSpawn: the depth; kHit: the guest's `dmg` (its tool's damage)
     int32_t item;   // kSpawn of a drop: its `item`; otherwise kNoItem
-    int32_t owner;  // kSpawn of a drop: who may collect it (kOwnerAnyone/Host/Guest)
+    int32_t owner;  // kSpawn of a drop: who may collect it (kOwnerAnyone/Host/Guest - the receiving guest)
     float sprite;   // kSpawn: the look it rolled after creation (ore vs plain rock...); -1 = keep
     float image;
 };
@@ -175,8 +175,9 @@ unsigned g_applied[16] = {};
 unsigned g_steps = 0;
 constexpr unsigned kStatsEverySteps = 600;
 
+// To everyone, or only to guest `to` when it is set.
 void Send(MessageType type, const InstanceInfo& info, int id, int32_t item = kNoItem,
-          int32_t owner = kOwnerAnyone) {
+          int32_t owner = kOwnerAnyone, int to = -1) {
     ObjectMsg msg{id, info.object, static_cast<float>(info.x), static_cast<float>(info.y),
                   static_cast<float>(info.depth), item, owner, -1, 0};
     if (type == kSpawn) {
@@ -185,7 +186,9 @@ void Send(MessageType type, const InstanceInfo& info, int id, int32_t item = kNo
             msg.image = static_cast<float>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_image_index));
         }
     }
-    if (net::Send(type, &msg, sizeof(msg))) ++g_sent[type & 15];
+    const bool sent = to < 0 ? net::Send(type, &msg, sizeof(msg))
+                             : net::SendTo(static_cast<net::PeerId>(to), type, &msg, sizeof(msg));
+    if (sent) ++g_sent[type & 15];
 }
 
 bool IsDrop(yyc::CInstance* self, int object) {
@@ -206,7 +209,7 @@ void CollectNow(yyc::CInstance* drop, yyc::CInstance* player) {
 }
 
 // Drops belong to whoever broke/killed what they came from: only that player may collect them.
-std::unordered_set<int> g_guestDrops;       // host: drops created while the guest's puppet was acting
+std::unordered_map<int, net::PeerId> g_guestDrops;  // host: drops created while a guest's puppet was acting
 std::unordered_set<int> g_hostOwnedDrops;   // guest: replicas of drops the host earned
 
 // Host: objects created this step. Sent at the end of the step, once their creator has set them up
@@ -230,22 +233,29 @@ void FlushSpawns(yyc::CInstance* self) {
         const InstanceInfo info = Describe(instance);
         int32_t item = kNoItem;
         int32_t owner = kOwnerAnyone;
+        const auto guestDrop = g_guestDrops.find(id);
         if (IsDrop(self, info.object)) {
             yyc::RValue value{};
             yyc::GetVar(id, kSlotItem, &value);
             item = static_cast<int32_t>(yyc::ToReal(value));
             yyc::Free(&value);
-            owner = g_guestDrops.count(id) > 0 ? kOwnerGuest : kOwnerHost;
+            owner = guestDrop != g_guestDrops.end() ? kOwnerGuest : kOwnerHost;
         }
         if (owner == kOwnerHost) {
             CollectNow(instance, self);  // the host's loot goes straight into its inventory
             continue;
         }
-        Send(kSpawn, info, id, item, owner);
-        if (owner == kOwnerGuest) {  // the guest collects its copy on arrival; ours goes
-            g_guestDrops.erase(id);
-            DestroySilently(self, id);
+        if (owner != kOwnerGuest) {
+            Send(kSpawn, info, id, item, owner);
+            continue;
         }
+        // Only its guest hears of it: that guest collects its copy on arrival, ours goes - for the others it
+        // never existed.
+        const net::PeerId guest = guestDrop->second;
+        Send(kSpawn, info, id, item, owner, guest);
+        Log("sync: drop of item %d goes to guest %u", item, guest);
+        g_guestDrops.erase(guestDrop);
+        DestroySilently(self, id);
     }
     g_pendingSpawns.clear();
 }
@@ -296,7 +306,7 @@ void __cdecl CreateHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstanc
     }
     if (IsHost()) {
         g_pendingSpawns.push_back(id);
-        if (puppet::IsActing()) g_guestDrops.insert(id);
+        if (puppet::IsActing()) g_guestDrops[id] = puppet::ActingPlayer();
     } else if (IsGuest() && g_suppressing > 0) {
         g_suppressed.push_back(id);
     } else if (IsGuest() && CreatedByGuestAction()) {
@@ -618,7 +628,10 @@ void ApplySpawn(yyc::CInstance* self, const ObjectMsg& msg) {
     }
     if (id != 0 && msg.owner == kOwnerHost) g_hostOwnedDrops.insert(id);
     if (id != 0 && msg.owner == kOwnerGuest) {
-        if (yyc::CInstance* drop = yyc::FindInstance(id)) CollectNow(drop, self);  // straight into our inventory
+        if (yyc::CInstance* drop = yyc::FindInstance(id)) {
+            CollectNow(drop, self);  // straight into our inventory
+            Log("sync: our drop of item %d collected", msg.item);
+        }
     }
 }
 

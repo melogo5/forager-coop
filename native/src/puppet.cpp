@@ -339,6 +339,13 @@ void EndActing() {
 
 bool IsActing() { return g_actorId != 0; }
 
+net::PeerId ActingPlayer() {
+    for (const auto& puppet : g_puppets) {
+        if (puppet.id == g_actorId) return puppet.player;
+    }
+    return net::kHostPeer;
+}
+
 Acting PauseActing() {
     const Acting acting{g_actingDepth, g_actorId};
     g_actingDepth = 0;

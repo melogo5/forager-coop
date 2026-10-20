@@ -44,7 +44,7 @@ namespace coop {
 
 namespace {
 
-constexpr uint32_t kProtocolVersion = 5;  // 5: playtest fixes: skills, reconcile, chests, critters, hit dmg
+constexpr uint32_t kProtocolVersion = 6;  // 6: up to 3 guests (docs/coop/MULTIPLAYER.md)
 constexpr unsigned kSendEverySteps = 3;       // 60 fps game step -> 20 updates/s
 constexpr unsigned kAnnounceEverySteps = 30;  // refresh the LAN announcement twice a second
 constexpr int kSlotGodMode = 0x54C;           // global.godMode (decompiled/code/var_slots.tsv)
@@ -63,8 +63,7 @@ constexpr int kObjPlayer = 22;
 constexpr int kParMenu = 238;
 constexpr int kLuiBaseClass = 227;
 constexpr int kMaxObjects = 512;
-constexpr int kGuestsSupported = 1;  // the rest of the game sync knows one guest so far (docs/coop/MULTIPLAYER.md)
-constexpr int kMaxGuests = 3;
+constexpr int kMaxGuests = 3;  // 4 players (docs/coop/MULTIPLAYER.md)
 
 enum MessageType : uint8_t {
     kHello = 1,
@@ -287,14 +286,13 @@ void TrackPeers(yyc::CInstance* localPlayer, const std::vector<net::PeerId>& pee
     g_peers = peers;
 }
 
-// Guests the host takes at once. Testing aid: COOP_DEBUG_MAX_GUESTS=<n> (up to 3) lets more in than the game
-// sync handles yet, to check the links.
+// Guests the host takes at once. Testing aid: COOP_DEBUG_MAX_GUESTS=<n> takes fewer (up to 3).
 int MaxGuests() {
     static const int guests = [] {
         char value[16] = {};
         const int wanted = GetEnvironmentVariableA("COOP_DEBUG_MAX_GUESTS", value, sizeof(value)) > 0
                                ? atoi(value)
-                               : kGuestsSupported;
+                               : kMaxGuests;
         return (std::min)((std::max)(wanted, 1), kMaxGuests);
     }();
     return guests;

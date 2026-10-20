@@ -75,6 +75,21 @@ std::string SafeName(const std::string& name) {
     return safe.empty() ? std::string("guest") : safe;
 }
 
+// Host: `name`, or name_2, name_3... if a guest linked now goes by it: two guests never share a character.
+std::string FreeName(const std::string& name, net::PeerId peer) {
+    const std::vector<net::PeerId> linked = net::Peers();
+    const auto taken = [&](const std::string& candidate) {
+        for (const net::PeerId other : linked) {
+            const auto found = g_guestNames.find(other);
+            if (other != peer && found != g_guestNames.end() && found->second == candidate) return true;
+        }
+        return false;
+    };
+    std::string candidate = name;
+    for (int n = 2; taken(candidate); ++n) candidate = name + "_" + std::to_string(n);
+    return candidate;
+}
+
 // Host: <save area>/saveData<current slot>/coop_guests/<name>.cin
 fs::path GuestFile(const std::string& name) {
     const yyc::RValue* slot = yyc::GlobalVar(kSlotSaveFile);
@@ -221,7 +236,12 @@ void GuestTick(yyc::CInstance* localPlayer) {
 
 bool HostHandle(const net::Message& message, yyc::CInstance* localPlayer, bool* guestIntroduced) {
     if (message.type == kGuestHello) {
-        const std::string name = SafeName(std::string(message.payload.begin(), message.payload.end()));
+        const std::string asked = SafeName(std::string(message.payload.begin(), message.payload.end()));
+        const std::string name = FreeName(asked, message.from);
+        if (name != asked) {
+            Log("character: '%s' is playing already; guest %u plays as '%s'", asked.c_str(), message.from,
+                name.c_str());
+        }
         g_guestNames[message.from] = name;
         const std::vector<uint8_t> stored = ReadFile(GuestFile(name));
         std::vector<uint8_t> payload{static_cast<uint8_t>(stored.empty() ? 0 : 1)};
