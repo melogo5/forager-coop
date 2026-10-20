@@ -33,6 +33,7 @@
 #include "quests.h"
 #include "reconcile.h"
 #include "skills.h"
+#include "fishing.h"
 #include "skilltab.h"
 #include "stations.h"
 #include "steam.h"
@@ -488,6 +489,7 @@ void Tick(yyc::CInstance* localPlayer) {
         sync::Reset();  // a guest coming back starts over: new replicas, new drops
         storage::Reset();
         stations::Reset();
+        fishing::Reset();
         reconcile::Reset();
     }
     g_wasConnected = connected;
@@ -529,6 +531,7 @@ void Tick(yyc::CInstance* localPlayer) {
     progress::Tick(localPlayer);
     quests::Tick(localPlayer);
     stations::Tick(localPlayer);
+    fishing::Tick(localPlayer);
     skills::Tick(localPlayer);
     HandleMessages(localPlayer);
     if (g_steps % kSendEverySteps == 0) {
@@ -610,6 +613,7 @@ void Leave() {
     progress::Reset();
     quests::Reset();
     stations::Reset();
+    fishing::Reset();
     skills::Reset();
     reconcile::Reset();
     Log(host ? "session: stopped hosting; can create again" : "session: left the host's world; can join again");
@@ -637,6 +641,7 @@ bool SessionInstall() {
     }
     if (!world::InstallHooks([] { return g_role == Role::kGuest; })) return false;
     if (!skilltab::InstallHooks([] { return g_role != Role::kNone; })) return false;
+    if (!fishing::InstallHooks([] { return g_role != Role::kNone; })) return false;
     const auto isHost = [] { return g_role == Role::kHost; };
     const auto isGuest = [] { return g_role == Role::kGuest; };
     if (!sync::InstallHooks(isHost, isGuest) || !mobs::InstallHooks(isHost, isGuest) ||

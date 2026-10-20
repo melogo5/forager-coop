@@ -182,6 +182,18 @@ void EndMirror(const Key& key) {
         std::get<2>(key));
 }
 
+// Host: the guest whose craft a station showed has left; the craft goes on here from where it was (its own
+// HandleCrafting runs again), so what the guest paid for is made and drops at the station.
+void AdoptMirror(const Key& key) {
+    const auto mirror = g_mirrors.find(key);
+    if (mirror == g_mirrors.end()) return;
+    const int station = mirror->second;
+    g_mirrors.erase(mirror);
+    if (yyc::FindInstance(station) == nullptr || !Crafting(station)) return;
+    Log("stations: the craft at station %d at (%d, %d) is finished here", std::get<0>(key), std::get<1>(key),
+        std::get<2>(key));
+}
+
 // The station whose crafting menu is open here, or kNoOne.
 int OpenMenuStation(yyc::CInstance* self) {
     if (g_opened == kNoOne || CallReal(self, "instance_number", {kUiCrafting}) < 1) return kNoOne;
@@ -436,8 +448,8 @@ void OnPeerLeft(net::PeerId peer) {
     for (const Key& key : freed) {
         g_peer.erase(key);
         g_peerOwners.erase(key);
-        EndMirror(key);
-        Send(key, false);  // the other guests heard it was in use
+        AdoptMirror(key);
+        Send(key, false);  // the other guests heard it was in use (if it crafts on, the host's Tick says so)
         Log("stations: station %d at (%d, %d) was used by guest %u, who left; free again", std::get<0>(key),
             std::get<1>(key), std::get<2>(key), peer);
     }
