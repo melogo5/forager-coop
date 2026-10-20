@@ -1,4 +1,4 @@
-// TCP links between the host and its guests (a star: guests talk only to the host). Background threads accept,
+// Links between the host and its guests (a star: guests talk only to the host), over TCP or Steam P2P. Background threads accept,
 // connect and receive; the game thread sends and drains received messages. Frame on the wire:
 // [u32 body size][body], body = [u8 type][payload] (bodies up to 8 MB). The sender is not on the wire: the
 // receiving side knows it from the connection.
@@ -24,6 +24,11 @@ struct Message {
 // Host: accepts up to `maxGuests` guests at a time; more are turned away.
 void StartHost(uint16_t port, int maxGuests);
 void StartJoin(const std::string& host, uint16_t port);
+// Host (after StartHost): also takes guests who come through Steam's P2P network - those steam.cpp accepted, the
+// members of our Steam lobby. They count toward maxGuests.
+void HostSteam();
+// Guest: connects to the host's Steam account through Steam's P2P network (no address needed).
+void StartJoinSteam(uint64_t hostSteamId);
 // Drops every link and stops hosting/reconnecting; a later StartHost/StartJoin starts over.
 void Stop();
 

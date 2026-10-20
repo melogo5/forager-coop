@@ -23,6 +23,8 @@ bool IsMirror(yyc::CInstance* station);
 // The local player says (speech bubble) that the other player is using what it tried to open - at most every
 // few seconds, so clicking again and again does not stack bubbles.
 void SayBusy(yyc::CInstance* player);
+// A speech bubble over `player` (the game's Dialogue).
+void Say(yyc::CInstance* player, const char* text);
 
 // Forgets which stations are in use (the session is over).
 // Host: a guest that has just joined hears which stations are in use (by the host or another guest).

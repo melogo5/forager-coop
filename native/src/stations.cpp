@@ -288,12 +288,17 @@ void SayBusy(yyc::CInstance* player) {
     const DWORD now = GetTickCount();
     if (player == nullptr || (last != 0 && now - last < kSayEveryMs)) return;
     last = now;
-    yyc::RValue text = yyc::String("The other player is using this");
-    yyc::RValue* args[1] = {&text};
+    Say(player, "The other player is using this");
+}
+
+void Say(yyc::CInstance* player, const char* text) {
+    if (player == nullptr) return;
+    yyc::RValue words = yyc::String(text);
+    yyc::RValue* args[1] = {&words};
     yyc::RValue result{};
     yyc::At<yyc::ScriptFn>(kScriptDialogue)(player, player, &result, 1, args);
     yyc::Free(&result);
-    yyc::Free(&text);
+    yyc::Free(&words);
 }
 
 bool InstallHooks() {

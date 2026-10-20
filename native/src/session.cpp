@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "MinHook.h"
+#include "gui.h"
 #include "lan.h"
 #include "log.h"
 #include "net.h"
@@ -33,6 +34,7 @@
 #include "reconcile.h"
 #include "skills.h"
 #include "stations.h"
+#include "steam.h"
 #include "storage.h"
 #include "unlocks.h"
 #include "sync.h"
@@ -99,6 +101,7 @@ unsigned g_offlineSteps = 0;
 bool g_leaving = false;  // guest: on the way back to the main menu
 std::string g_notice;    // shown on the COOP screen when back in the menu
 bool g_wasConnected = false;
+bool g_inviteHinted = false;  // host: told about F2 in this world
 std::vector<net::PeerId> g_peers;  // linked at the last step
 bool g_wasInWorld = true;
 std::map<net::PeerId, PlayerStateMsg> g_remotes;  // the other players' last state, shown as puppets
@@ -414,6 +417,17 @@ yyc::RValue* __cdecl IsMenuOpenHook(yyc::CInstance* self, yyc::CInstance* other,
     return result;
 }
 
+// Host with a Steam lobby: F2 opens Steam's "invite friends" dialog; said once per world.
+void SteamInvites(yyc::CInstance* localPlayer) {
+    if (!steam::HasLobby()) return;
+    if (!g_inviteHinted) {
+        g_inviteHinted = true;
+        stations::Say(localPlayer, "F2: invite Steam friends");
+    }
+    gui::Begin(localPlayer);
+    if (gui::KeyPressed(VK_F2)) steam::OpenInviteDialog();
+}
+
 // Runs after the local player's Step_0, i.e. only while in a world.
 
 // Testing aid: COOP_DEBUG_ROOM=<room> goes into that room ~8 s into the session (e.g. 24, the museum) and back to
@@ -485,6 +499,7 @@ void Tick(yyc::CInstance* localPlayer) {
     g_wasInWorld = inWorld;
     if (!inWorld) return;
 
+    if (g_role == Role::kHost) SteamInvites(localPlayer);
     sync::Tick(localPlayer);
     storage::DebugTick(localPlayer);
     land::DebugTick(localPlayer);
@@ -521,18 +536,34 @@ void Host() {
     g_role = Role::kHost;
     net::StartHost(kGamePort, MaxGuests());
     lan::StartAnnouncing(kGamePort);
+    if (steam::Ready()) {
+        steam::HostLobby(1 + MaxGuests());
+        net::HostSteam();
+    }
     Log("session: hosting on port %u", kGamePort);
 }
 
-void Join(const std::string& address, uint16_t port) {
-    if (g_role != Role::kNone) return;
+// Guest: what arrives before the game loop takes it (the host's world and our character) and what to say first.
+void PrepareGuest() {
     g_role = Role::kGuest;
-    Log("session: joining %s:%u", address.c_str(), port);
     net::SetReceiveHandler([](const net::Message& m) {
         return world::HandleMessage(m) || character::GuestHandleReceive(m);
     });
     net::SetConnectHandler(&character::GuestOnConnect);
+}
+
+void Join(const std::string& address, uint16_t port) {
+    if (g_role != Role::kNone) return;
+    PrepareGuest();
+    Log("session: joining %s:%u", address.c_str(), port);
     net::StartJoin(address, port);
+}
+
+void JoinSteam(uint64_t hostSteamId) {
+    if (g_role != Role::kNone || !steam::Ready()) return;
+    PrepareGuest();
+    Log("session: joining Steam account %llu", static_cast<unsigned long long>(hostSteamId));
+    net::StartJoinSteam(hostSteamId);
 }
 
 void Leave() {
@@ -540,6 +571,8 @@ void Leave() {
     const bool host = g_role == Role::kHost;
     if (host) net::Send(kBye, nullptr, 0);
     net::Stop();
+    steam::LeaveLobby();
+    g_inviteHinted = false;
     g_role = Role::kNone;
     g_playedWorld = false;
     g_leaving = false;

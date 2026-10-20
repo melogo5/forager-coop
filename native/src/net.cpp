@@ -10,6 +10,7 @@
 #include <thread>
 
 #include "log.h"
+#include "steam.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -20,14 +21,23 @@ namespace {
 constexpr int kRetryMs = 1000;
 constexpr size_t kMaxBody = 8 * 1024 * 1024;  // a whole late-game save fits; bigger means a broken peer
 constexpr size_t kHeaderSize = 4;              // u32 little-endian body size
+constexpr uint8_t kNetClose = 0;               // a frame of this type: the sender closes the link (Steam P2P has no
+                                               // "connection closed" of its own); never handed up
+constexpr size_t kP2PChunk = 512 * 1024;       // a reliable Steam P2P packet takes up to 1 MB
+constexpr DWORD kSteamIdleMs = 2;              // the Steam receive thread's nap when nothing has arrived
+constexpr DWORD kSteamCheckMs = 1000;          // ... and how often it checks the sessions are still up
+constexpr DWORD kSteamGraceMs = 15000;         // a new Steam link is not checked for this long (being set up)
 
-// One link. Sends to it are serialized by its own lock, so a long send (a world snapshot) to one guest does not
-// hold up the others.
+// One link: a TCP socket, or a Steam account reached through Steam's P2P network. Sends to it are serialized by its
+// own lock, so a long send (a world snapshot) to one guest does not hold up the others.
 struct Connection {
     SOCKET socket = INVALID_SOCKET;  // guarded by sendLock once shared
+    uint64_t steamId = 0;            // a Steam link (then no socket)
     PeerId id = kHostPeer;
     std::mutex sendLock;
     std::atomic<bool> dropped{false};  // Stop() let go of it: whatever still arrives is not queued
+    std::vector<uint8_t> pending;      // Steam: bytes of a frame still coming (Steam receive thread only)
+    DWORD since = GetTickCount();
 };
 using ConnectionPtr = std::shared_ptr<Connection>;
 
@@ -41,6 +51,10 @@ PeerId g_nextGuestId = 1;
 bool g_started = false;
 ReceiveHandler g_handler = nullptr;  // set before Start*, read only by the receive threads
 ConnectHandler g_onConnect = nullptr;
+int g_maxGuests = 0;                          // host
+std::atomic<bool> g_steamHosting{false};      // host: Steam guests are taken too
+std::atomic<unsigned> g_steamGeneration{0};   // Stop() bumps it: the Steam receive thread ends
+std::atomic<bool> g_steamThread{false};       // a Steam receive thread is running
 
 bool RecvExact(SOCKET s, uint8_t* buffer, size_t size) {
     size_t done = 0;
@@ -79,8 +93,25 @@ void Unregister(const ConnectionPtr& connection) {
         g_connections.erase(std::remove(g_connections.begin(), g_connections.end(), connection), g_connections.end());
     }
     std::lock_guard<std::mutex> guard(connection->sendLock);
+    if (connection->steamId != 0) {
+        steam::CloseP2P(connection->steamId);
+        connection->steamId = 0;
+        return;
+    }
     closesocket(connection->socket);
     connection->socket = INVALID_SOCKET;
+}
+
+// A frame's body from `connection`: to the receive handler or into the inbox.
+void Deliver(const ConnectionPtr& connection, const uint8_t* body, size_t size) {
+    if (connection->dropped) return;
+    Message message;
+    message.type = body[0];
+    message.from = connection->id;
+    message.payload.assign(body + 1, body + size);
+    if (g_handler != nullptr && g_handler(message)) return;
+    std::lock_guard<std::mutex> guard(g_lock);
+    g_inbox.push_back(std::move(message));
 }
 
 // Receives frames until the peer goes away, then forgets the link.
@@ -96,14 +127,7 @@ void ReceiveLoop(ConnectionPtr connection) {
         }
         body.resize(size);
         if (!RecvExact(s, body.data(), size)) break;
-        if (connection->dropped) continue;
-        Message message;
-        message.type = body[0];
-        message.from = connection->id;
-        message.payload.assign(body.begin() + 1, body.end());
-        if (g_handler != nullptr && g_handler(message)) continue;
-        std::lock_guard<std::mutex> guard(g_lock);
-        g_inbox.push_back(std::move(message));
+        Deliver(connection, body.data(), size);
     }
     Log("net: connection to peer %u closed", connection->id);
     Unregister(connection);
@@ -208,9 +232,17 @@ std::vector<uint8_t> Frame(uint8_t type, const void* payload, size_t size) {
     return frame;
 }
 
-// A blocking send under the link's lock; send() may take a large frame in several pieces.
+// A blocking send under the link's lock; send() may take a large frame in several pieces. Over Steam the frame
+// goes in packets of up to kP2PChunk, which arrive in order and are joined again (FeedSteam).
 bool SendFrame(Connection& connection, const std::vector<uint8_t>& frame) {
     std::lock_guard<std::mutex> guard(connection.sendLock);
+    if (connection.steamId != 0) {
+        for (size_t at = 0; at < frame.size(); at += kP2PChunk) {
+            const size_t size = (std::min)(kP2PChunk, frame.size() - at);
+            if (!steam::SendP2P(connection.steamId, frame.data() + at, static_cast<uint32_t>(size))) return false;
+        }
+        return true;
+    }
     if (connection.socket == INVALID_SOCKET) return false;
     size_t sent = 0;
     while (sent < frame.size()) {
@@ -227,10 +259,123 @@ std::vector<ConnectionPtr> Connections() {
     return g_connections;
 }
 
+// ---- Steam P2P links ----
+
+ConnectionPtr FindSteam(uint64_t steamId) {
+    std::lock_guard<std::mutex> guard(g_lock);
+    for (const auto& connection : g_connections) {
+        if (connection->steamId == steamId) return connection;
+    }
+    return nullptr;
+}
+
+ConnectionPtr RegisterSteam(uint64_t steamId, PeerId id) {
+    auto connection = std::make_shared<Connection>();
+    connection->steamId = steamId;
+    connection->id = id;
+    std::lock_guard<std::mutex> guard(g_lock);
+    g_connections.push_back(connection);
+    return connection;
+}
+
+// Adds a packet's bytes to the link's stream and hands up every complete frame; false when the link is over (the
+// peer closed it, or sent garbage).
+bool FeedSteam(const ConnectionPtr& connection, const std::vector<uint8_t>& data) {
+    std::vector<uint8_t>& pending = connection->pending;
+    pending.insert(pending.end(), data.begin(), data.end());
+    size_t at = 0;
+    while (pending.size() - at >= kHeaderSize) {
+        const uint8_t* h = pending.data() + at;
+        const size_t size = h[0] | (h[1] << 8) | (h[2] << 16) | (static_cast<size_t>(h[3]) << 24);
+        if (size == 0 || size > kMaxBody) {
+            Log("net: bad frame size %zu from peer %u", size, connection->id);
+            return false;
+        }
+        if (pending.size() - at < kHeaderSize + size) break;
+        const uint8_t* body = h + kHeaderSize;
+        if (body[0] == kNetClose) return false;
+        Deliver(connection, body, size);
+        at += kHeaderSize + size;
+    }
+    pending.erase(pending.begin(), pending.begin() + at);
+    return true;
+}
+
+// Host: a packet from a Steam account with no link yet - a new guest if steam.cpp accepted it (in our lobby).
+ConnectionPtr NewSteamGuest(uint64_t steamId) {
+    if (!g_steamHosting || !steam::IsAccepted(steamId)) return nullptr;
+    PeerId id = kHostPeer;
+    {
+        std::lock_guard<std::mutex> guard(g_lock);
+        if (static_cast<int>(g_connections.size()) < g_maxGuests) id = NextGuestId();
+    }
+    if (id == kHostPeer) {
+        Log("net: rejecting Steam account %llu, the session is full", static_cast<unsigned long long>(steamId));
+        steam::CloseP2P(steamId);
+        return nullptr;
+    }
+    Log("net: guest %u connected through Steam (%llu)", id, static_cast<unsigned long long>(steamId));
+    return RegisterSteam(steamId, id);
+}
+
+// Forgets Steam links whose session has gone (the peer quit or lost Steam) after their grace period.
+void CheckSteamLinks() {
+    for (const auto& connection : Connections()) {
+        const uint64_t steamId = connection->steamId;
+        if (steamId == 0 || GetTickCount() - connection->since < kSteamGraceMs || steam::P2PAlive(steamId)) continue;
+        Log("net: Steam link to peer %u is gone", connection->id);
+        Unregister(connection);
+    }
+}
+
+void SteamThread(unsigned generation) {
+    std::vector<uint8_t> data;
+    DWORD lastCheck = GetTickCount();
+    while (g_steamGeneration == generation) {
+        bool any = false;
+        uint64_t from = 0;
+        while (g_steamGeneration == generation && steam::ReadP2P(&data, &from)) {
+            any = true;
+            ConnectionPtr connection = FindSteam(from);
+            if (connection == nullptr) connection = NewSteamGuest(from);
+            if (connection == nullptr || FeedSteam(connection, data)) continue;
+            Log("net: Steam link to peer %u closed", connection->id);
+            Unregister(connection);
+        }
+        if (GetTickCount() - lastCheck >= kSteamCheckMs) {
+            lastCheck = GetTickCount();
+            CheckSteamLinks();
+        }
+        if (!any) Sleep(kSteamIdleMs);
+    }
+    g_steamThread = false;
+}
+
+void EnsureSteamThread() {
+    if (g_steamThread.exchange(true)) return;
+    std::thread(SteamThread, g_steamGeneration.load()).detach();
+}
+
 }  // namespace
 
 void StartHost(uint16_t port, int maxGuests) {
+    g_maxGuests = maxGuests;
     if (Startup()) std::thread(HostThread, port, maxGuests, g_hostGeneration.load()).detach();
+}
+
+void HostSteam() {
+    if (!steam::Ready()) return;
+    g_steamHosting = true;
+    EnsureSteamThread();
+    Log("net: taking guests through Steam too");
+}
+
+void StartJoinSteam(uint64_t hostSteamId) {
+    if (!steam::Ready()) return;
+    EnsureSteamThread();
+    Log("net: connecting to Steam account %llu", static_cast<unsigned long long>(hostSteamId));
+    RegisterSteam(hostSteamId, kHostPeer);
+    if (g_onConnect != nullptr) g_onConnect(kHostPeer);  // its first packet opens the P2P session
 }
 
 void StartJoin(const std::string& host, uint16_t port) {
@@ -240,9 +385,17 @@ void StartJoin(const std::string& host, uint16_t port) {
 void Stop() {
     ++g_joinGeneration;
     ++g_hostGeneration;
+    ++g_steamGeneration;
+    g_steamHosting = false;
+    const std::vector<uint8_t> close = Frame(kNetClose, nullptr, 0);
     std::lock_guard<std::mutex> guard(g_lock);
     for (const auto& connection : g_connections) {
         connection->dropped = true;
+        if (connection->steamId != 0) {
+            SendFrame(*connection, close);  // Steam says nothing when a link ends: we do
+            steam::CloseP2P(connection->steamId);
+            continue;
+        }
         shutdown(connection->socket, SD_BOTH);  // its receive loop then closes it
     }
     g_connections.clear();

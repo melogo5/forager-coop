@@ -357,6 +357,18 @@ void Draw(yyc::CInstance* self) {
     gui::End();
 }
 
+// Accepted a Steam invite: join that host through Steam. The name is the one typed in the COOP screen last (or
+// the computer's), as for any join.
+void StartJoinSteam(uint64_t host) {
+    if (session::CurrentRole() != session::Role::kNone) {
+        Log("menu: a Steam invite, but already in a session");
+        return;
+    }
+    character::SetGuestName(g_nameText.empty() ? character::SavedGuestName() : g_nameText);
+    session::JoinSteam(host);
+    g_status = "Joining your friend through Steam...";
+}
+
 void StartJoin(const std::string& address, uint16_t port) {
     if (session::CurrentRole() != session::Role::kNone) {
         g_status = "Already in a session - restart the game to join another one";
@@ -517,7 +529,9 @@ void DumpSprites(yyc::CInstance* control) {
 
 void Step(yyc::CInstance* control) {
     gui::Begin(control);
-    steam::Tick(control);
+    steam::Init(GetCommandLineA());
+    steam::DebugTick();
+    if (const uint64_t host = steam::TakeJoinRequest()) StartJoinSteam(host);
     if (session::CurrentRole() == session::Role::kHost) lan::SetAnnouncement(false, "", 1, 2);  // back in the menu
     RemoveFanArt();
     EnsureCoopButton(control);

@@ -19,6 +19,8 @@ enum class Role { kNone, kHost, kGuest };
 void Host();
 // Guest: connect to a host; its world arrives in world::kGuestSlot.
 void Join(const std::string& address, uint16_t port);
+// Guest: the same through Steam, to the host's Steam account (after accepting its invite).
+void JoinSteam(uint64_t hostSteamId);
 // Back in the main menu after playing: ends the session (the host tells the guest first) and forgets it,
 // so Host/Join work again.
 void Leave();
