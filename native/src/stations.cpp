@@ -255,27 +255,43 @@ void DebugOpen(yyc::CInstance* localPlayer) {
 }
 
 // Testing aid: COOP_DEBUG_CRAFT=<item> starts a craft of 3 of that item at the nearest station ~12 s in (as
-// the crafting menu leaves it: crafting = [item, count]), then logs both sides' progress every 2 s.
+// the crafting menu leaves it: crafting = [item, count]), then logs both sides' progress every 2 s;
+// COOP_DEBUG_CRAFT_COUNT=<n> crafts n instead (a craft that is still running when a guest joins);
+// COOP_DEBUG_STATION_OBJECT=<object> picks the nearest station of that kind (a vault is a structure too).
 void DebugCraft(yyc::CInstance* localPlayer) {
     static const int item = [] {
         char value[16] = {};
         return GetEnvironmentVariableA("COOP_DEBUG_CRAFT", value, sizeof(value)) > 0 ? atoi(value) : -1;
     }();
     static const bool watch = GetEnvironmentVariableA("COOP_DEBUG_CRAFTWATCH", nullptr, 0) > 0;
-    if (item >= 0 && g_steps == 720) {
+    static const int amount = [] {
+        char value[16] = {};
+        return GetEnvironmentVariableA("COOP_DEBUG_CRAFT_COUNT", value, sizeof(value)) > 0 ? atoi(value) : 3;
+    }();
+    static const int object = [] {
+        char value[16] = {};
+        return GetEnvironmentVariableA("COOP_DEBUG_STATION_OBJECT", value, sizeof(value)) > 0 ? atoi(value)
+                                                                                              : kParStructure;
+    }();
+    static unsigned steps = 0;  // its own count: it also runs before anyone has joined (see DebugTick)
+    ++steps;
+    if (item >= 0 && steps == 720) {
         const double x = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_x);
         const double y = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_y);
-        const int id = static_cast<int>(CallReal(localPlayer, "instance_nearest", {x, y, kParStructure}));
-        if (yyc::FindInstance(id) == nullptr) return;
-        yyc::RValue what = yyc::Real(item), count = yyc::Real(3);
+        const int id = static_cast<int>(CallReal(localPlayer, "instance_nearest", {x, y, double(object)}));
+        if (yyc::FindInstance(id) == nullptr) {
+            Log("stations: debug craft: no station near (%.0f, %.0f)", x, y);
+            return;
+        }
+        yyc::RValue what = yyc::Real(item), count = yyc::Real(amount);
         yyc::SetVarAt(id, kSlotCrafting, 0, &what);
         yyc::SetVarAt(id, kSlotCrafting, 1, &count);
         Log("stations: debug started crafting item %d at %d", item, id);
     }
-    if ((item < 0 && !watch) || g_steps % 120 != 0) return;
+    if ((item < 0 && !watch) || steps % 120 != 0) return;
     const double x = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_x);
     const double y = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_y);
-    const int id = static_cast<int>(CallReal(localPlayer, "instance_nearest", {x, y, kParStructure}));
+    const int id = static_cast<int>(CallReal(localPlayer, "instance_nearest", {x, y, double(object)}));
     if (yyc::FindInstance(id) == nullptr) return;
     yyc::RValue crafting{};
     yyc::GetVar(id, kSlotCrafting, &crafting);
@@ -325,7 +341,6 @@ void Tick(yyc::CInstance* localPlayer, bool guest) {
     g_localPlayer = localPlayer;
     ++g_steps;
     DebugOpen(localPlayer);
-    DebugCraft(localPlayer);
     const int menu = OpenMenuStation(localPlayer);
     if (yyc::CInstance* station = menu == kNoOne ? nullptr : yyc::FindInstance(menu)) {
         if (Crafting(menu)) g_own.insert(KeyOf(station));
@@ -367,6 +382,8 @@ void Tick(yyc::CInstance* localPlayer, bool guest) {
     }
     g_mine.swap(now);
 }
+
+void DebugTick(yyc::CInstance* localPlayer) { DebugCraft(localPlayer); }
 
 bool IsOwnCraft(yyc::CInstance* station) {
     if (station == nullptr) return false;

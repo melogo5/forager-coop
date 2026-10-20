@@ -488,6 +488,7 @@ void Tick(yyc::CInstance* localPlayer) {
     if (!g_playedWorld) Log("session: in the world");  // test scripts wait for it (the world has loaded)
     g_playedWorld = true;
     puppet::HoldLocalPlayer(skilltab::IsOpen());  // the player stands while the skill tree is open
+    stations::DebugTick(localPlayer);
     const std::vector<net::PeerId> peers = net::Peers();
     const bool connected = !peers.empty();
     if (g_role == Role::kHost && g_steps % kAnnounceEverySteps == 0) Announce(peers.size());

@@ -14,6 +14,9 @@ bool InstallHooks();
 // Game thread, every local player step while connected (both sides).
 void Tick(yyc::CInstance* localPlayer, bool guest);
 
+// Game thread, every local player step in a session, alone too: testing aids (COOP_DEBUG_CRAFT).
+void DebugTick(yyc::CInstance* localPlayer);
+
 // Game thread: applies a station message; false if `message` is not one.
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer);
 

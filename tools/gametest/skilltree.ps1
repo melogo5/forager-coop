@@ -9,7 +9,7 @@ $d = 'Z:\SteamLibrary\steamapps\common\Forager'
 $ctl = 'tools\gametest\gamectl.ps1'
 Stop-Process -Name Forager -Force -ErrorAction SilentlyContinue
 Wait-Process -Name Forager -Timeout 30 -ErrorAction SilentlyContinue
-Copy-Item 'native\build\version.dll' "$d\version.dll" -Force
+& 'tools\gametest\install.ps1'
 $treeEnv = @{COOP_DEBUG_SKILLTREE = '45'} + $ExtraEnv
 $hostEnv = @{COOP_DEBUG_XP = '400'} + $(if ($OnGuest) { @{} } else { $treeEnv })
 $guestEnv = $(if ($OnGuest) { $treeEnv } else { @{} })

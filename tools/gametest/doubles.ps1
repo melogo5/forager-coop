@@ -1,8 +1,8 @@
 # PLAYTEST3 #1-#3: the host leaves its world (museum) and comes back - the world reloads there; the guest must not
 # get it again as new objects (a second furnace on top of the first). The guest is asked (query port) how many
 # furnaces, fish traps and vaults stand on each of the host's spots, before and after.
-# Usage: doubles.ps1 [-HostSlotRow 1]   (a world with structures near the start: e.g. a copy of a played world)
-param([int]$HostSlotRow = 1)
+# Usage: doubles.ps1 [-HostSlot 4]   (a world with structures near the start: e.g. a copy of a played world)
+param([int]$HostSlot = 4)  # the save slot: a world with structures by the start (saveData<n>)
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path (Split-Path $PSScriptRoot))
 $d = 'Z:\SteamLibrary\steamapps\common\Forager'
@@ -10,8 +10,8 @@ $ctl = Join-Path $PSScriptRoot 'gamectl.ps1'
 $query = Join-Path $PSScriptRoot 'query.ps1'
 Stop-Process -Name Forager -Force -ErrorAction SilentlyContinue
 Wait-Process -Name Forager -Timeout 30 -ErrorAction SilentlyContinue
-Copy-Item 'native\build\version.dll' "$d\version.dll" -Force
-$r = & (Join-Path $PSScriptRoot 'coopflow.ps1') -HostSlotRow $HostSlotRow -GodMode `
+& (Join-Path $PSScriptRoot 'install.ps1')
+$r = & (Join-Path $PSScriptRoot 'coopflow.ps1') -HostSlot $HostSlot -GodMode `
   -HostEnv @{COOP_DEBUG_PORT = '1'; COOP_DEBUG_ROOM = '24'; COOP_DEBUG_ROOM_AT = '90'} -GuestEnv @{COOP_DEBUG_PORT = '1'}
 $h = [int]($r -replace '.*HOST=(\d+).*', '$1'); $g = [int]($r -replace '.*GUEST=(\d+).*', '$1')
 function Ask([int]$id, [string]$command) { ((& $query -GamePid $id $command) -replace '^.*? => ', '') }

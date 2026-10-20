@@ -400,11 +400,27 @@ void ConnectByIp() {
 }
 
 // CREATE: host whatever the player picks on the game's own save screen (an existing save or a new world).
+// Testing aid: COOP_DEBUG_HOST_SLOT=<n> hosts save slot n (saveData<n>) straight away, without the save screen
+// (its rows move with every world played, so a test cannot count on a row).
+int DebugHostSlot() {
+    char value[16] = {};
+    return GetEnvironmentVariableA("COOP_DEBUG_HOST_SLOT", value, sizeof(value)) > 0 ? atoi(value) : -1;
+}
+
 void CreateServer(yyc::CInstance* control) {
     yyc::CInstance* play = FindMenuButton(control, kSprMenuPlay);
     if (play == nullptr) return;
     session::Host();
     g_open = false;
+    yyc::RValue* saveFile = yyc::GlobalVar(yyc::slot::saveFile);
+    if (const int slot = DebugHostSlot(); slot >= 0 && saveFile != nullptr) {
+        yyc::Free(saveFile);
+        *saveFile = yyc::Real(slot);
+        gui::Begin(control);
+        gui::Call("room_goto", {kRoomGame});
+        Log("menu: debug: hosting save slot %d", slot);
+        return;
+    }
     yyc::PerformEvent(play, play, yyc::kEvOther, yyc::kEvUser0);
 }
 

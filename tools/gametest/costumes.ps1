@@ -9,7 +9,7 @@ $saves = Join-Path $env:LOCALAPPDATA 'Forager'
 $guestLook = '0 64 83 94'
 Stop-Process -Name Forager -Force -ErrorAction SilentlyContinue
 Wait-Process -Name Forager -Timeout 30 -ErrorAction SilentlyContinue
-Copy-Item 'native\build\version.dll' "$d\version.dll" -Force
+& (Join-Path $PSScriptRoot 'install.ps1')
 Set-Content -Path (Join-Path $saves 'coop_look_guest.txt') -Value $guestLook -Encoding ascii
 $r = & (Join-Path $PSScriptRoot 'coopflow.ps1') -HostSlotRow 1 -GodMode `
   -HostEnv @{COOP_DEBUG_PORT = '1'; COOP_DEBUG_LOOK_FILE = 'coop_look_host.txt'} `

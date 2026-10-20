@@ -1,8 +1,9 @@
 # Test helper for the native coop: starts a host and a guest through the COOP menu and waits until the
 # guest is in the host's world. Prints HOST=<pid> GUEST=<pid>.
-# Usage: coopflow.ps1 [-HostSlotRow 1 | -NewWorld] [-HostEnv @{COOP_DEBUG_ENEMY='26'}] [-GodMode]
+# Usage: coopflow.ps1 [-HostSlotRow 1 | -HostSlot 4 | -NewWorld] [-HostEnv @{COOP_DEBUG_ENEMY='26'}] [-GodMode]
 param(
   [int]$HostSlotRow = 1,          # row in the save list (1 = top, the most recently played)
+  [int]$HostSlot = -1,            # or: the save slot (saveData<n>), loaded without the save list (COOP_DEBUG_HOST_SLOT)
   [hashtable]$HostEnv = @{},
   [hashtable]$GuestEnv = @{},
   [string]$GuestName = '',        # typed into the COOP screen's NAME field before joining
@@ -50,11 +51,19 @@ function OpenCoop([int]$id) {
   Start-Sleep 1
 }
 
+if ($HostSlot -ge 0) { $HostEnv = $HostEnv + @{COOP_DEBUG_HOST_SLOT = "$HostSlot"} }
 $hostPid = Launch $HostEnv
 OpenCoop $hostPid
-& $ctl -GamePid $hostPid -Click '993,114' -HoldMs 150 | Out-Null   # CREATE: one click only - a second one lands on save row 1's PLAY
+# CREATE: clicked again only while it has not taken (hosting starts with it) - once the save list is open, a
+# second click lands on save row 1's PLAY.
+for ($i = 0; $i -lt 4; $i++) {
+  & $ctl -GamePid $hostPid -Click '993,114' -HoldMs 150 | Out-Null
+  if (WaitLog $hostPid 'session: hosting' 3) { break }
+}
 Start-Sleep 3
-if ($NewWorld) {
+if ($HostSlot -ge 0) {
+  # the DLL loads the slot itself at CREATE
+} elseif ($NewWorld) {
   # The "+" button sits under the saves (100 px per save row); then the Classic mode and its PLAY button.
   $saves = @(Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Forager') -Directory -Filter 'saveData*' |
              Where-Object { $_.Name -ne 'saveData99' }).Count
