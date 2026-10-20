@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <string>
+#include <vector>
 
 #include "MinHook.h"
 #include "log.h"
@@ -17,6 +19,7 @@ namespace {
 
 constexpr uint8_t kLand = 50;      // host -> guest: the host bought an island
 constexpr uint8_t kLandfill = 52;  // either way: LandfillMsg
+constexpr uint8_t kDirt = 53;      // either way: x, y (f64), then CreateDirt's third argument (see SendDirt)
 constexpr uint32_t kScriptSpawnLand = 0x00763750;  // SpawnLand(x, y, biome): x, y of the sale sign
 constexpr int kObjPurchaseLand = 229;              // the sign standing on an island for sale
 constexpr int kNoOne = -4;
@@ -52,6 +55,11 @@ struct LandfillMsg {
     double x, y;
     double remove;  // 1: RemoveLandfill
 };
+// Dug (shovel) and watered (bottled water) ground is dirt: a sprite on a layer and an entry in the dirt list,
+// not an object, so the peer repeats CreateDirt (PLAYTEST3.md #5). Dirt read from the save is not news.
+constexpr uint32_t kScriptCreateDirt = 0x0077C0E0;  // CreateDirt(x, y, kind)
+constexpr const char* kDirtCallers[] = {"gml_Script_UseShovel", "gml_Script_UseBottledWater"};
+yyc::ScriptFn g_origCreateDirt = nullptr;
 yyc::EventFn g_origSignStep = nullptr;
 bool (*g_isHost)() = nullptr;
 bool (*g_isGuest)() = nullptr;
@@ -165,6 +173,72 @@ yyc::RValue* __cdecl RemoveLandfillHook(yyc::CInstance* self, yyc::CInstance* ot
     return ShareLandfill(g_origRemoveLandfill, true, self, other, result, argc, args);
 }
 
+bool DugByPlayer() {
+    const StackFrame* top = *yyc::At<StackFrame**>(yyc::va::StackTraceTop);
+    if (top == nullptr || top->name == nullptr) return false;
+    for (const char* caller : kDirtCallers) {
+        if (strcmp(top->name, caller) == 0) return true;
+    }
+    return false;
+}
+
+// Payload: x, y (f64), u8 kind of the third argument (0 none, 1 number, 2 string), then f64 or the string's bytes.
+void SendDirt(int argc, yyc::RValue** args) {
+    std::vector<uint8_t> out(2 * sizeof(double));
+    const double xy[2] = {yyc::ToReal(*args[0]), yyc::ToReal(*args[1])};
+    memcpy(out.data(), xy, sizeof(xy));
+    if (argc < 3) {
+        out.push_back(0);
+    } else if (yyc::IsNumber(*args[2])) {
+        out.push_back(1);
+        const double v = yyc::ToReal(*args[2]);
+        const auto* bytes = reinterpret_cast<const uint8_t*>(&v);
+        out.insert(out.end(), bytes, bytes + sizeof(v));
+    } else {
+        out.push_back(2);
+        const std::string text = yyc::ToString(*args[2]);
+        out.insert(out.end(), text.begin(), text.end());
+    }
+    net::Send(kDirt, out.data(), out.size());
+}
+
+yyc::RValue* __cdecl CreateDirtHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
+                                    yyc::RValue** args) {
+    const bool share = g_applying == 0 && argc >= 2 && net::IsConnected() && DugByPlayer();
+    yyc::RValue* r = g_origCreateDirt(self, other, result, argc, args);
+    if (share) SendDirt(argc, args);
+    return r;
+}
+
+void ApplyDirt(yyc::CInstance* localPlayer, net::PeerId from, const std::vector<uint8_t>& p) {
+    if (p.size() < 2 * sizeof(double) + 1) return;
+    double xy[2] = {};
+    memcpy(xy, p.data(), sizeof(xy));
+    const uint8_t kind = p[2 * sizeof(double)];
+    const size_t at = 2 * sizeof(double) + 1;
+    yyc::RValue values[3] = {yyc::Real(xy[0]), yyc::Real(xy[1]), {}};
+    int argc = 2;
+    if (kind == 1 && p.size() == at + sizeof(double)) {
+        double v = 0;
+        memcpy(&v, p.data() + at, sizeof(v));
+        values[2] = yyc::Real(v);
+        argc = 3;
+    } else if (kind == 2) {
+        values[2] = yyc::String(std::string(p.begin() + at, p.end()).c_str());
+        argc = 3;
+    }
+    yyc::RValue* args[3] = {&values[0], &values[1], &values[2]};
+    yyc::RValue result{};
+    ++g_applying;
+    puppet::BeginActing(from);
+    g_origCreateDirt(localPlayer, localPlayer, &result, argc, args);
+    puppet::EndActing();
+    --g_applying;
+    yyc::Free(&result);
+    if (argc == 3) yyc::Free(&values[2]);
+    Log("land: the peer's dirt at (%.0f, %.0f) applied", xy[0], xy[1]);
+}
+
 bool IsWater(yyc::CInstance* self, double x, double y) {
     yyc::RValue values[2] = {yyc::Real(x), yyc::Real(y)};
     yyc::RValue* args[2] = {&values[0], &values[1]};
@@ -268,12 +342,18 @@ bool InstallHooks(bool (*isHost)(), bool (*isGuest)()) {
                     MH_CreateHook(yyc::At<void*>(kScriptPlaceLandfill), reinterpret_cast<void*>(&PlaceLandfillHook),
                                   reinterpret_cast<void**>(&g_origPlaceLandfill)) == MH_OK &&
                     MH_CreateHook(yyc::At<void*>(kScriptRemoveLandfill), reinterpret_cast<void*>(&RemoveLandfillHook),
-                                  reinterpret_cast<void**>(&g_origRemoveLandfill)) == MH_OK;
+                                  reinterpret_cast<void**>(&g_origRemoveLandfill)) == MH_OK &&
+                    MH_CreateHook(yyc::At<void*>(kScriptCreateDirt), reinterpret_cast<void*>(&CreateDirtHook),
+                                  reinterpret_cast<void**>(&g_origCreateDirt)) == MH_OK;
     if (!ok) Log("land: hooks failed");
     return ok;
 }
 
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
+    if (message.type == kDirt) {
+        ApplyDirt(localPlayer, message.from, message.payload);
+        return true;
+    }
     if (message.type == kLandfill) {
         if (message.payload.size() == sizeof(LandfillMsg)) {
             LandfillMsg msg{};

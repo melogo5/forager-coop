@@ -291,10 +291,34 @@ bool CreatedByGuestAction() {
            strcmp(top->name, "gml_Object_objNewSeed_Step_0") == 0;
 }
 
+// The world is being loaded: the room entered again (back from the skill tree, a building), a zone read from the
+// save. What that creates is in every player's world already; sent as new, it would be doubled at the guests
+// (PLAYTEST3.md #1-#3).
+bool CreatedByLoading() {
+    for (const StackFrame* frame = *yyc::At<StackFrame**>(yyc::va::StackTraceTop); frame != nullptr;
+         frame = frame->prev) {
+        if (frame->name == nullptr) continue;
+        if (strcmp(frame->name, "gml_Script_LoadZone") == 0 || strncmp(frame->name, "gml_Script_Deserialize", 22) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void __cdecl CreateHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstance* other, int argc,
                         yyc::RValue* args) {
     g_origCreate(result, self, other, argc, args);
     if (g_applyingRemote > 0 || !Connected()) return;
+    if (IsHost() && CreatedByLoading()) {
+        static DWORD lastLog = 0;
+        static unsigned skipped = 0;
+        ++skipped;
+        if (GetTickCount() - lastLog > 5000) {
+            lastLog = GetTickCount();
+            Log("sync: %u objects loaded from the save so far - not sent", skipped);
+        }
+        return;
+    }
     const int id = static_cast<int>(yyc::ToReal(*result));
     yyc::CInstance* created = yyc::FindInstance(id);
     if (created == nullptr) return;
@@ -430,6 +454,7 @@ yyc::RValue* __cdecl DirtProcessHook(yyc::CInstance* self, yyc::CInstance* other
 yyc::RValue* __cdecl HandleCraftingHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                         yyc::RValue** args) {
     if (stations::IsMirror(self)) return result;  // the other player's craft, only shown here
+    if (IsGuest() && Connected() && !stations::IsOwnCraft(self)) return result;  // the host's, from its save
     ++g_crafting;
     yyc::RValue* r = g_origHandleCrafting(self, other, result, argc, args);
     --g_crafting;

@@ -20,6 +20,7 @@ constexpr uint32_t kOpenEvents[] = {
     0x00C53AA0,  // objTreasureChestVoid
 };
 constexpr int kOpenEventCount = sizeof(kOpenEvents) / sizeof(kOpenEvents[0]);
+constexpr int kSlotUsable = 0x8CA;  // decompiled/code/var_slots.tsv: false once the chest has opened
 
 #pragma pack(push, 1)
 struct ChestMsg {
@@ -31,17 +32,29 @@ struct ChestMsg {
 
 yyc::EventFn g_orig[kOpenEventCount] = {};
 
+bool Usable(int id) {
+    yyc::RValue value{};
+    const bool usable = yyc::GetVar(id, kSlotUsable, &value) && yyc::ToReal(value) != 0;
+    yyc::Free(&value);
+    return usable;
+}
+
+// Only a chest that really opens is news: one that needs a key the player lacks stays (PLAYTEST3.md #3).
 template <int N>
 void __cdecl OpenHook(yyc::CInstance* self, yyc::CInstance* other) {
-    if (net::IsConnected() && self != nullptr) {
-        const int id = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
-        const ChestMsg msg{sync::HostIdOf(id), static_cast<int32_t>(yyc::GetBuiltinReal(self, yyc::va::YYVar_object_index)),
-                           static_cast<float>(yyc::GetBuiltinReal(self, yyc::va::YYVar_x)),
-                           static_cast<float>(yyc::GetBuiltinReal(self, yyc::va::YYVar_y))};
-        net::Send(kChestOpened, &msg, sizeof(msg));
-        Log("chests: opened chest %d at (%.0f, %.0f) here", msg.object, msg.x, msg.y);
+    if (!net::IsConnected() || self == nullptr) {
+        g_orig[N](self, other);
+        return;
     }
+    const int id = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
+    const ChestMsg msg{sync::HostIdOf(id), static_cast<int32_t>(yyc::GetBuiltinReal(self, yyc::va::YYVar_object_index)),
+                       static_cast<float>(yyc::GetBuiltinReal(self, yyc::va::YYVar_x)),
+                       static_cast<float>(yyc::GetBuiltinReal(self, yyc::va::YYVar_y))};
+    const bool wasUsable = Usable(id);
     g_orig[N](self, other);
+    if (!wasUsable || (yyc::FindInstance(id) != nullptr && Usable(id))) return;  // still shut
+    net::Send(kChestOpened, &msg, sizeof(msg));
+    Log("chests: opened chest %d at (%.0f, %.0f) here", msg.object, msg.x, msg.y);
 }
 
 constexpr yyc::EventFn kHooks[] = {&OpenHook<0>, &OpenHook<1>, &OpenHook<2>};

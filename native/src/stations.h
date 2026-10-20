@@ -12,13 +12,16 @@ namespace coop::stations {
 bool InstallHooks();
 
 // Game thread, every local player step while connected (both sides).
-void Tick(yyc::CInstance* localPlayer);
+void Tick(yyc::CInstance* localPlayer, bool guest);
 
 // Game thread: applies a station message; false if `message` is not one.
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer);
 
 // The station shows the other player's craft (it must not make anything itself: the crafter gets the output).
 bool IsMirror(yyc::CInstance* station);
+// The craft running at `station` was started on this side (its menu was open when it began). A guest's copy of
+// a craft that came with the host's world is the host's: the guest must not make it.
+bool IsOwnCraft(yyc::CInstance* station);
 
 // The local player says (speech bubble) that the other player is using what it tried to open - at most every
 // few seconds, so clicking again and again does not stack bubbles.

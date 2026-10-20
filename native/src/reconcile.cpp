@@ -111,23 +111,24 @@ void Compare(yyc::CInstance* self, const Area& area, const std::vector<Entry>& h
     ForEachObject(self, area, kSlack, [&locals](yyc::CInstance*, int id, int object, double x, double y) {
         locals.push_back({id, object, x, y});
     });
-    std::set<int> extra, missing;
-    for (const Local& local : locals) {
-        if (!Inside(area, local.x, local.y, 0)) continue;
-        bool known = false;
-        for (const Entry& e : host) known = known || Same(local.object, local.x, local.y, e.object, e.x, e.y);
-        if (!known) extra.insert(local.id);
-    }
+    // Each of the host's objects stands for one here: a second copy on the same spot is extra too (a doubled
+    // furnace or fish trap, PLAYTEST3.md #1-#3). The copy known as its replica is kept, else the first one.
+    std::set<int> claimed, extra, missing;
     for (const Entry& e : host) {
         int match = 0;
         for (const Local& local : locals) {
-            if (match == 0 && Same(local.object, local.x, local.y, e.object, e.x, e.y)) match = local.id;
+            if (claimed.count(local.id) > 0 || !Same(local.object, local.x, local.y, e.object, e.x, e.y)) continue;
+            if (match == 0 || sync::ReplicaOf(e.id) == local.id) match = local.id;
         }
+        if (match != 0) claimed.insert(match);
         if (match != 0) {
             if (sync::ReplicaOf(e.id) == 0 && !sync::IsReplica(match)) sync::AdoptReplica(e.id, match);
         } else if (Inside(area, e.x, e.y, 0)) {
             missing.insert(e.id);
         }
+    }
+    for (const Local& local : locals) {
+        if (claimed.count(local.id) == 0 && Inside(area, local.x, local.y, 0)) extra.insert(local.id);
     }
     size_t removed = 0, added = 0;
     for (const int id : extra) {

@@ -34,6 +34,9 @@ struct Quest {
 };
 
 std::unordered_map<int, Quest> g_seen;  // NPC object index -> what it looked like when last sent/received
+// The peer's news about NPCs that do not exist here at the moment (they come and go with the player nearby):
+// kept until they do, else talking to one gave its old quest again (PLAYTEST3.md #4).
+std::unordered_map<int, Quest> g_pending;
 unsigned g_steps = 0;
 
 double CallReal(yyc::CInstance* self, const char* builtin, std::initializer_list<double> values) {
@@ -105,9 +108,11 @@ void Apply(yyc::CInstance* localPlayer, int object, const Quest& q) {
     const int id = static_cast<int>(CallReal(localPlayer, "instance_find", {double(object), 0}));
     yyc::CInstance* npc = id == kNoOne ? nullptr : yyc::FindInstance(id);
     if (npc == nullptr) {
-        Log("quests: no NPC %d here for the peer's quest", object);
+        if (g_pending.count(object) == 0) Log("quests: no NPC %d here for the peer's quest - kept for later", object);
+        g_pending[object] = q;
         return;
     }
+    g_pending.erase(object);
     const Quest before = Read(id);
     if (!q.quest.empty() && q.quest != before.quest) CallOn(npc, kScriptNPCSetQuest, q.quest);
     if (!q.state.empty() && q.state != Read(id).state) CallOn(npc, kScriptNPCSetState, q.state);
@@ -148,6 +153,9 @@ void Tick(yyc::CInstance* localPlayer) {
     ++g_steps;
     DebugQuest(localPlayer);
     if (g_steps % kEverySteps != 0) return;
+    for (const auto& [object, q] : std::unordered_map<int, Quest>(g_pending)) {
+        if (CallReal(localPlayer, "instance_number", {double(object)}) > 0) Apply(localPlayer, object, q);
+    }
     const int count = static_cast<int>(CallReal(localPlayer, "instance_number", {kParNPC}));
     for (int i = 0; i < count; ++i) {
         const int id = static_cast<int>(CallReal(localPlayer, "instance_find", {kParNPC, double(i)}));
@@ -182,6 +190,9 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     return true;
 }
 
-void Reset() { g_seen.clear(); }
+void Reset() {
+    g_seen.clear();
+    g_pending.clear();
+}
 
 }  // namespace coop::quests

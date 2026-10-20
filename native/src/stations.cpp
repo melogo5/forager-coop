@@ -51,6 +51,7 @@ std::set<Key> g_peer;  // in use by another player
 std::map<Key, net::PeerId> g_peerOwners;  // host: the guest using each of those
 std::map<Key, int> g_crafting;  // stations crafting here (local ids), as of the last scan
 std::map<Key, int> g_mirrors;   // stations showing the peer's craft here (local ids): they make nothing
+std::set<Key> g_own;  // crafts started on this side (menu open when they began); see IsOwnCraft
 unsigned g_steps = 0;
 yyc::CInstance* g_localPlayer = nullptr;
 constexpr uint32_t kScriptDialogue = 0x0072E5A0;  // Dialogue(text): a speech bubble over self
@@ -320,11 +321,15 @@ bool InstallHooks() {
     return ok;
 }
 
-void Tick(yyc::CInstance* localPlayer) {
+void Tick(yyc::CInstance* localPlayer, bool guest) {
     g_localPlayer = localPlayer;
     ++g_steps;
     DebugOpen(localPlayer);
     DebugCraft(localPlayer);
+    const int menu = OpenMenuStation(localPlayer);
+    if (yyc::CInstance* station = menu == kNoOne ? nullptr : yyc::FindInstance(menu)) {
+        if (Crafting(menu)) g_own.insert(KeyOf(station));
+    }
     if (g_steps % kStateEverySteps == 0) {
         for (const auto& [key, id] : g_crafting) {
             if (yyc::FindInstance(id) != nullptr && Crafting(id)) SendState(localPlayer, key, id);
@@ -342,6 +347,15 @@ void Tick(yyc::CInstance* localPlayer) {
         const Key key = KeyOf(station);
         if (g_mirrors.count(key) > 0) continue;  // the peer's craft shown here, not ours
         const bool crafting = Crafting(id);
+        if (!crafting) g_own.erase(key);
+        if (crafting && guest && g_own.count(key) == 0) {
+            // Guest: a craft that came with the host's world (PLAYTEST3.md #5) goes on at the host, which shows it
+            // here; claiming it would make the host stop its own and hand the output to us.
+            g_mirrors[key] = id;
+            Log("stations: the craft at station %d at (%d, %d) came with the host's world - the host's",
+                std::get<0>(key), std::get<1>(key), std::get<2>(key));
+            continue;
+        }
         if (crafting) g_crafting[key] = id;
         if (id == open || crafting) now.insert(key);
     }
@@ -352,6 +366,12 @@ void Tick(yyc::CInstance* localPlayer) {
         if (now.count(key) == 0) Send(key, false);
     }
     g_mine.swap(now);
+}
+
+bool IsOwnCraft(yyc::CInstance* station) {
+    if (station == nullptr) return false;
+    const int id = static_cast<int>(yyc::GetBuiltinReal(station, yyc::va::YYVar_id));
+    return g_own.count(KeyOf(station)) > 0 || id == OpenMenuStation(station);
 }
 
 bool IsMirror(yyc::CInstance* station) {
@@ -463,6 +483,7 @@ void Reset() {
     g_peer.clear();
     g_crafting.clear();
     g_mirrors.clear();
+    g_own.clear();
 }
 
 }  // namespace coop::stations

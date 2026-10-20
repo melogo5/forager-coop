@@ -49,7 +49,7 @@ namespace coop {
 
 namespace {
 
-constexpr uint32_t kProtocolVersion = 7;  // 7: names and health over the players
+constexpr uint32_t kProtocolVersion = 8;  // 8: dug ground is shared
 constexpr unsigned kSendEverySteps = 3;       // 60 fps game step -> 20 updates/s
 constexpr unsigned kAnnounceEverySteps = 30;  // refresh the LAN announcement twice a second
 constexpr int kSlotGodMode = 0x54C;           // global.godMode (decompiled/code/var_slots.tsv)
@@ -218,6 +218,7 @@ uint32_t OurProtocol() {
 constexpr uint8_t kSharedTypes[] = {
     40,  // storage: contents
     52,  // land: landfill
+    53,  // land: dug/watered ground
     70,  // unlocks
     90,  // progress: museum lists
     91,  // quests
@@ -530,7 +531,7 @@ void Tick(yyc::CInstance* localPlayer) {
     if (g_role == Role::kGuest) coins::GuestTick(localPlayer);
     progress::Tick(localPlayer);
     quests::Tick(localPlayer);
-    stations::Tick(localPlayer);
+    stations::Tick(localPlayer, g_role == Role::kGuest);
     fishing::Tick(localPlayer);
     skills::Tick(localPlayer);
     HandleMessages(localPlayer);

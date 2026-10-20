@@ -37,7 +37,10 @@ namespace ev {  // decompiled/code/index.tsv
 constexpr uint32_t ControlDraw = 0x00E39370;
 constexpr uint32_t ControlDrawGui = 0x00E35ED0;
 constexpr uint32_t SkillDraw = 0x00E47650;
+constexpr uint32_t SkillStep = 0x00E39DF0;
+constexpr uint32_t ControlStep = 0x00E310C0;
 }  // namespace ev
+constexpr int kSlotSelected = 0x790, kSlotSkillSelected = 0x7BE;  // objSkill.selected, the control's skillSelected
 
 using GetBuiltinFn = int(__cdecl*)(yyc::CInstance* self, int varId, int arrayIndex, yyc::RValue* out);
 
@@ -53,6 +56,44 @@ yyc::ScriptFn g_origLoadAsync = nullptr;
 yyc::EventFn g_origControlDraw = nullptr;
 yyc::EventFn g_origControlDrawGui = nullptr;
 yyc::EventFn g_origSkillDraw = nullptr;
+yyc::EventFn g_origSkillStep = nullptr;
+yyc::EventFn g_origControlStep = nullptr;
+unsigned g_skillSteps = 0, g_controlSteps = 0;  // while open: how often their steps ran (diagnostics)
+bool g_inSkillStep = false;
+unsigned g_mouseReads = 0, g_positionCalls = 0, g_buttonCalls = 0;  // inside the skills' steps (diagnostics)
+double g_lastPosition[4] = {};  // x, y, object, result of the last instance_position in a skill's step
+yyc::BuiltinFn g_origInstancePosition = nullptr, g_origMouseButton = nullptr, g_origMouseButtonPressed = nullptr;
+
+void __cdecl InstancePositionHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstance* other, int argc,
+                                  yyc::RValue* args) {
+    g_origInstancePosition(result, self, other, argc, args);
+    if (!g_inSkillStep || argc < 3) return;
+    ++g_positionCalls;
+    g_lastPosition[0] = yyc::ToReal(args[0]);
+    g_lastPosition[1] = yyc::ToReal(args[1]);
+    g_lastPosition[2] = yyc::ToReal(args[2]);
+    g_lastPosition[3] = yyc::ToReal(*result);
+}
+
+void __cdecl MouseButtonHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstance* other, int argc,
+                             yyc::RValue* args) {
+    g_origMouseButton(result, self, other, argc, args);
+    if (g_inSkillStep) ++g_buttonCalls;
+}
+
+void __cdecl MouseButtonPressedHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstance* other, int argc,
+                                    yyc::RValue* args) {
+    g_origMouseButtonPressed(result, self, other, argc, args);
+    if (g_inSkillStep) ++g_buttonCalls;
+}
+
+void HookBuiltin(const char* name, void* detour, yyc::BuiltinFn* original) {
+    const yyc::BuiltinFn target = yyc::BuiltinAddress(name);
+    const bool ok = target != nullptr &&
+                    MH_CreateHook(reinterpret_cast<void*>(target), detour, reinterpret_cast<void**>(original)) == MH_OK &&
+                    MH_EnableHook(reinterpret_cast<void*>(target)) == MH_OK;
+    Log("skilltab: diagnostic hook on %s %s", name, ok ? "on" : "FAILED");
+}
 
 int VarId(uint32_t yyvarAddress) { return yyc::At<yyc::YYVar*>(yyvarAddress)->id; }
 
@@ -67,6 +108,7 @@ int __cdecl GetBuiltinHook(yyc::CInstance* self, int varId, int arrayIndex, yyc:
         *out = yyc::Real(varId == g_roomWidth ? kGridWidth : kGridHeight);
         return 1;
     }
+    if (g_open && g_inSkillStep && (varId == g_mouseX || varId == g_mouseY)) ++g_mouseReads;
     if (g_open && (varId == g_mouseX || varId == g_mouseY)) {
         // The mouse in tree pixels: where it is on screen, as the tree is drawn there.
         gui::Begin(self);
@@ -91,6 +133,50 @@ void __cdecl ControlDrawHook(yyc::CInstance* self, yyc::CInstance* other) {
 
 void __cdecl SkillDrawHook(yyc::CInstance* self, yyc::CInstance* other) {
     if (!g_open) g_origSkillDraw(self, other);
+}
+
+void __cdecl SkillStepHook(yyc::CInstance* self, yyc::CInstance* other) {
+    if (g_open) ++g_skillSteps;
+    g_inSkillStep = g_open;
+    g_origSkillStep(self, other);
+    g_inSkillStep = false;
+}
+
+void __cdecl ControlStepHook(yyc::CInstance* self, yyc::CInstance* other) {
+    if (g_open) ++g_controlSteps;
+    g_origControlStep(self, other);
+}
+
+double VarReal(int id, int slot) {
+    yyc::RValue value{};
+    const bool number = yyc::GetVar(id, slot, &value) && yyc::IsNumber(value);
+    const double v = number ? yyc::ToReal(value) : -99;
+    yyc::Free(&value);
+    return v;
+}
+
+// While open, every 2 s: whether the tree's steps run, where the mouse is in tree pixels, what is selected.
+void LogState(yyc::CInstance* self) {
+    static unsigned ticks = 0;
+    if (!g_open || ++ticks % 120 != 0) return;
+    gui::Begin(self);
+    const double mx = gui::Call("device_mouse_x_to_gui", {0}) / GuiScale();
+    const double my = gui::Call("device_mouse_y_to_gui", {0}) / GuiScale();
+    const int under = static_cast<int>(gui::Call("instance_position", {mx, my, kObjSkill}));
+    int selectedSkills = 0;
+    const int count = static_cast<int>(gui::Call("instance_number", {kObjSkill}));
+    for (int i = 0; i < count; ++i) {
+        const int id = static_cast<int>(gui::Call("instance_find", {kObjSkill, double(i)}));
+        if (VarReal(id, kSlotSelected) > 0) ++selectedSkills;
+    }
+    Log("skilltab: %u skill steps, %u control steps; %d skills; mouse (%.0f, %.0f) over %d; selected %d, "
+        "control's skillSelected %g; mouse button %g",
+        g_skillSteps, g_controlSteps, count, mx, my, under, selectedSkills, VarReal(g_control, kSlotSkillSelected),
+        gui::Call("mouse_check_button", {1}));
+    Log("skilltab: in skill steps: %u mouse reads, %u button checks, %u instance_position (last (%.0f, %.0f, %.0f) "
+        "-> %.0f)",
+        g_mouseReads, g_buttonCalls, g_positionCalls, g_lastPosition[0], g_lastPosition[1], g_lastPosition[2],
+        g_lastPosition[3]);
 }
 
 void SetWorldMatrix(yyc::CInstance* self, double scale) {
@@ -162,6 +248,14 @@ std::vector<int> Instances(int object) {
 }
 
 void Open(yyc::CInstance* self) {
+    static bool diagnosticHooks = false;
+    if (!diagnosticHooks) {
+        diagnosticHooks = true;
+        HookBuiltin("instance_position", reinterpret_cast<void*>(&InstancePositionHook), &g_origInstancePosition);
+        HookBuiltin("mouse_check_button", reinterpret_cast<void*>(&MouseButtonHook), &g_origMouseButton);
+        HookBuiltin("mouse_check_button_pressed", reinterpret_cast<void*>(&MouseButtonPressedHook),
+                    &g_origMouseButtonPressed);
+    }
     // The runner numbers its builtin variables at start-up, after this DLL is loaded: looked up now.
     g_mouseX = VarId(kYYVarMouseX);
     g_mouseY = VarId(kYYVarMouseY);
@@ -215,6 +309,8 @@ bool InstallHooks(bool (*inSession)()) {
     ok = Hook(ev::ControlDraw, reinterpret_cast<void*>(&ControlDrawHook), &g_origControlDraw) && ok;
     ok = Hook(ev::ControlDrawGui, reinterpret_cast<void*>(&ControlDrawGuiHook), &g_origControlDrawGui) && ok;
     ok = Hook(ev::SkillDraw, reinterpret_cast<void*>(&SkillDrawHook), &g_origSkillDraw) && ok;
+    ok = Hook(ev::SkillStep, reinterpret_cast<void*>(&SkillStepHook), &g_origSkillStep) && ok;
+    ok = Hook(ev::ControlStep, reinterpret_cast<void*>(&ControlStepHook), &g_origControlStep) && ok;
     return ok;
 }
 
@@ -247,9 +343,10 @@ void DebugTick(yyc::CInstance* localPlayer) {
         return GetEnvironmentVariableA("COOP_DEBUG_SKILLTREE", value, sizeof(value)) > 0 ? atoi(value) * 60u : 0u;
     }();
     static unsigned steps = 0;
+    LogState(localPlayer);
     if (at == 0) return;
     ++steps;
-    if (steps != at && steps != at + 600) return;
+    if (steps != at && steps != at + 1800) return;  // open for 30 s
     yyc::RValue room = yyc::Real(steps == at ? kRoomSkillGrid : kRoomGame), result{};
     yyc::CallBuiltin("room_goto", localPlayer, 1, &room, &result);
     yyc::Free(&result);
