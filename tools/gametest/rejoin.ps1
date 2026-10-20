@@ -17,7 +17,7 @@ Start-Sleep 5
 Click $g '825,60'; Start-Sleep 1          # last tab (settings)
 Click $g '930,505'                         # save and exit to menu
 Start-Sleep 10
-Click $g '675,640'; Start-Sleep 3          # COOP
+Click $g '1060,335'; Start-Sleep 3          # COOP
 for ($i = 0; $i -lt 10; $i++) {
   if ((Select-String "$d\coop_native_$g.log" -Pattern 'session: joining').Count -ge 2) { break }
   & $ctl -GamePid $g -Click '995,205' -HoldMs 150 | Out-Null; Start-Sleep 2   # JOIN

@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cstring>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -10,6 +11,7 @@
 #include "MinHook.h"
 #include "character.h"
 #include "coop_button_png.h"
+#include "coop_ui_png.h"
 #include "gui.h"
 #include "lan.h"
 #include "log.h"
@@ -39,7 +41,13 @@ constexpr int kObjFeaturedFanArt = 254;           // the FEATURED FAN ART pictur
 constexpr double kCoopButtonAboveModding = 78;    // room pixels: the fan art's spot, above MODDING
 constexpr int kSlotText = 0x866;                  // a menu button's `text` (var_slots.tsv)
 constexpr double kCoopSpriteOriginX = 49, kCoopSpriteOriginY = 13;  // as sprMainMenuModding
-constexpr wchar_t kCoopSpriteFile[] = L"coop_button.png";            // written into the save area, then loaded
+// The COOP screen is made of the game's own pieces: its boxes and the main menu's button bodies.
+constexpr int kSprTextBox = 1266;          // frames: 4 dark blue with a white rim, 5 dark blue with a gold rim
+constexpr int kSprTextBoxDisabled = 1268;  // darker: 0 dark slate
+constexpr double kBoxCorner = 8;           // sprite pixels kept whole at the corners of a box
+constexpr double kBodyCap = 6;             // ... and at the ends of a button body
+constexpr int kUiFrames = 4;
+enum UiFrame { kUiGreen = 0, kUiPurple = 1, kUiGrey = 2, kUiPink = 3 };  // native/assets/coop_ui.png
 constexpr size_t kMaxAddressLength = 21;    // "255.255.255.255:65535"
 constexpr double kCoopButtonTextScale = 1;  // room pixels; the menu room is 320x180
 
@@ -56,6 +64,8 @@ constexpr int kButtonShadow = gui::Rgb(48, 26, 72);
 constexpr int kGrey = gui::Rgb(110, 110, 130);
 constexpr int kText = gui::Rgb(255, 255, 255);
 constexpr int kDim = gui::Rgb(180, 180, 200);
+constexpr int kPanelFloor = gui::Rgb(22, 24, 44);
+constexpr int kButtonIdle = gui::Rgb(225, 225, 225);  // a button not under the mouse is a little darker
 }  // namespace color
 
 struct Layout {
@@ -72,6 +82,7 @@ yyc::EventFn g_origButtonUser0 = nullptr;
 
 int g_coopButtonId = 0;
 int g_coopSprite = -1;  // the COOP button's sprite (sprite_add); -1 not loaded yet, -2 could not be loaded
+int g_uiSprite = -1;    // the COOP screen's button bodies; the same
 bool g_open = false;
 bool g_ipFocused = false;
 std::string g_ipText;
@@ -102,32 +113,50 @@ yyc::CInstance* FindMenuButton(yyc::CInstance* self, int sprite) {
     return nullptr;
 }
 
-// The COOP button's own sprite, made like the game's menu buttons (native/assets/coop_button.png, embedded):
-// written next to the saves, where the game's file functions look, and added as a 2-frame sprite.
-bool CoopSpriteReady(yyc::CInstance* self) {
-    if (g_coopSprite != -1) return g_coopSprite >= 0;
-    g_coopSprite = -2;
+// Writes an embedded PNG next to the saves, where the game's file functions look, and adds it as a sprite of
+// `frames` frames side by side. The sprite index, or -1.
+int AddSprite(yyc::CInstance* self, const unsigned char* png, size_t size, const char* file, int frames, double ox,
+              double oy) {
     wchar_t local[MAX_PATH] = {};
     const DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
-    if (length == 0 || length >= MAX_PATH) return false;
+    if (length == 0 || length >= MAX_PATH) return -1;
     {
-        std::ofstream out(std::wstring(local) + L"\\Forager\\" + kCoopSpriteFile, std::ios::binary | std::ios::trunc);
-        out.write(reinterpret_cast<const char*>(kCoopButtonPng), sizeof(kCoopButtonPng));
+        const std::wstring path = std::wstring(local) + L"\\Forager\\" + std::wstring(file, file + strlen(file));
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(png), static_cast<std::streamsize>(size));
         if (!out) {
-            Log("menu: cannot write the COOP button sprite");
-            return false;
+            Log("menu: cannot write %s", file);
+            return -1;
         }
     }
-    yyc::RValue args[6] = {yyc::String("coop_button.png"), yyc::Real(2), yyc::Real(0), yyc::Real(0),
-                           yyc::Real(kCoopSpriteOriginX), yyc::Real(kCoopSpriteOriginY)};
+    yyc::RValue args[6] = {yyc::String(file), yyc::Real(frames), yyc::Real(0), yyc::Real(0), yyc::Real(ox),
+                           yyc::Real(oy)};
     yyc::RValue result{};
     yyc::CallBuiltin("sprite_add", self, 6, args, &result);
     const int sprite = static_cast<int>(yyc::ToReal(result));
     yyc::Free(&result);
     yyc::Free(&args[0]);
-    if (sprite >= 0) g_coopSprite = sprite;
-    Log("menu: COOP button sprite %s (%d)", sprite >= 0 ? "loaded" : "NOT loaded", sprite);
-    return sprite >= 0;
+    Log("menu: sprite %s %s (%d)", file, sprite >= 0 ? "loaded" : "NOT loaded", sprite);
+    return sprite >= 0 ? sprite : -1;
+}
+
+// The COOP button's own sprite, made like the game's menu buttons (native/assets/coop_button.png, embedded).
+bool CoopSpriteReady(yyc::CInstance* self) {
+    if (g_coopSprite == -1) {
+        const int sprite = AddSprite(self, kCoopButtonPng, sizeof(kCoopButtonPng), "coop_button.png", 2,
+                                     kCoopSpriteOriginX, kCoopSpriteOriginY);
+        g_coopSprite = sprite >= 0 ? sprite : -2;
+    }
+    return g_coopSprite >= 0;
+}
+
+// The COOP screen's button bodies (native/assets/coop_ui.png, embedded).
+bool UiSpriteReady(yyc::CInstance* self) {
+    if (g_uiSprite == -1) {
+        const int sprite = AddSprite(self, kCoopUiPng, sizeof(kCoopUiPng), "coop_ui.png", kUiFrames, 0, 0);
+        g_uiSprite = sprite >= 0 ? sprite : -2;
+    }
+    return g_uiSprite >= 0;
 }
 
 // The FEATURED FAN ART picture goes: the COOP button stands in its place.
@@ -179,30 +208,30 @@ Layout ComputeLayout() {
     const double ph = (std::min)(600 * s, h - 40 * s);
     l.panel = {(w - pw) / 2, (h - ph) / 2, (w + pw) / 2, (h + ph) / 2};
     const gui::Rect& p = l.panel;
-    l.create = {p.x2 - 230 * s, p.y1 + 24 * s, p.x2 - 24 * s, p.y1 + 84 * s};
-    l.back = {p.x1 + 24 * s, p.y2 - 84 * s, p.x1 + 200 * s, p.y2 - 24 * s};
-    l.connect = {p.x2 - 230 * s, p.y2 - 84 * s, p.x2 - 24 * s, p.y2 - 24 * s};
+    // Buttons are 52 high: a button body (26 sprite pixels) at 2 screen pixels per sprite pixel, as the boxes.
+    l.create = {p.x2 - 230 * s, p.y1 + 28 * s, p.x2 - 28 * s, p.y1 + 80 * s};
+    l.back = {p.x1 + 28 * s, p.y2 - 80 * s, p.x1 + 204 * s, p.y2 - 28 * s};
+    l.connect = {p.x2 - 230 * s, p.y2 - 80 * s, p.x2 - 28 * s, p.y2 - 28 * s};
     l.ipBox = {l.connect.x1 - 340 * s, l.connect.y1, l.connect.x1 - 16 * s, l.connect.y2};
-    l.nameBox = {l.ipBox.x1, l.ipBox.y1 - 76 * s, l.ipBox.x2, l.ipBox.y1 - 16 * s};
+    l.nameBox = {l.ipBox.x1, l.ipBox.y1 - 68 * s, l.ipBox.x2, l.ipBox.y1 - 16 * s};
     const double rowHeight = 72 * s;
     double y = p.y1 + 110 * s;
     for (size_t i = 0; i < g_servers.size() && y + rowHeight < l.back.y1 - 40 * s; ++i, y += rowHeight + 10 * s) {
-        const gui::Rect row{p.x1 + 24 * s, y, p.x2 - 24 * s, y + rowHeight};
+        const gui::Rect row{p.x1 + 28 * s, y, p.x2 - 28 * s, y + rowHeight};
         l.rows.push_back(row);
         l.joins.push_back({row.x2 - 190 * s, row.y1 + 10 * s, row.x2 - 12 * s, row.y2 - 10 * s});
     }
     return l;
 }
 
-void Button(const gui::Rect& r, const std::string& label, int fill, double mx, double my, double scale) {
+// Without the sprites (they could not be loaded) the screen is drawn in flat colours.
+void FlatButton(const gui::Rect& r, const std::string& label, int fill, double mx, double my, double scale) {
     gui::Fill(r, fill, r.Contains(mx, my) ? 1.0 : 0.85);
     gui::Frame(r, color::kBorder);
     gui::Text((r.x1 + r.x2) / 2, (r.y1 + r.y2) / 2, label, scale, color::kText, gui::kAlignCenter);
 }
 
-void Draw(yyc::CInstance* self) {
-    gui::Begin(self);
-    const Layout l = ComputeLayout();
+void DrawFlat(const Layout& l) {
     const double s = l.scale;
     const double mx = gui::MouseX();
     const double my = gui::MouseY();
@@ -212,7 +241,7 @@ void Draw(yyc::CInstance* self) {
     gui::Fill(l.panel, color::kPanel);
     gui::Frame(l.panel, color::kBorder);
     gui::Text(l.panel.x1 + 32 * s, l.panel.y1 + 54 * s, "COOP", 3 * s, color::kBorder);
-    Button(l.create, "CREATE", color::kGreen, mx, my, textScale);
+    FlatButton(l.create, "CREATE", color::kGreen, mx, my, textScale);
 
     if (g_servers.empty()) {
         gui::Text((l.panel.x1 + l.panel.x2) / 2, (l.panel.y1 + l.back.y1) / 2,
@@ -227,17 +256,17 @@ void Draw(yyc::CInstance* self) {
         gui::Text(row.x1 + 20 * s, cy + 16 * s, server.worldName + "   " + server.address, 1.5 * s, color::kDim);
         gui::Text(l.joins[i].x1 - 30 * s, cy, std::to_string(server.players) + "/" + std::to_string(server.capacity), textScale, color::kText,
                   gui::kAlignRight);
-        Button(l.joins[i], "JOIN", server.players < server.capacity ? color::kGreen : color::kGrey, mx, my, textScale);
+        FlatButton(l.joins[i], "JOIN", server.players < server.capacity ? color::kGreen : color::kGrey, mx, my, textScale);
     }
 
-    Button(l.back, "BACK", color::kPurple, mx, my, textScale);
+    FlatButton(l.back, "BACK", color::kPurple, mx, my, textScale);
     gui::Text(l.ipBox.x1 - 16 * s, (l.ipBox.y1 + l.ipBox.y2) / 2, "IP:", textScale, color::kDim, gui::kAlignRight);
     gui::Fill(l.ipBox, g_ipFocused ? color::kRowHover : color::kRow);
     gui::Frame(l.ipBox, g_ipFocused ? color::kText : color::kBorder);
     const bool caret = g_ipFocused && (GetTickCount() / 500) % 2 == 0;
     gui::Text(l.ipBox.x1 + 14 * s, (l.ipBox.y1 + l.ipBox.y2) / 2, g_ipText + (caret ? "_" : ""), textScale,
               color::kText);
-    Button(l.connect, "CONNECT", color::kGreen, mx, my, textScale);
+    FlatButton(l.connect, "CONNECT", color::kGreen, mx, my, textScale);
     gui::Text(l.nameBox.x1 - 16 * s, (l.nameBox.y1 + l.nameBox.y2) / 2, "NAME:", textScale, color::kDim,
               gui::kAlignRight);
     gui::Fill(l.nameBox, g_nameFocused ? color::kRowHover : color::kRow);
@@ -248,6 +277,81 @@ void Draw(yyc::CInstance* self) {
     if (!g_status.empty()) {
         gui::Text((l.panel.x1 + l.panel.x2) / 2, l.nameBox.y1 - 26 * s, g_status, 1.5 * s, color::kBorder,
                   gui::kAlignCenter);
+    }
+}
+
+void SpriteButton(const gui::Rect& r, const std::string& label, int frame, double mx, double my, double textScale) {
+    gui::Bar3(g_uiSprite, frame, r, kBodyCap, r.Contains(mx, my) ? gui::kWhite : color::kButtonIdle);
+    // The body's face is its upper part (a darker rim below): the word sits a little above the middle.
+    gui::Text((r.x1 + r.x2) / 2, r.y1 + (r.y2 - r.y1) * 0.42, label, textScale, color::kText, gui::kAlignCenter);
+}
+
+// A text field: the game's dark box, with a white rim while typing into it. (The game font has its own outline.)
+void Field(const gui::Rect& r, const std::string& label, const std::string& text, bool focused, double k,
+           double textScale) {
+    const double s = k / 2;
+    gui::Text(r.x1 - 16 * s, (r.y1 + r.y2) / 2, label, textScale, color::kDim,
+                      gui::kAlignRight);
+    gui::Box9(kSprTextBox, focused ? 4 : 5, r, kBoxCorner, k);
+    const bool caret = focused && (GetTickCount() / 500) % 2 == 0;
+    gui::Text(r.x1 + 18 * s, (r.y1 + r.y2) / 2, text + (caret ? "_" : ""), textScale, color::kText);
+}
+
+// The game's look: its boxes, the main menu's button bodies, the COOP button as the title.
+void DrawSprites(const Layout& l) {
+    const double s = l.scale;
+    const double k = 2 * s;  // screen pixels per sprite pixel
+    const double mx = gui::MouseX();
+    const double my = gui::MouseY();
+    const double textScale = 1.5 * s;
+
+    gui::Fill({0, 0, gui::GuiWidth(), gui::GuiHeight()}, color::kShade, 0.6);
+    // The box's middle is see-through (the game lays it over things to darken them): a solid floor under it.
+    gui::Fill({l.panel.x1 + 2 * k, l.panel.y1 + 2 * k, l.panel.x2 - 2 * k, l.panel.y2 - 2 * k}, color::kPanelFloor);
+    gui::Box9(kSprTextBox, 5, l.panel, kBoxCorner, k);
+    // Title: the COOP button itself (its origin is its centre).
+    gui::Call("draw_sprite_ext", {double(g_coopSprite), 0, l.panel.x1 + 40 * s + kCoopSpriteOriginX * k,
+                                  l.create.y1 + kCoopSpriteOriginY * k, k, k, 0, gui::kWhite, 1});
+    SpriteButton(l.create, "CREATE", kUiGreen, mx, my, textScale);
+
+    if (g_servers.empty()) {
+        gui::Text((l.panel.x1 + l.panel.x2) / 2, (l.panel.y1 + l.back.y1) / 2,
+                          "Looking for servers in your network...", textScale, color::kDim,
+                          gui::kAlignCenter);
+    }
+    for (size_t i = 0; i < l.rows.size(); ++i) {
+        const gui::Rect& row = l.rows[i];
+        const lan::Server& server = g_servers[i];
+        const bool hover = row.Contains(mx, my);
+        gui::Box9(hover ? kSprTextBox : kSprTextBoxDisabled, hover ? 4 : 0, row, kBoxCorner, k);
+        const double cy = (row.y1 + row.y2) / 2;
+        gui::Text(row.x1 + 24 * s, cy - 14 * s, server.hostName, textScale, color::kText);
+        gui::Text(row.x1 + 24 * s, cy + 16 * s, server.worldName + "   " + server.address, 1.5 * s,
+                          color::kDim);
+        const bool room = server.players < server.capacity;
+        gui::Text(l.joins[i].x1 - 30 * s, cy,
+                          std::to_string(server.players) + "/" + std::to_string(server.capacity), textScale,
+                          room ? color::kText : color::kDim, gui::kAlignRight);
+        SpriteButton(l.joins[i], room ? "JOIN" : "FULL", room ? kUiGreen : kUiGrey, mx, my, textScale);
+    }
+
+    SpriteButton(l.back, "BACK", kUiPurple, mx, my, textScale);
+    Field(l.nameBox, "NAME:", g_nameText, g_nameFocused, k, textScale);
+    Field(l.ipBox, "IP:", g_ipText, g_ipFocused, k, textScale);
+    SpriteButton(l.connect, "CONNECT", kUiGreen, mx, my, textScale);
+    if (!g_status.empty()) {
+        gui::Text((l.panel.x1 + l.panel.x2) / 2, l.nameBox.y1 - 26 * s, g_status, 1.5 * s,
+                          color::kBorder, gui::kAlignCenter);
+    }
+}
+
+void Draw(yyc::CInstance* self) {
+    gui::Begin(self);
+    const Layout l = ComputeLayout();
+    if (CoopSpriteReady(self) && UiSpriteReady(self)) {
+        DrawSprites(l);
+    } else {
+        DrawFlat(l);
     }
     gui::End();
 }
@@ -382,6 +486,9 @@ void DumpSprites(yyc::CInstance* control) {
         {"sprPlayerIdle", 0},          {"sprMainMenuExit", 1325},    {"sprMainMenuExtras", 1326},
         {"sprMainMenuModding", 1327},  {"sprMainMenuOptions", 1328}, {"sprMainMenuPlay", 1329},
         {"sprMainMenuRoadmap", 1330},  {"sprMainMenuCommunity", 1331}, {"sprMainMenuCredits", 1333},
+        {"sprTextBox", 1266},          {"sprTextBoxDisabled", 1268}, {"sprSaveSlot", 1285},
+        {"sprSaveSlotOverlay", 1286},  {"sprMainMenuButton", 1287},  {"sprMainMenuIcons", 1292},
+        {"sprMenuTabWindow", 1222},    {"sprInventorySlot", 1243},   {"sprCheckbox", 1283},
     };
     for (const auto& [name, index] : sprites) {
         const double sprite = index;

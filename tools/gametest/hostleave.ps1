@@ -19,11 +19,11 @@ Click $h '930,505'
 Start-Sleep 12
 & $ctl -GamePid $g -Shot hostleave_guest | Out-Null
 # Again: the host creates, the guest joins.
-Click $h '675,640'; Start-Sleep 2
+Click $h '1060,335'; Start-Sleep 2
 & $ctl -GamePid $h -Click '993,114' -HoldMs 150 | Out-Null; Start-Sleep 3     # CREATE
 Click $h '1000,138'                                                           # top save slot
 Start-Sleep 15
-Click $g '675,640'; Start-Sleep 3
+Click $g '1060,335'; Start-Sleep 3
 for ($i = 0; $i -lt 15; $i++) {
   if ((Select-String "$d\coop_native_$g.log" -Pattern 'session: joining').Count -ge 2) { break }
   & $ctl -GamePid $g -Click '995,205' -HoldMs 150 | Out-Null; Start-Sleep 2

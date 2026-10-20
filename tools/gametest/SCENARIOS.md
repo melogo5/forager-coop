@@ -20,7 +20,7 @@ $ctl = 'Z:\repos\forager-coop\tools\gametest\gamectl.ps1'
 & 'Z:\repos\forager-coop\tools\gametest\coopflow.ps1' -GodMode -GuestName 'Builder' [-HostSlotRow 1] `
     [-HostEnv @{...}] [-GuestEnv @{...}]
 ```
-Печатает `HOST=<pid> GUEST=<pid>`. Внутри: главное меню → COOP (675,640) → у хоста CREATE (993,114) →
+Печатает `HOST=<pid> GUEST=<pid>`. Внутри: главное меню → COOP (1060,335) → у хоста CREATE (993,114) →
 строка сейва (1000, 38+100·row); у гостя NAME (700,530) → Back×20 → имя → Enter → JOIN первого сервера
 (995,205). Готово, когда в логе гостя `puppet: objPlayer`.
 
@@ -69,7 +69,7 @@ $ctl = 'Z:\repos\forager-coop\tools\gametest\gamectl.ps1'
 ## 6. Выход гостя в меню и повторный вход (проверено 2026-10-19)
 
 1. У гостя `Esc` → последняя вкладка (825,60) → **SAVE AND EXIT TO MENU** (930,505).
-2. Через ~10 с главное меню: COOP (675,640) → JOIN (995,205).
+2. Через ~10 с главное меню: COOP (1060,335) → JOIN (995,205).
 
 Ожидание: гость `session: left the host's world; can join again`, затем снова `session: joining`,
 `character: own character restored`, `puppet: objPlayer`; хост `session: peer gone`, затем

@@ -41,7 +41,7 @@ function Launch([hashtable]$envVars) {
 function OpenCoop([int]$id) {
   if (-not (WaitLog $id 'menu: COOP button' 60)) { throw "game ${id}: no COOP button" }
   Start-Sleep 2
-  Click $id '675,640'; Start-Sleep 2
+  Click $id '1060,335'; Start-Sleep 2
 }
 
 $hostPid = Launch $HostEnv

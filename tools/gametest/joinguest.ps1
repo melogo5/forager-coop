@@ -24,8 +24,8 @@ foreach ($k in $GuestEnv.Keys) { Remove-Item "Env:$k" -ErrorAction SilentlyConti
 if (-not (WaitLog $id 'menu: COOP button' 60)) { throw "guest ${id}: no COOP button" }
 Start-Sleep 4   # the button is listed before the menu takes clicks
 for ($i = 0; $i -lt 5 -and -not (WaitLog $id 'menu: COOP screen opened' 1); $i++) {
-  & $ctl -GamePid $id -Click '675,640' -HoldMs 400 | Out-Null; Start-Sleep -Milliseconds 400
-  & $ctl -GamePid $id -Click '675,640' -HoldMs 150 | Out-Null; Start-Sleep 2
+  & $ctl -GamePid $id -Click '1060,335' -HoldMs 400 | Out-Null; Start-Sleep -Milliseconds 400
+  & $ctl -GamePid $id -Click '1060,335' -HoldMs 150 | Out-Null; Start-Sleep 2
 }
 & $ctl -GamePid $id -Click '700,530' -HoldMs 100 | Out-Null; Start-Sleep -Milliseconds 300   # NAME field
 for ($i = 0; $i -lt 20; $i++) { & $ctl -GamePid $id -Key Back -HoldMs 30 | Out-Null }
