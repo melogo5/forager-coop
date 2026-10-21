@@ -20,6 +20,7 @@
 
 #include "gui.h"
 #include "log.h"
+#include "sync.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -240,6 +241,15 @@ void Start() {
     std::thread(Listen, server).detach();
 }
 
+void Finish(const std::shared_ptr<Request>& request, const std::string& reply) {
+    {
+        std::lock_guard<std::mutex> lock(g_lock);
+        request->reply = reply;
+        request->done = true;
+    }
+    g_answered.notify_all();
+}
+
 void Tick(yyc::CInstance* localPlayer) {
     std::deque<std::shared_ptr<Request>> requests;
     {
@@ -248,12 +258,21 @@ void Tick(yyc::CInstance* localPlayer) {
         requests.swap(g_queue);
     }
     for (const auto& request : requests) {
-        const std::string reply = Answer(localPlayer, request->line);
-        std::lock_guard<std::mutex> lock(g_lock);
-        request->reply = reply;
-        request->done = true;
+        // "woken <object> <command...>": the command runs right before the next cull, with that kind awake (objects
+        // away from the player sleep, and the game culls them again before our step).
+        std::istringstream in(request->line);
+        std::string first, object;
+        in >> first >> object;
+        if (first == "woken" && !object.empty()) {
+            std::string rest;
+            std::getline(in, rest);
+            gui::Begin(localPlayer);
+            gui::Call("instance_activate_object", {double(Slot(object))});
+            sync::RunBeforeCull([localPlayer, request, rest] { Finish(request, Answer(localPlayer, rest)); });
+            continue;
+        }
+        Finish(request, Answer(localPlayer, request->line));
     }
-    g_answered.notify_all();
 }
 
 }  // namespace coop::debugport

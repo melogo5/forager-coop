@@ -115,7 +115,10 @@ void Apply(yyc::CInstance* localPlayer, int object, const Quest& q) {
     g_pending.erase(object);
     const Quest before = Read(id);
     if (!q.quest.empty() && q.quest != before.quest) CallOn(npc, kScriptNPCSetQuest, q.quest);
-    if (!q.state.empty() && q.state != Read(id).state) CallOn(npc, kScriptNPCSetState, q.state);
+    // A state belongs to a quest: without one here NPCSetState only says "Quest not found in NPC! / State not
+    // found in Quest!" on screen (PLAYTEST3.md #4: the peer's quest was not a name, its state was).
+    const Quest now = Read(id);
+    if (!q.state.empty() && q.state != now.state && !now.quest.empty()) CallOn(npc, kScriptNPCSetState, q.state);
     yyc::RValue spoken = yyc::Real(q.spoken);
     yyc::SetVar(id, kSlotHasSpoken, &spoken);
     g_seen[object] = Read(id);
@@ -133,18 +136,25 @@ void DebugQuest(yyc::CInstance* localPlayer) {
         return seconds > 1 ? static_cast<unsigned>(seconds) * 60 : 480u;
     }();
     if (atStep == 0 || g_steps != atStep) return;
-    const int id = static_cast<int>(CallReal(localPlayer, "instance_find", {kParNPC, 0}));
-    yyc::CInstance* npc = id == kNoOne ? nullptr : yyc::FindInstance(id);
-    if (npc == nullptr) {
-        Log("quests: debug: no NPC here");
-        return;
-    }
-    const Quest q = Read(id);
-    if (!q.state.empty()) CallOn(npc, kScriptNPCSetState, q.state);
-    yyc::RValue spoken = yyc::Real(q.spoken != 0 ? 0 : 1);
-    yyc::SetVar(id, kSlotHasSpoken, &spoken);
-    Log("quests: debug touched NPC %d ('%s' / '%s')",
-        static_cast<int>(yyc::GetBuiltinReal(npc, yyc::va::YYVar_object_index)), q.quest.c_str(), q.state.c_str());
+    // NPCs away from the player sleep: woken first. The scan in Tick only sees awake ones (a player talks to an NPC
+    // on screen), so the touched NPC is sent from here.
+    sync::WakeThen(localPlayer, kParNPC, [localPlayer] {
+        const int id = static_cast<int>(CallReal(localPlayer, "instance_find", {kParNPC, 0}));
+        yyc::CInstance* npc = id == kNoOne ? nullptr : yyc::FindInstance(id);
+        if (npc == nullptr) {
+            Log("quests: debug: no NPC here");
+            return;
+        }
+        const Quest q = Read(id);
+        if (!q.state.empty()) CallOn(npc, kScriptNPCSetState, q.state);
+        yyc::RValue spoken = yyc::Real(q.spoken != 0 ? 0 : 1);
+        yyc::SetVar(id, kSlotHasSpoken, &spoken);
+        const int object = static_cast<int>(yyc::GetBuiltinReal(npc, yyc::va::YYVar_object_index));
+        g_seen[object] = Read(id);
+        Send(object, g_seen[object]);
+        Log("quests: debug touched NPC %d: now \"%s\" / \"%s\" / %g", object, g_seen[object].quest.c_str(),
+            g_seen[object].state.c_str(), g_seen[object].spoken);
+    });
 }
 
 }  // namespace
@@ -153,8 +163,12 @@ void Tick(yyc::CInstance* localPlayer) {
     ++g_steps;
     DebugQuest(localPlayer);
     if (g_steps % kEverySteps != 0) return;
-    for (const auto& [object, q] : std::unordered_map<int, Quest>(g_pending)) {
-        if (CallReal(localPlayer, "instance_number", {double(object)}) > 0) Apply(localPlayer, object, q);
+    if (!g_pending.empty()) {  // asleep far away, or not made yet: woken and tried again once a second
+        sync::WakeThen(localPlayer, kParNPC, [localPlayer] {
+            for (const auto& [object, q] : std::unordered_map<int, Quest>(g_pending)) {
+                if (CallReal(localPlayer, "instance_number", {double(object)}) > 0) Apply(localPlayer, object, q);
+            }
+        });
     }
     const int count = static_cast<int>(CallReal(localPlayer, "instance_number", {kParNPC}));
     for (int i = 0; i < count; ++i) {
