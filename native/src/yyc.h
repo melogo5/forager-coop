@@ -142,6 +142,8 @@ bool CallBuiltin(const char* name, CInstance* self, int argc, RValue* args, RVal
 using BuiltinFn = void(__cdecl*)(RValue* result, CInstance* self, CInstance* other, int argc, RValue* args);
 BuiltinFn BuiltinAddress(const char* name);
 int BuiltinCount();
+// "index:name" of every builtin whose name contains `part` (diagnostics).
+std::string BuiltinsMatching(const char* part);
 
 CInstance* Global();
 // The pointer is only valid until the next GML call (the slot array may be reallocated); fetch it again each use.

@@ -179,6 +179,7 @@ std::string Answer(yyc::CInstance* self, const std::string& line) {
         yyc::PerformEvent(target, self, Slot(w[2]), Slot(w[3]));
         return yyc::FindInstance(Slot(w[1])) != nullptr ? "ok" : "ok (it is gone)";
     }
+    if (c == "builtins" && w.size() == 2) return yyc::BuiltinsMatching(w[1].c_str());
     if (c == "call" && w.size() >= 2) return Call(self, w);
     return "unknown command (ping, player, count, list, at, var, set, event, global, call)";
 }

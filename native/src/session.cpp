@@ -27,6 +27,7 @@
 #include "clock.h"
 #include "coins.h"
 #include "debugport.h"
+#include "interiors.h"
 #include "look.h"
 #include "traps.h"
 #include "land.h"
@@ -451,21 +452,30 @@ void SteamInvites(yyc::CInstance* localPlayer) {
 // Runs after the local player's Step_0, i.e. only while in a world.
 
 // Testing aid: COOP_DEBUG_ROOM=<room> goes into that room ~8 s into the session (e.g. 24, the museum) and back to
-// the world ~10 s later; COOP_DEBUG_ROOM_AT=<seconds> goes that late instead.
+// the world ~10 s later; COOP_DEBUG_ROOM_AT=<seconds> goes that late instead. A list (22,23,24) visits them in
+// turn, one every 20 s.
 void DebugVisitRoom(yyc::CInstance* localPlayer, bool inWorld) {
-    static const int room = [] {
-        char value[16] = {};
-        return GetEnvironmentVariableA("COOP_DEBUG_ROOM", value, sizeof(value)) > 0 ? atoi(value) : 0;
+    static const std::vector<int> rooms = [] {
+        char value[64] = {};
+        std::vector<int> list;
+        if (GetEnvironmentVariableA("COOP_DEBUG_ROOM", value, sizeof(value)) == 0) return list;
+        for (char* part = strtok(value, ","); part != nullptr; part = strtok(nullptr, ",")) list.push_back(atoi(part));
+        return list;
     }();
     static const unsigned at = [] {
         char value[16] = {};
         return GetEnvironmentVariableA("COOP_DEBUG_ROOM_AT", value, sizeof(value)) > 0 ? atoi(value) * 60u : 480u;
     }();
     static unsigned steps = 0;
-    if (room == 0) return;
+    if (rooms.empty()) return;
     ++steps;
-    const bool go = inWorld && steps == at;
-    const bool back = !inWorld && steps >= at + 600 && steps < at + 610;
+    if (steps < at) return;
+    const size_t turn = (steps - at) / 1200;
+    if (turn >= rooms.size()) return;
+    const unsigned into = (steps - at) % 1200;
+    const int room = rooms[turn];
+    const bool go = inWorld && into == 0;
+    const bool back = !inWorld && into >= 600 && into < 610;
     if (!go && !back) return;
     yyc::RValue target = yyc::Real(go ? room : 8);
     yyc::RValue result{};
@@ -476,6 +486,7 @@ void DebugVisitRoom(yyc::CInstance* localPlayer, bool inWorld) {
 
 void Tick(yyc::CInstance* localPlayer) {
     debugport::Tick(localPlayer);
+    interiors::DebugTick(localPlayer);
     constexpr int kRoomWorld = 8;  // rmGame
     look::Tick(localPlayer, g_role == Role::kGuest,
                static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_room)) == kRoomWorld);

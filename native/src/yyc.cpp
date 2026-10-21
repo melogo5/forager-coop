@@ -45,8 +45,10 @@ RFunction* Table() { return *At<RFunction**>(va::BuiltinTable); }
 int ScanBuiltin(const char* name) {
     RFunction* table = Table();
     if (table == nullptr) return -1;
-    for (int i = 0; i < kMaxBuiltins && IsIdentifier(table[i].name); ++i) {
-        if (std::strncmp(table[i].name, name, kNameSize) == 0) return i;
+    // The whole table: names that are not identifiers (internal ones like "@@NewGMLArray@@") sit in the middle of
+    // it, and the layer_*/tilemap_* functions come after them.
+    for (int i = 0; i < kMaxBuiltins; ++i) {
+        if (IsIdentifier(table[i].name) && std::strncmp(table[i].name, name, kNameSize) == 0) return i;
     }
     return -1;
 }
@@ -134,6 +136,18 @@ int BuiltinCount() {
     int count = 0;
     while (count < kMaxBuiltins && IsIdentifier(table[count].name)) ++count;
     return count;
+}
+
+std::string BuiltinsMatching(const char* part) {
+    RFunction* table = Table();
+    std::string out;
+    int odd = 0;
+    for (int i = 0; table != nullptr && i < kMaxBuiltins; ++i) {
+        const std::string name(table[i].name, strnlen(table[i].name, kNameSize));
+        if (!IsIdentifier(table[i].name)) ++odd;
+        if (name.find(part) != std::string::npos) out += std::to_string(i) + ":" + name + " ";
+    }
+    return out + "(" + std::to_string(odd) + " odd names)";
 }
 
 bool CallBuiltin(const char* name, CInstance* self, int argc, RValue* args, RValue* result) {
