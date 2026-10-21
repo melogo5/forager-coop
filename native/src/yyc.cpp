@@ -11,7 +11,9 @@ uintptr_t g_imageDelta = 0;
 
 namespace {
 
-constexpr int kMaxBuiltins = 2502;  // table size in this build (decompiled/RUNTIME.md)
+// The table ends with an empty name (about 2780 entries in this build; entry 2502 has a space in its name, which is
+// where the count in decompiled/RUNTIME.md stopped). kMaxBuiltins only bounds the walk.
+constexpr int kMaxBuiltins = 4096;
 constexpr size_t kNameSize = sizeof(RFunction::name);
 constexpr int kYYVarsOffset = 0x04;
 
@@ -47,7 +49,7 @@ int ScanBuiltin(const char* name) {
     if (table == nullptr) return -1;
     // The whole table: names that are not identifiers (internal ones like "@@NewGMLArray@@") sit in the middle of
     // it, and the layer_*/tilemap_* functions come after them.
-    for (int i = 0; i < kMaxBuiltins; ++i) {
+    for (int i = 0; i < kMaxBuiltins && table[i].name[0] != 0; ++i) {
         if (IsIdentifier(table[i].name) && std::strncmp(table[i].name, name, kNameSize) == 0) return i;
     }
     return -1;
@@ -142,12 +144,18 @@ std::string BuiltinsMatching(const char* part) {
     RFunction* table = Table();
     std::string out;
     int odd = 0;
-    for (int i = 0; table != nullptr && i < kMaxBuiltins; ++i) {
+    for (int i = 0; table != nullptr && i < kMaxBuiltins && table[i].name[0] != 0; ++i) {
         const std::string name(table[i].name, strnlen(table[i].name, kNameSize));
         if (!IsIdentifier(table[i].name)) ++odd;
         if (name.find(part) != std::string::npos) out += std::to_string(i) + ":" + name + " ";
     }
     return out + "(" + std::to_string(odd) + " odd names)";
+}
+
+std::string BuiltinNameAt(int index) {
+    RFunction* table = Table();
+    if (table == nullptr || index < 0) return "?";
+    return std::string(table[index].name, strnlen(table[index].name, kNameSize));
 }
 
 bool CallBuiltin(const char* name, CInstance* self, int argc, RValue* args, RValue* result) {

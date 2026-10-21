@@ -180,6 +180,11 @@ std::string Answer(yyc::CInstance* self, const std::string& line) {
         return yyc::FindInstance(Slot(w[1])) != nullptr ? "ok" : "ok (it is gone)";
     }
     if (c == "builtins" && w.size() == 2) return yyc::BuiltinsMatching(w[1].c_str());
+    if (c == "builtinat" && w.size() == 2) return yyc::BuiltinNameAt(Slot(w[1]));
+    if (c == "yyvar" && w.size() == 2) {  // a game variable `<builtin>.id` (decompiled/code/yyvar_map.tsv)
+        const int id = yyc::At<yyc::YYVar*>(static_cast<uint32_t>(std::strtoul(w[1].c_str(), nullptr, 16)))->id;
+        return std::to_string(id) + " = " + yyc::BuiltinNameAt(id);
+    }
     if (c == "call" && w.size() >= 2) return Call(self, w);
     return "unknown command (ping, player, count, list, at, var, set, event, global, call)";
 }

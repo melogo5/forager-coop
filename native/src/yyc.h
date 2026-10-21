@@ -144,6 +144,8 @@ BuiltinFn BuiltinAddress(const char* name);
 int BuiltinCount();
 // "index:name" of every builtin whose name contains `part` (diagnostics).
 std::string BuiltinsMatching(const char* part);
+// The name at index `index` of the builtin table, read without bounds (diagnostics).
+std::string BuiltinNameAt(int index);
 
 CInstance* Global();
 // The pointer is only valid until the next GML call (the slot array may be reallocated); fetch it again each use.
