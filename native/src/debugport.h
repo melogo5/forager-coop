@@ -15,6 +15,7 @@
 //   global <slot> [index]        -> a global variable
 //   call <builtin> [numbers...]  -> a builtin's result, called as the local player
 //   woken <object> <command>     -> the command, run once that kind is awake (far objects sleep: culled)
+//   script <hex address> [n...]  -> a GML script's result (address from decompiled/code/index.tsv)
 #pragma once
 
 #include "yyc.h"

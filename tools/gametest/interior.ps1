@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 $ctl = Join-Path $PSScriptRoot 'gamectl.ps1'
 & (Join-Path $PSScriptRoot 'install.ps1')
 $r = & (Join-Path $PSScriptRoot 'coopflow.ps1') -HostSlot $HostSlot -GodMode `
-  -HostEnv @{COOP_DEBUG_PORT = '1'; COOP_INWORLD_INTERIORS = '1'; COOP_DEBUG_ROOM = $(if ($RealEntry) { '' } else { "$Room" }); COOP_DEBUG_ROOM_AT = '45'} `
+  -HostEnv @{COOP_DEBUG_PORT = '1'; COOP_DEBUG_ROOM = $(if ($RealEntry) { '' } else { "$Room" }); COOP_DEBUG_ROOM_AT = '45'} `
   -GuestEnv @{COOP_DEBUG_PORT = '1'}
 $h = [int]($r -replace '.*HOST=(\d+).*', '$1'); $g = [int]($r -replace '.*GUEST=(\d+).*', '$1')
 $hostLog = "$GameDir\coop_native_$h.log"; $guestLog = "$GameDir\coop_native_$g.log"

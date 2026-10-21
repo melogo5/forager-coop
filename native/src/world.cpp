@@ -135,20 +135,23 @@ void RemoveGuestSlot() {
 
 // The guest's game saves into slot 99 like any game into its slot: leaving the world (skill tree, other
 // rooms) saves, and coming back reloads the world from that save. Marked so a later start cleans it up.
-yyc::RValue* __cdecl SaveGameHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
-                                  yyc::RValue** args) {
-    // Inside an interior built in the world room: a save would keep the interior and the player past the world's
-    // edge (the game saves on the way in anyway).
-    if (interiors::IsInside()) {
-        Log("world: save skipped - the player is inside an interior");
-        return result;
-    }
+yyc::RValue* Save(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc, yyc::RValue** args) {
     if (g_isGuest != nullptr && g_isGuest()) {
         std::error_code error;
         fs::create_directories(GuestSlotDir(), error);
         std::ofstream(GuestSlotDir() / kMarkerName) << "Forager coop: the guest's working copy. Removed automatically.\n";
     }
     return g_origSaveGame(self, other, result, argc, args);
+}
+
+yyc::RValue* __cdecl SaveGameHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
+                                  yyc::RValue** args) {
+    // Inside an interior built in the world room, the save must not keep it (or the player past the world's edge).
+    if (!interiors::IsInside()) return Save(self, other, result, argc, args);
+    interiors::BeforeSave();
+    yyc::RValue* r = Save(self, other, result, argc, args);
+    interiors::AfterSave();
+    return r;
 }
 
 void BeginReceive() {

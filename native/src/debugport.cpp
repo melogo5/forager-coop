@@ -185,6 +185,18 @@ std::string Answer(yyc::CInstance* self, const std::string& line) {
         const int id = yyc::At<yyc::YYVar*>(static_cast<uint32_t>(std::strtoul(w[1].c_str(), nullptr, 16)))->id;
         return std::to_string(id) + " = " + yyc::BuiltinNameAt(id);
     }
+    if (c == "script" && w.size() >= 2) {  // a GML script by its address (decompiled/code/index.tsv), self = player
+        std::vector<yyc::RValue> values;
+        for (size_t i = 2; i < w.size(); ++i) values.push_back(yyc::Real(Number(w[i])));
+        std::vector<yyc::RValue*> args;
+        for (yyc::RValue& v : values) args.push_back(&v);
+        yyc::RValue result{};
+        const auto script = yyc::At<yyc::ScriptFn>(static_cast<uint32_t>(std::strtoul(w[1].c_str(), nullptr, 16)));
+        script(self, self, &result, static_cast<int>(args.size()), args.empty() ? nullptr : args.data());
+        const std::string text = Format(result);
+        yyc::Free(&result);
+        return text;
+    }
     if (c == "call" && w.size() >= 2) return Call(self, w);
     return "unknown command (ping, player, count, list, at, var, set, event, global, call)";
 }

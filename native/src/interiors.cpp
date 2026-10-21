@@ -17,49 +17,43 @@ namespace {
 
 // ---- interiors built inside the world room ----
 // What a room is made of (decompiled/tools/DumpRooms.csx on data.win), in room coordinates.
+struct Background {
+    int depth;
+    int sprite;  // -1: just the colour
+    int colour;  // GML colour (0xBBGGRR): the fill, or the sprite's blend
+    bool htiled, vtiled;
+};
+struct Picture {
+    int depth;
+    int sprite;
+    double x, y;
+};
+struct Tiles {
+    int depth;
+    int tileset;
+    int cols, rows;  // 16 px cells
+    const uint16_t* cells;  // row by row; 0 = empty
+};
 struct Placed {
     int object;
     double x, y, xscale, yscale;
 };
-struct Picture {
-    int sprite;
-    double x, y;
-};
 struct Plan {
     int room;
     double width, height;
-    int colour;            // the room's background (GML colour, 0xBBGGRR)
     double spawnX, spawnY;  // where the room puts the player
-    std::vector<Picture> pictures;  // its asset layer (depth 100)
+    std::vector<Background> backgrounds;
+    std::vector<Picture> pictures;
+    std::vector<Tiles> tiles;
     std::vector<Placed> instances;
 };
 
-constexpr int kObjParSolid = 271, kObjDoorBackToGame = 276, kObjWardrobe = 166;
-constexpr int kSprTilesDruidTreeBack = 1208, kSprTilesDruidTreeObjects = 1207;
-
-const Plan kDruidTree{23,
-                      400,
-                      400,
-                      0x2B2938,
-                      184,
-                      268,
-                      {{kSprTilesDruidTreeBack, 64, 128}, {kSprTilesDruidTreeObjects, 64, 128}},
-                      {{kObjDoorBackToGame, 184, 280, 2, 1},
-                       {kObjParSolid, 176, 280, 10, 1},
-                       {kObjParSolid, 248, 224, 1, 6},
-                       {kObjParSolid, 104, 240, 1, 4},
-                       {kObjParSolid, 184, 184, 7, 1},
-                       {kObjParSolid, 112, 192, 2, 2},
-                       {kObjParSolid, 128, 220, 2, 1.5},
-                       {kObjParSolid, 122, 240, 1.25, 1},
-                       {kObjParSolid, 230, 206, 1.25, 1.75},
-                       {kObjWardrobe, 168, 196, 1, 1}}};
+#include "interior_plans.inc"
 
 constexpr int kRoomGame = 8;
 // Where an interior is built: past the world room's right edge (rmGame is 1344 wide), so the camera inside shows
 // nothing of the world.
 constexpr double kOriginX = 1700, kOriginY = 300;
-constexpr double kBackgroundDepth = 200, kPictureDepth = 100;
 constexpr int kSlotSpawnPlayerX = 0x7E6, kSlotSpawnPlayerY = 0x7E7;  // globals: where the world puts the player
 // Globals with the camera's bounds, as mobs.cpp reads them (decompiled/code/var_slots.tsv).
 constexpr int kSlotCameraBottom = 0xE0, kSlotCameraLeft = 0xE1, kSlotCameraRight = 0xE2, kSlotCameraTop = 0xE3;
@@ -68,7 +62,7 @@ constexpr uint32_t kScriptWaterCollision = 0x004EF950;  // WaterCollision(x, y)
 bool (*g_inSession)() = nullptr;
 const Plan* g_inside = nullptr;  // the interior the local player is in, or nullptr
 std::vector<int> g_built;        // its instances
-double g_layers[2] = {-1, -1};   // its background and picture layers
+std::vector<double> g_layers;    // its layers (backgrounds, pictures, tiles)
 bool g_building = false;
 int g_playerId = 0;  // the local player (room_goto is called by the transition object, not by the player)
 yyc::ScriptFn g_origWater = nullptr;
@@ -185,7 +179,12 @@ void DumpView() {
         Real("camera_get_view_height", {camera}), Real("room_get_width", {0}), Real("room_get_height", {0}));
 }
 
-const Plan* PlanFor(int room) { return room == kDruidTree.room ? &kDruidTree : nullptr; }
+const Plan* PlanFor(int room) {
+    for (const Plan* plan : kPlans) {
+        if (plan->room == room) return plan;
+    }
+    return nullptr;
+}
 
 double GlobalReal(int slot) {
     const yyc::RValue* value = yyc::GlobalVar(slot);
@@ -193,14 +192,32 @@ double GlobalReal(int slot) {
 }
 
 // The interior `plan` past the world's edge, and the player in it: the world room stays, so the world goes on.
-void Enter(yyc::CInstance* player, const Plan& plan) {
-    g_self = player;
-    g_layers[0] = Real("layer_create", {kBackgroundDepth});
-    const double background = Real("layer_background_create", {g_layers[0], -1});
-    Real("layer_background_blend", {background, double(plan.colour)});
-    g_layers[1] = Real("layer_create", {kPictureDepth});
+// The interior's layers and instances past the world's edge.
+void Build(yyc::CInstance* self, const Plan& plan) {
+    g_self = self;
+    for (const Background& b : plan.backgrounds) {
+        const double layer = Real("layer_create", {double(b.depth)});
+        g_layers.push_back(layer);
+        const double background = Real("layer_background_create", {layer, double(b.sprite)});
+        Real("layer_background_blend", {background, double(b.colour)});
+        Real("layer_background_htiled", {background, b.htiled ? 1.0 : 0.0});
+        Real("layer_background_vtiled", {background, b.vtiled ? 1.0 : 0.0});
+    }
     for (const Picture& picture : plan.pictures) {
-        Real("layer_sprite_create", {g_layers[1], kOriginX + picture.x, kOriginY + picture.y, double(picture.sprite)});
+        const double layer = Real("layer_create", {double(picture.depth)});
+        g_layers.push_back(layer);
+        Real("layer_sprite_create", {layer, kOriginX + picture.x, kOriginY + picture.y, double(picture.sprite)});
+    }
+    for (const Tiles& t : plan.tiles) {
+        const double layer = Real("layer_create", {double(t.depth)});
+        g_layers.push_back(layer);
+        const double map = Real("layer_tilemap_create", {layer, kOriginX, kOriginY, double(t.tileset), double(t.cols), double(t.rows)});
+        for (int y = 0; y < t.rows; ++y) {
+            for (int x = 0; x < t.cols; ++x) {
+                const uint16_t cell = t.cells[y * t.cols + x];
+                if (cell != 0) Real("tilemap_set", {map, double(cell), double(x), double(y)});
+            }
+        }
     }
     g_building = true;
     for (const Placed& p : plan.instances) {
@@ -212,25 +229,35 @@ void Enter(yyc::CInstance* player, const Plan& plan) {
         g_built.push_back(id);
     }
     g_building = false;
+}
+
+// Its instances (without their destroy events: a chest would drop its loot) and layers go.
+void Teardown(yyc::CInstance* self) {
+    g_self = self;
+    for (const int id : g_built) {
+        if (yyc::FindInstance(id) != nullptr) Real("instance_destroy", {double(id), 0});
+    }
+    g_built.clear();
+    for (const double layer : g_layers) Real("layer_destroy", {layer});
+    g_layers.clear();
+}
+
+void Enter(yyc::CInstance* player, const Plan& plan) {
+    Build(player, plan);
     yyc::SetBuiltinReal(player, yyc::va::YYVar_x, kOriginX + plan.spawnX);
     yyc::SetBuiltinReal(player, yyc::va::YYVar_y, kOriginY + plan.spawnY);
     g_inside = &plan;
     Log("interiors: in room %d inside the world room (%zu objects)", plan.room, g_built.size());
 }
 
-// Back out at the door the world keeps for the player (spawnPlayerX/Y, set when it went in).
-void Leave(yyc::CInstance* player) {
-    g_self = player;
-    for (const int id : g_built) {
-        if (yyc::FindInstance(id) != nullptr) Real("instance_destroy", {double(id)});
+// Back out at the door the world keeps for the player (spawnPlayerX/Y, set when it went in); `move`: false when
+// the player is already out (died: respawned on the start island).
+void Leave(yyc::CInstance* player, bool move = true) {
+    Teardown(player);
+    if (move) {
+        yyc::SetBuiltinReal(player, yyc::va::YYVar_x, GlobalReal(kSlotSpawnPlayerX));
+        yyc::SetBuiltinReal(player, yyc::va::YYVar_y, GlobalReal(kSlotSpawnPlayerY));
     }
-    g_built.clear();
-    for (double& layer : g_layers) {
-        if (layer >= 0) Real("layer_destroy", {layer});
-        layer = -1;
-    }
-    yyc::SetBuiltinReal(player, yyc::va::YYVar_x, GlobalReal(kSlotSpawnPlayerX));
-    yyc::SetBuiltinReal(player, yyc::va::YYVar_y, GlobalReal(kSlotSpawnPlayerY));
     Log("interiors: left room %d for the world at (%.0f, %.0f)", g_inside != nullptr ? g_inside->room : -1,
         GlobalReal(kSlotSpawnPlayerX), GlobalReal(kSlotSpawnPlayerY));
     g_inside = nullptr;
@@ -255,7 +282,8 @@ yyc::RValue* __cdecl WaterHook(yyc::CInstance* self, yyc::CInstance* other, yyc:
 }  // namespace
 
 bool Enabled() {
-    static const bool enabled = GetEnvironmentVariableA("COOP_INWORLD_INTERIORS", nullptr, 0) > 0;
+    // In a session interiors are built in the world room; COOP_ROOM_INTERIORS=1 goes back to the game's own rooms.
+    static const bool enabled = GetEnvironmentVariableA("COOP_ROOM_INTERIORS", nullptr, 0) == 0;
     return enabled;
 }
 
@@ -291,6 +319,10 @@ void AfterWorldEndStep(yyc::CInstance* self) {
     yyc::CInstance* player = g_playerId != 0 ? yyc::FindInstance(g_playerId) : nullptr;
     if (player == nullptr) return;
     g_self = self;
+    if (!InsideRect(yyc::GetBuiltinReal(player, yyc::va::YYVar_x), yyc::GetBuiltinReal(player, yyc::va::YYVar_y))) {
+        Leave(player, false);  // out without the door (died and respawned): the interior goes
+        return;
+    }
     const double camera = Real("view_get_camera", {0});
     const double width = Real("camera_get_view_width", {camera});
     const double height = Real("camera_get_view_height", {camera});
@@ -308,6 +340,29 @@ void AfterWorldEndStep(yyc::CInstance* self) {
     }
 }
 
+// A world save while inside: for its time the interior is taken down and the player stands at the door, so the save
+// has the world as if the player had not gone in; then the interior is put back.
+double g_savedX = 0, g_savedY = 0;
+
+void BeforeSave() {
+    yyc::CInstance* player = g_inside != nullptr && g_playerId != 0 ? yyc::FindInstance(g_playerId) : nullptr;
+    if (player == nullptr) return;
+    g_savedX = yyc::GetBuiltinReal(player, yyc::va::YYVar_x);
+    g_savedY = yyc::GetBuiltinReal(player, yyc::va::YYVar_y);
+    Teardown(player);  // the save takes layer sprites and instances: none of the interior's may be there
+    yyc::SetBuiltinReal(player, yyc::va::YYVar_x, GlobalReal(kSlotSpawnPlayerX));
+    yyc::SetBuiltinReal(player, yyc::va::YYVar_y, GlobalReal(kSlotSpawnPlayerY));
+}
+
+void AfterSave() {
+    yyc::CInstance* player = g_inside != nullptr && g_playerId != 0 ? yyc::FindInstance(g_playerId) : nullptr;
+    if (player == nullptr) return;
+    Build(player, *g_inside);
+    yyc::SetBuiltinReal(player, yyc::va::YYVar_x, g_savedX);
+    yyc::SetBuiltinReal(player, yyc::va::YYVar_y, g_savedY);
+    Log("interiors: the world saved without the interior, as if the player were at the door");
+}
+
 bool IsBuilding() { return g_building; }
 
 bool IsInside() { return g_inside != nullptr; }
@@ -322,7 +377,7 @@ bool IsInterior(int id) {
 void Reset() {
     g_inside = nullptr;
     g_built.clear();
-    g_layers[0] = g_layers[1] = -1;
+    g_layers.clear();
 }
 
 void DebugTick(yyc::CInstance* localPlayer) {
