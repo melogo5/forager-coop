@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "interiors.h"
 #include "log.h"
 #include "puppet.h"
 #include "sync.h"
@@ -91,7 +92,7 @@ void ForEachObject(yyc::CInstance* self, const Area& area, double grow, Visit vi
         for (int i = 0; i < count; ++i) {
             const int id = static_cast<int>(Builtin(self, "instance_find", {double(kind), double(i)}));
             yyc::CInstance* instance = id == kNoOne ? nullptr : yyc::FindInstance(id);
-            if (instance == nullptr) continue;
+            if (instance == nullptr || interiors::IsInterior(id)) continue;  // only here, past the world's edge
             const int object = static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_object_index));
             const double x = yyc::GetBuiltinReal(instance, yyc::va::YYVar_x);
             const double y = yyc::GetBuiltinReal(instance, yyc::va::YYVar_y);

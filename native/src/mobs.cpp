@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "MinHook.h"
+#include "interiors.h"
 #include "log.h"
 #include "net.h"
 #include "puppet.h"
@@ -330,6 +331,7 @@ void ApplyTargets(yyc::CInstance* self) {
 
 void __cdecl EndStepHook(yyc::CInstance* self, yyc::CInstance* other) {
     g_origEndStep(self, other);
+    interiors::AfterWorldEndStep(self);  // its camera: the game keeps the camera inside the world room
     if (g_isGuest == nullptr || !g_isGuest() || (g_targets.empty() && g_purgedAt == g_received)) return;
     __try {
         ApplyTargets(self);

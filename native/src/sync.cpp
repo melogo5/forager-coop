@@ -14,6 +14,7 @@
 #include "MinHook.h"
 #include "log.h"
 #include "puppet.h"
+#include "interiors.h"
 #include "skilltab.h"
 #include "stations.h"
 
@@ -325,7 +326,7 @@ bool CreatedByLoading() {
 void __cdecl CreateHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstance* other, int argc,
                         yyc::RValue* args) {
     g_origCreate(result, self, other, argc, args);
-    if (g_applyingRemote > 0 || !Connected()) return;
+    if (g_applyingRemote > 0 || !Connected() || interiors::IsBuilding()) return;
     if (IsHost() && CreatedByLoading()) {
         static DWORD lastLog = 0;
         static unsigned skipped = 0;
@@ -362,7 +363,8 @@ void __cdecl CreateHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstanc
 // id == -1: self; otherwise an instance id (or an object index, which is not tracked).
 void __cdecl DestroyHook(yyc::CInstance* self, yyc::CInstance* other, int id, int executeEvent) {
     yyc::CInstance* target = id == -1 ? self : id >= 100000 ? yyc::FindInstance(id) : nullptr;
-    const bool report = target != nullptr && g_applyingRemote == 0 && !g_dryHit && Connected();
+    const bool report = target != nullptr && g_applyingRemote == 0 && !g_dryHit && Connected() &&
+                        !interiors::IsInterior(static_cast<int>(yyc::GetBuiltinReal(target, yyc::va::YYVar_id)));
     InstanceInfo info{};
     bool synced = false;
     if (report) {
@@ -409,6 +411,7 @@ void __cdecl RoomGotoHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInsta
                           yyc::RValue* args) {
     const int room = argc >= 1 ? static_cast<int>(yyc::ToReal(args[0])) : -1;
     if (skilltab::InterceptRoomGoto(self, room)) return;  // the skill tree opens/closes in the world room
+    if (interiors::InterceptRoomGoto(self, room)) return;  // interiors are built in the world room
     if (Connected() && room >= kFirstDungeonRoom && room <= kLastDungeonRoom) {
         Log("sync: not entering room %d - no dungeons in coop", room);
         return;

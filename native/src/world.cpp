@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "MinHook.h"
+#include "interiors.h"
 #include "log.h"
 
 namespace coop::world {
@@ -136,6 +137,12 @@ void RemoveGuestSlot() {
 // rooms) saves, and coming back reloads the world from that save. Marked so a later start cleans it up.
 yyc::RValue* __cdecl SaveGameHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                   yyc::RValue** args) {
+    // Inside an interior built in the world room: a save would keep the interior and the player past the world's
+    // edge (the game saves on the way in anyway).
+    if (interiors::IsInside()) {
+        Log("world: save skipped - the player is inside an interior");
+        return result;
+    }
     if (g_isGuest != nullptr && g_isGuest()) {
         std::error_code error;
         fs::create_directories(GuestSlotDir(), error);

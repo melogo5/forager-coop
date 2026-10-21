@@ -645,6 +645,7 @@ void Leave() {
     skills::Reset();
     reconcile::Reset();
     look::Reset();
+    interiors::Reset();
     Log(host ? "session: stopped hosting; can create again" : "session: left the host's world; can join again");
 }
 
@@ -671,6 +672,7 @@ bool SessionInstall() {
     }
     if (!world::InstallHooks([] { return g_role == Role::kGuest; })) return false;
     if (!skilltab::InstallHooks([] { return g_role != Role::kNone; })) return false;
+    interiors::InstallHooks([] { return g_role != Role::kNone; });  // work in progress: never in the way of the rest
     if (!fishing::InstallHooks([] { return g_role != Role::kNone; })) return false;
     const auto isHost = [] { return g_role == Role::kHost; };
     const auto isGuest = [] { return g_role == Role::kGuest; };
