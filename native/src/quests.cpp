@@ -217,17 +217,10 @@ void DebugQuest(yyc::CInstance* localPlayer) {
 
 }  // namespace
 
-void Tick(yyc::CInstance* localPlayer) {
-    ++g_steps;
-    DebugQuest(localPlayer);
-    if (g_steps % kEverySteps != 0) return;
-    if (!g_pending.empty()) {  // asleep far away, or not made yet: woken and tried again once a second
-        sync::WakeThen(localPlayer, kParNPC, [localPlayer] {
-            for (const auto& [object, q] : std::unordered_map<int, Quest>(g_pending)) {
-                if (CallReal(localPlayer, "instance_number", {double(object)}) > 0) Apply(localPlayer, object, q);
-            }
-        });
-    }
+namespace {
+
+// Every NPC here: what changed since it was last sent or received goes to the others.
+void Scan(yyc::CInstance* localPlayer) {
     const int count = static_cast<int>(CallReal(localPlayer, "instance_number", {kParNPC}));
     for (int i = 0; i < count; ++i) {
         const int id = static_cast<int>(CallReal(localPlayer, "instance_find", {kParNPC, double(i)}));
@@ -246,6 +239,22 @@ void Tick(yyc::CInstance* localPlayer) {
         Log("quests: NPC %d changed here ('%s' / '%s', needs %s), sent", object, now.quest.c_str(), now.state.c_str(),
             Describe(now.requirement).c_str());
     }
+}
+
+}  // namespace
+
+void Tick(yyc::CInstance* localPlayer) {
+    ++g_steps;
+    DebugQuest(localPlayer);
+    if (g_steps % kEverySteps != 0) return;
+    // NPCs away from the player sleep (culled): woken once a second for a look - news waiting for one is applied
+    // (it may also not be made yet), and a change is noticed even if the NPC fell asleep right after the talk.
+    sync::WakeThen(localPlayer, kParNPC, [localPlayer] {
+        for (const auto& [object, q] : std::unordered_map<int, Quest>(g_pending)) {
+            if (CallReal(localPlayer, "instance_number", {double(object)}) > 0) Apply(localPlayer, object, q);
+        }
+        Scan(localPlayer);
+    });
 }
 
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
