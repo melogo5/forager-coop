@@ -2,10 +2,10 @@
 # the world as if the host stood at the door - no interior objects or layers (a layer of ours broke the world
 # load once). Then run interior.ps1: a new session loads that save. Usage: interior_save.ps1
 $ErrorActionPreference = 'Stop'
-Set-Location 'Z:\repos\forager-coop'
+Set-Location (Split-Path (Split-Path $PSScriptRoot))
 . .\tools\gametest\lib.ps1
 & .\tools\gametest\install.ps1
-$r = & .\tools\gametest\coopflow.ps1 -HostSlot 4 -GodMode -HostEnv @{COOP_DEBUG_PORT = '1'; COOP_INWORLD_INTERIORS = '1'; COOP_DEBUG_ROOM = '23'; COOP_DEBUG_ROOM_AT = '2'} -GuestEnv @{COOP_DEBUG_PORT = '1'}
+$r = & .\tools\gametest\coopflow.ps1 -HostSlot 4 -GodMode -HostEnv @{COOP_DEBUG_PORT = '1'; COOP_DEBUG_ROOM = '23'; COOP_DEBUG_ROOM_AT = '2'} -GuestEnv @{COOP_DEBUG_PORT = '1'}
 $h = [int]($r -replace '.*HOST=(\d+).*', '$1'); $g = [int]($r -replace '.*GUEST=(\d+).*', '$1')
 for ($i = 0; $i -lt 30 -and -not (Select-String -Path "$GameDir\coop_native_$h.log" -Pattern 'interiors: in room' -Quiet); $i++) { Start-Sleep 1 }
 "save: $(Ask $h 'script 004fae80')"
