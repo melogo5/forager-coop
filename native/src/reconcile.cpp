@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "chests.h"
 #include "interiors.h"
 #include "log.h"
 #include "puppet.h"
@@ -96,7 +97,7 @@ void ForEachObject(yyc::CInstance* self, const Area& area, double grow, Visit vi
             const int object = static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_object_index));
             const double x = yyc::GetBuiltinReal(instance, yyc::va::YYVar_x);
             const double y = yyc::GetBuiltinReal(instance, yyc::va::YYVar_y);
-            if (Moving(object) || !Inside(area, x, y, grow)) continue;
+            if (Moving(object) || chests::IsTreasureChest(object) || !Inside(area, x, y, grow)) continue;
             visit(instance, id, object, x, y);
         }
     }

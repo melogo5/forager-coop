@@ -11,6 +11,7 @@
 #include "MinHook.h"
 #include "gui.h"
 #include "log.h"
+#include "skills.h"
 
 namespace coop::puppet {
 
@@ -398,11 +399,16 @@ bool IsPuppet(const yyc::CInstance* instance) { return IsPuppetInstance(instance
 
 void BeginActing(net::PeerId player) {
     if (++g_actingDepth != 1) return;
-    g_actorId = Instance(player) != nullptr ? Find(player)->id : 0;
+    yyc::CInstance* puppet = Instance(player);
+    g_actorId = puppet != nullptr ? Find(player)->id : 0;
+    if (puppet != nullptr) skills::HostSwapIn(puppet, player);
 }
 
 void EndActing() {
-    if (g_actingDepth > 0 && --g_actingDepth == 0) g_actorId = 0;
+    if (g_actingDepth > 0 && --g_actingDepth == 0) {
+        g_actorId = 0;
+        skills::HostSwapOut();
+    }
 }
 
 bool IsActing() { return g_actorId != 0; }

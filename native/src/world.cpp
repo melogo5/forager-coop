@@ -7,6 +7,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -144,8 +145,89 @@ yyc::RValue* Save(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* resu
     return g_origSaveGame(self, other, result, argc, args);
 }
 
+double ListCall(yyc::CInstance* self, const char* name, double list, double arg) {
+    yyc::RValue args[2] = {yyc::Real(list), yyc::Real(arg)};
+    yyc::RValue result{};
+    yyc::CallBuiltin(name, self, 2, args, &result);
+    const double value = yyc::ToReal(result);
+    yyc::Free(&result);
+    return value;
+}
+
+double Call1(yyc::CInstance* self, const char* name, double arg) {
+    yyc::RValue value = yyc::Real(arg);
+    yyc::RValue result{};
+    yyc::CallBuiltin(name, self, 1, &value, &result);
+    const double number = yyc::ToReal(result);
+    yyc::Free(&result);
+    return number;
+}
+
+std::vector<int> ListIds(yyc::CInstance* self, double list) {
+    std::vector<int> ids;
+    const int count = static_cast<int>(Call1(self, "ds_list_size", list));
+    for (int i = 0; i < count; ++i) ids.push_back(static_cast<int>(ListCall(self, "ds_list_find_value", list, i)));
+    return ids;
+}
+
+double GlobalNumber(int slot) {
+    const yyc::RValue* value = yyc::GlobalVar(slot);
+    return value != nullptr && yyc::IsNumber(*value) ? yyc::ToReal(*value) : -1;
+}
+
+// SaveGame writes a record for every instance in its lists - global.herbs and global.trueInstanceCache (object ->
+// ds_list of ids) - from inside `with (id)`. An instance that is asleep is woken for that only if it is listed in
+// global.deactivatedInstances (TrueInstanceExists -> TemporaryActivate); one gone, or asleep and unlisted, is
+// written as an empty record, and LoadZone then fails on it (asset_get_index(undefined)): the world never loads
+// again (playtest 4, bug 10; seen on herbs). Before every save: the gone ones leave the lists, the unlisted
+// sleepers are listed. Which coop path leaves them so is not known yet - the log says which ones.
+void PrepareSaveLists(yyc::CInstance* self) {
+    constexpr int kSlotHerbs = 0x55F, kSlotTrueInstanceCache = 0x8BD, kSlotDeactivated = 0x16C;  // var_slots.tsv
+    const double deactivated = GlobalNumber(kSlotDeactivated);
+    if (deactivated < 0) return;
+    const std::vector<int> listedIds = ListIds(self, deactivated);
+    std::set<int> listed(listedIds.begin(), listedIds.end());
+    std::vector<double> lists;
+    if (GlobalNumber(kSlotHerbs) >= 0) lists.push_back(GlobalNumber(kSlotHerbs));
+    const double cache = GlobalNumber(kSlotTrueInstanceCache);
+    if (cache >= 0) {
+        const int keys = static_cast<int>(Call1(self, "ds_map_size", cache));
+        yyc::RValue key{};
+        yyc::RValue mapArg = yyc::Real(cache);
+        yyc::CallBuiltin("ds_map_find_first", self, 1, &mapArg, &key);
+        for (int k = 0; k < keys; ++k) {
+            yyc::RValue args[2] = {yyc::Real(cache), key};
+            yyc::RValue value{};
+            yyc::CallBuiltin("ds_map_find_value", self, 2, args, &value);
+            if (yyc::IsNumber(value)) lists.push_back(yyc::ToReal(value));
+            yyc::Free(&value);
+            yyc::RValue next{};
+            yyc::CallBuiltin("ds_map_find_next", self, 2, args, &next);
+            yyc::Free(&key);
+            key = next;
+        }
+        yyc::Free(&key);
+    }
+    int gone = 0, unlisted = 0;
+    for (const double list : lists) {
+        const std::vector<int> ids = ListIds(self, list);
+        for (int i = static_cast<int>(ids.size()) - 1; i >= 0; --i) {
+            const yyc::CInstance* instance = yyc::FindInstance(ids[i]);
+            if (instance == nullptr) {
+                ListCall(self, "ds_list_delete", list, i);
+                if (++gone <= 10) Log("world: instance %d is gone but still listed - left out of the save", ids[i]);
+            } else if (yyc::IsDeactivated(instance) && listed.insert(ids[i]).second) {
+                ListCall(self, "ds_list_add", deactivated, ids[i]);
+                if (++unlisted <= 10) Log("world: instance %d sleeps unlisted - listed so the save wakes it", ids[i]);
+            }
+        }
+    }
+    if (gone + unlisted > 0) Log("world: before the save: %d gone, %d unlisted sleepers", gone, unlisted);
+}
+
 yyc::RValue* __cdecl SaveGameHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                   yyc::RValue** args) {
+    PrepareSaveLists(self);
     // Inside an interior built in the world room, the save must not keep it (or the player past the world's edge).
     if (!interiors::IsInside()) return Save(self, other, result, argc, args);
     interiors::BeforeSave();

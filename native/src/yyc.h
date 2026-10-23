@@ -165,6 +165,8 @@ void SetBuiltinReal(CInstance* self, uint32_t yyvarAddress, double value);
 
 // Live (not destroyed) instance with this id, or nullptr.
 CInstance* FindInstance(int id);
+// Deactivated (instance_deactivate_*: asleep off-screen) - `with` and instance_find skip it.
+bool IsDeactivated(const CInstance* instance);
 
 namespace object {
 constexpr int objEmpty = 0;  // no events: drawn by the default sprite draw

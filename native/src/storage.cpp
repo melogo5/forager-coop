@@ -160,13 +160,42 @@ void SendContents(yyc::CInstance* self, int chestId) {
         payload.size());
 }
 
+// How many of a vault's 9 cells this player may use: objVault Create_0 sets maxSlots = 6, +3 with skill 23
+// (HasSkill: skillUnlocked[23] == 2). Create runs with whatever skills are in place then - the guest's vaults come
+// from the host's save before the guest's own skills are applied, and the host builds a guest's vault with the
+// guest's skills - so each side sets it from its own player's skills (playtest 4, bug 5).
+constexpr int kSlotMaxSlots = 0x639;
+constexpr int kSlotSkillUnlocked = 0x7BF;  // global.skillUnlocked
+constexpr int kSkillMoreVaultSlots = 23;
+
+double OwnVaultSlots() {
+    const yyc::RValue* skills = yyc::GlobalVar(kSlotSkillUnlocked);
+    if (skills == nullptr || (skills->kind & yyc::kKindMask) != yyc::kArray) return 0;
+    yyc::RValue copy = *skills;  // a plain copy: no reference taken or freed
+    return yyc::ToReal(yyc::ArrayElement(&copy, kSkillMoreVaultSlots)) == 2 ? 9 : 6;
+}
+
+void KeepVaultSlots(int chestId, double slots) {
+    yyc::RValue current{};
+    const bool ok = yyc::GetVar(chestId, kSlotMaxSlots, &current) && yyc::IsNumber(current);
+    const double was = ok ? yyc::ToReal(current) : 0;
+    yyc::Free(&current);
+    if (!ok || was == slots) return;
+    yyc::RValue value = yyc::Real(slots);
+    yyc::SetVar(chestId, kSlotMaxSlots, &value);
+    Log("storage: chest %d has %g cells for this player (was %g)", chestId, slots, was);
+}
+
 // Contents also change with the menu closed - crafting takes from vaults (ItemCount/RemoveItem count them) - so
 // every second each side sends the vaults whose contents changed since both last agreed (PLAYTEST.md #12, #13).
 void WatchVaults(yyc::CInstance* self) {
     const int count = static_cast<int>(CallReal(self, "instance_number", {yyc::Real(kObjVault)}));
+    const double slots = OwnVaultSlots();
     for (int i = 0; i < count; ++i) {
         const int chestId = static_cast<int>(CallReal(self, "instance_find", {yyc::Real(kObjVault), yyc::Real(i)}));
-        if (yyc::FindInstance(chestId) == nullptr || LockedByPeer(chestId)) continue;
+        if (yyc::FindInstance(chestId) == nullptr) continue;
+        if (slots > 0) KeepVaultSlots(chestId, slots);
+        if (LockedByPeer(chestId)) continue;
         const size_t hash = Hash(Encode(self, chestId));
         const auto known = g_known.find(chestId);
         if (known == g_known.end()) {

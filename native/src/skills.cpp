@@ -7,6 +7,7 @@
 #include <fstream>
 #include <initializer_list>
 #include <iterator>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -181,7 +182,7 @@ void Apply(yyc::CInstance* localPlayer) {
     WriteGlobal(kSlotLearnedSkills, own.learned);
     g_earned = own.earned;
     g_lastLevel = level;
-    g_lastSent = own;
+    g_lastSent = {};  // the host acts with them (HostSwapIn), so it hears them at the next upload even unchanged
     Log("skills: own skills applied: %s(%d learned, %u points earned, level %.0f)", Describe(own.skills).c_str(),
         Learned(own.skills), own.earned, level);
 }
@@ -232,20 +233,50 @@ void DebugLearn(yyc::CInstance* localPlayer, unsigned steps) {
 
 // Host.
 unsigned g_hostSteps = 0;
+std::map<net::PeerId, std::vector<int8_t>> g_guestSkills;  // each guest's skills, as last stored or uploaded
+std::vector<int8_t> g_hostOwn;                             // the host's, while a guest's are swapped in
+bool g_swapped = false;
 
 }  // namespace
+
+void HostSwapIn(yyc::CInstance* puppet, net::PeerId player) {
+    const auto guest = g_guestSkills.find(player);
+    if (g_swapped || puppet == nullptr || guest == g_guestSkills.end()) return;
+    std::vector<int8_t> own = ReadSkills(puppet);
+    if (own.size() != guest->second.size()) return;
+    g_hostOwn = std::move(own);
+    WriteSkills(guest->second);
+    g_swapped = true;
+    static std::map<net::PeerId, bool> logged;
+    if (!logged[player]) {
+        logged[player] = true;
+        Log("skills: acting as guest %u with its own skills (%d learned; the host's: %d)", player,
+            Learned(guest->second), Learned(g_hostOwn));
+    }
+}
+
+void HostSwapOut() {
+    if (!g_swapped) return;
+    WriteSkills(g_hostOwn);
+    g_swapped = false;
+}
 
 void HostOnGuest(const std::string& name, net::PeerId peer) {
     std::ifstream in(character::GuestDataFile(name, ".skills"), std::ios::binary);
     const std::vector<uint8_t> stored((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     State state;
     const bool ok = !stored.empty() && Decode(stored.data(), stored.size(), &state);
+    if (ok) g_guestSkills[peer] = state.skills;
     const std::vector<uint8_t> payload = ok ? Encode(kStored, state) : std::vector<uint8_t>{kNothingStored};
     net::SendTo(peer, kSkills, payload.data(), payload.size());
     Log("skills: guest '%s': %s", name.c_str(), ok ? "stored skills sent" : "nothing stored");
 }
 
 void Tick(yyc::CInstance* localPlayer) {
+    if (g_swapped) {  // acting ends within a step; never let the host keep (or save) a guest's skills
+        HostSwapOut();
+        Log("skills: the host's skills put back after acting as a guest");
+    }
     DebugLearn(localPlayer, g_answered ? g_steps + 1 : ++g_hostSteps);
     if (!g_answered || ++g_steps % kApplyEverySteps != 0) return;
     if (!g_applied) {
@@ -267,6 +298,7 @@ bool Handle(const net::Message& message) {
         const std::wstring path = character::GuestDataFile(name, ".skills");
         std::ofstream(path, std::ios::binary | std::ios::trunc)
             .write(reinterpret_cast<const char*>(p.data() + 1), static_cast<std::streamsize>(p.size() - 1));
+        g_guestSkills[message.from] = state.skills;
         Log("skills: kept guest '%s' skills (%d learned, %u points earned)", name.c_str(),
             Learned(state.skills), state.earned);
         return true;
@@ -280,6 +312,8 @@ bool Handle(const net::Message& message) {
 }
 
 void Reset() {
+    HostSwapOut();
+    g_guestSkills.clear();
     g_answered = false;
     g_applied = false;
     g_newGuest = false;

@@ -30,6 +30,7 @@ using PerformEventFn = void(__cdecl*)(CInstance* self, CInstance* other, int typ
 
 constexpr int kFlagsOffset = 0x74;
 constexpr uint8_t kDestroyedFlag = 0x01;
+constexpr uint8_t kDeactivatedFlag = 0x02;
 
 bool IsIdentifier(const char* name) {
     if (name[0] == '\0') return false;
@@ -230,6 +231,11 @@ CInstance* FindInstance(int id) {
     if (instance == nullptr) return nullptr;
     const uint8_t flags = *reinterpret_cast<const uint8_t*>(reinterpret_cast<const BYTE*>(instance) + kFlagsOffset);
     return (flags & kDestroyedFlag) != 0 ? nullptr : instance;
+}
+
+bool IsDeactivated(const CInstance* instance) {
+    const uint8_t flags = *reinterpret_cast<const uint8_t*>(reinterpret_cast<const BYTE*>(instance) + kFlagsOffset);
+    return (flags & kDeactivatedFlag) != 0;
 }
 
 }  // namespace yyc

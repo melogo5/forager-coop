@@ -53,7 +53,7 @@ namespace coop {
 
 namespace {
 
-constexpr uint32_t kProtocolVersion = 11;  // 11: an NPC's item requirement goes with its quest
+constexpr uint32_t kProtocolVersion = 12;  // 12: treasure chests are each player's own; where new ones come to rest
 constexpr unsigned kSendEverySteps = 3;       // 60 fps game step -> 20 updates/s
 constexpr unsigned kAnnounceEverySteps = 30;  // refresh the LAN announcement twice a second
 constexpr int kSlotGodMode = 0x54C;           // global.godMode (decompiled/code/var_slots.tsv)
@@ -279,6 +279,7 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             // The guest's character answer is out; now the world, so it arrives after it.
             if (guestIntroduced) {
                 skills::HostOnGuest(character::HostGuestName(message.from), message.from);
+                chests::HostOnGuest(message.from);
                 world::HostRequestSnapshot(localPlayer, message.from);
             }
             continue;
@@ -553,6 +554,7 @@ void Tick(yyc::CInstance* localPlayer) {
     if (g_role == Role::kHost) reconcile::HostTick(localPlayer);
     reconcile::DebugTick(localPlayer);
     chests::DebugTick(localPlayer);
+    chests::Tick(localPlayer);
     if (g_role == Role::kHost) coins::HostTick(localPlayer);
     if (g_role == Role::kGuest) coins::GuestTick(localPlayer);
     progress::Tick(localPlayer);
@@ -643,6 +645,7 @@ void Leave() {
     stations::Reset();
     fishing::Reset();
     skills::Reset();
+    chests::Reset();
     reconcile::Reset();
     look::Reset();
     interiors::Reset();
@@ -678,7 +681,7 @@ bool SessionInstall() {
     const auto isGuest = [] { return g_role == Role::kGuest; };
     if (!sync::InstallHooks(isHost, isGuest) || !mobs::InstallHooks(isHost, isGuest) ||
         !character::InstallHooks(isGuest) || !storage::InstallHooks() || !land::InstallHooks(isHost, isGuest) ||
-        !progress::InstallHooks() || !stations::InstallHooks() || !chests::InstallHooks() ||
+        !progress::InstallHooks() || !stations::InstallHooks() || !chests::InstallHooks(isHost) ||
         !traps::InstallHooks(isHost, isGuest)) {
         return false;
     }

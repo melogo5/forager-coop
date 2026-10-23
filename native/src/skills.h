@@ -20,6 +20,12 @@ void Tick(yyc::CInstance* localPlayer);
 // Game thread: handles a skills message (host: stores it; guest: applies it); false if not one.
 bool Handle(const net::Message& message);
 
+// Host, game thread: while the host acts as guest `player` (puppet::BeginActing: its hits, builds, what they
+// destroy), global.skillUnlocked holds that guest's skills - drops and bonuses follow the guest's skills, not the
+// host's (playtest 4, bug 7). `puppet`: any instance to call builtins as. SwapOut puts the host's back.
+void HostSwapIn(yyc::CInstance* puppet, net::PeerId player);
+void HostSwapOut();
+
 // Forgets the session (the guest re-applies on joining again).
 void Reset();
 

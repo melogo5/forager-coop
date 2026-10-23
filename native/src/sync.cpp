@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "MinHook.h"
+#include "chests.h"
 #include "log.h"
 #include "puppet.h"
 #include "interiors.h"
@@ -94,6 +95,7 @@ constexpr uint32_t kScriptDirtProcess = 0x004BEB20;  // dirt left by broken obje
 constexpr uint32_t kScriptGainXp = 0x00730600;
 constexpr uint32_t kScriptUnlockAchievement = 0x004A6DA0;  // UnlockAchievement(name): Steam achievement
 constexpr uint32_t kScriptHandleCrafting = 0x004AB790;  // a structure works on its craft; DropItem when done
+constexpr uint32_t kScriptUseRepairKit = 0x006D6120;    // every structure near the player back to hpMax
 constexpr uint32_t kEventUser = 0x016F2D00;  // event_user(n): (self, other, n)
 
 using EventUserFn = void(__cdecl*)(yyc::CInstance* self, yyc::CInstance* other, int n);
@@ -116,6 +118,7 @@ yyc::ScriptFn g_origResourceSpawnSingle = nullptr;
 yyc::ScriptFn g_origDirtProcess = nullptr;
 yyc::ScriptFn g_origGainXp = nullptr;
 yyc::ScriptFn g_origHandleCrafting = nullptr;
+yyc::ScriptFn g_origRepairKit = nullptr;
 yyc::ScriptFn g_origUnlockAchievement = nullptr;
 EventUserFn g_origEventUser = nullptr;
 yyc::BuiltinFn g_origCreate = nullptr;
@@ -243,6 +246,7 @@ std::vector<int> g_craftedDrops;  // guest
 std::unordered_set<int> g_localDrops;  // guest: crafted here, the host never knew them - their end is no news
 
 void DestroySilently(yyc::CInstance* self, int id);
+float ReadVar(int id, int slot);
 
 void FlushSpawns(yyc::CInstance* self) {
     for (const int id : g_pendingSpawns) {
@@ -309,6 +313,17 @@ bool CreatedByGuestAction() {
            strcmp(top->name, "gml_Object_objNewSeed_Step_0") == 0;
 }
 
+// Scrolls (UseScroll) that grow the world: the druid's makes objBigResSpawner, the starfall one objStarfallSpawner.
+bool IsScrollSpawner(int object) {
+    constexpr int kObjBigResSpawner = 297, kObjStarfallSpawner = 156;  // decompiled/data/objects.tsv
+    return object == kObjBigResSpawner || object == kObjStarfallSpawner;
+}
+
+bool CreatedByScroll() {
+    const StackFrame* top = *yyc::At<StackFrame**>(yyc::va::StackTraceTop);
+    return top != nullptr && top->name != nullptr && strcmp(top->name, "gml_Script_UseScroll") == 0;
+}
+
 // The world is being loaded: the room entered again (back from the skill tree, a building), a zone read from the
 // save. What that creates is in every player's world already; sent as new, it would be doubled at the guests
 // (PLAYTEST3.md #1-#3).
@@ -341,6 +356,13 @@ void __cdecl CreateHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstanc
     yyc::CInstance* created = yyc::FindInstance(id);
     if (created == nullptr) return;
     const int object = static_cast<int>(yyc::GetBuiltinReal(created, yyc::va::YYVar_object_index));
+    if (IsGuest() && IsScrollSpawner(object) && CreatedByScroll()) {
+        // Its spawns would be the guest's own (skipped here): the host runs the spawner (playtest 4, bug 4).
+        const InstanceInfo info = Describe(created);
+        Send(kGuestSpawn, info, info.id);
+        Log("sync: scroll spawner %d at (%.0f, %.0f), sent to the host", info.object, info.x, info.y);
+        return;
+    }
     if (!IsSynced(self, object)) return;
     if (IsGuest() && g_crafting > 0 && IsDrop(self, object)) {
         g_craftedDrops.push_back(id);  // ours: collected at the next step, never reported
@@ -380,7 +402,7 @@ void __cdecl DestroyHook(yyc::CInstance* self, yyc::CInstance* other, int id, in
     }
     g_origDestroy(self, other, id, executeEvent);
     if (forGuest) puppet::EndActing();
-    if (!synced) return;
+    if (!synced || chests::IsTreasureChest(info.object)) return;  // an opened chest is gone for its opener only
 
     if (IsHost()) {
         // Created and gone within one step: the guest never heard of it.
@@ -481,6 +503,33 @@ yyc::RValue* __cdecl HandleCraftingHook(yyc::CInstance* self, yyc::CInstance* ot
     return r;
 }
 
+// Guest: a repair kit (UseRepairKit: every structure near the player back to hpMax) mends the host's structures,
+// not only the guest's copies of them (playtest 4, bug 6).
+yyc::RValue* __cdecl RepairKitHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
+                                   yyc::RValue** args) {
+    if (!IsGuest() || !Connected()) return g_origRepairKit(self, other, result, argc, args);
+    constexpr int kParStructure = 108;
+    std::vector<std::pair<int, float>> before;
+    const int count = static_cast<int>(Builtin(self, "instance_number", {double(kParStructure)}));
+    for (int i = 0; i < count; ++i) {
+        const int id = static_cast<int>(Builtin(self, "instance_find", {double(kParStructure), double(i)}));
+        if (yyc::FindInstance(id) != nullptr) before.emplace_back(id, ReadVar(id, kSlotHp));
+    }
+    yyc::RValue* r = g_origRepairKit(self, other, result, argc, args);
+    for (const auto& [id, hp] : before) {
+        yyc::CInstance* structure = yyc::FindInstance(id);
+        if (structure == nullptr || ReadVar(id, kSlotHp) == hp) continue;
+        const InstanceInfo info = Describe(structure);
+        const HpMsg msg{HostIdOf(id), info.object, static_cast<float>(info.x), static_cast<float>(info.y),
+                        ReadVar(id, kSlotHp), ReadVar(id, kSlotHpAlpha), ReadVar(id, kSlotHpLast),
+                        ReadVar(id, kSlotHpWhite)};
+        net::Send(kObjectHp, &msg, sizeof(msg));
+        Log("sync: repaired structure %d at (%.0f, %.0f): hp %.0f -> %.0f, sent to the host", info.object, info.x,
+            info.y, hp, msg.hp);
+    }
+    return r;
+}
+
 // Guest: crafted drops into the inventory.
 void CollectCrafted(yyc::CInstance* localPlayer) {
     if (g_craftedDrops.empty()) return;
@@ -501,6 +550,9 @@ void CollectCrafted(yyc::CInstance* localPlayer) {
 yyc::RValue* __cdecl GainXpHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                 yyc::RValue** args) {
     if (g_dryHit) return result;  // the hit's XP comes from the host
+    // The guest's own run of world code (SpawnLand for an island someone bought, dirt growing) earns nothing: it
+    // gave ~45 XP per island bought (playtest 4, bug 8).
+    if (IsGuest() && g_suppressing > 0) return result;
     if (argc >= 1 && IsGuest() && Connected() && g_applyingRemote == 0) {
         const XpMsg msg{static_cast<float>(yyc::ToReal(*args[0]))};
         net::Send(kXp, &msg, sizeof(msg));
@@ -602,6 +654,7 @@ void DryHit(yyc::CInstance* target, yyc::CInstance* player) {
 void __cdecl EventUserHook(yyc::CInstance* self, yyc::CInstance* other, int n) {
     if (IsHost() && n == 0 && other != nullptr && other == g_localPlayer && Connected() && CalledFromToolUse()) {
         const int id = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
+        g_hitByGuest.erase(id);  // the last hit decides who gets the drop (playtest 4, bug 1)
         const bool synced = IsSynced(self, static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_object_index)));
         g_origEventUser(self, other, n);
         if (synced) SendHp(yyc::FindInstance(id));
@@ -828,6 +881,7 @@ bool InstallHooks(bool (*isHost)(), bool (*isGuest)()) {
     ok = Hook(kScriptDirtProcess, reinterpret_cast<void*>(&DirtProcessHook), &g_origDirtProcess) && ok;
     ok = Hook(kScriptGainXp, reinterpret_cast<void*>(&GainXpHook), &g_origGainXp) && ok;
     ok = Hook(kScriptHandleCrafting, reinterpret_cast<void*>(&HandleCraftingHook), &g_origHandleCrafting) && ok;
+    ok = Hook(kScriptUseRepairKit, reinterpret_cast<void*>(&RepairKitHook), &g_origRepairKit) && ok;
     ok = Hook(kScriptUnlockAchievement, reinterpret_cast<void*>(&UnlockAchievementHook), &g_origUnlockAchievement) &&
          ok;
     ok = Hook(kEventUser, reinterpret_cast<void*>(&EventUserHook), &g_origEventUser) && ok;
@@ -1210,10 +1264,14 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
             if (size == sizeof(ObjectMsg) && IsHost()) ApplyGuestDestroyed(localPlayer, ReadObject(message));
             return true;
         case kObjectHp:
-            if (size == sizeof(HpMsg) && IsGuest()) {
+            if (size == sizeof(HpMsg)) {
                 HpMsg msg{};
                 memcpy(&msg, message.payload.data(), sizeof(msg));
                 ApplyHp(localPlayer, msg);
+                if (IsHost()) {  // a guest's repair: the other guests see it too
+                    const int local = Resolve(localPlayer, msg.id, msg.object, msg.x, msg.y);
+                    if (local != 0) SendHp(yyc::FindInstance(local));
+                }
             }
             return true;
         case kGuestSpawn:
