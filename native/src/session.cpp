@@ -369,6 +369,25 @@ void ApplyDebugGodMode() {
     }
 }
 
+// Testing aid: COOP_DEBUG_SPEED=<n> runs the game n times as fast (game_set_speed: n x 60 steps a second; the game
+// counts time in steps), so crops grow, traps catch and days pass in a test's time. Both games of a pair need it.
+void ApplyDebugSpeed(yyc::CInstance* localPlayer) {
+    static const double factor = [] {
+        char text[16] = {};
+        return GetEnvironmentVariableA("COOP_DEBUG_SPEED", text, sizeof(text)) > 0 ? atof(text) : 0.0;
+    }();
+    static bool applied = false;
+    if (factor <= 0 || applied) return;
+    applied = true;
+    constexpr double kStepsPerSecond = 60;
+    constexpr double kGameSpeedFps = 0;  // gamespeed_fps
+    yyc::RValue args[2] = {yyc::Real(kStepsPerSecond * factor), yyc::Real(kGameSpeedFps)};
+    yyc::RValue result{};
+    const bool ok = yyc::CallBuiltin("game_set_speed", localPlayer, 2, args, &result);
+    yyc::Free(&result);
+    Log("session: debug speed x%g %s", factor, ok ? "set" : "FAILED (no game_set_speed)");
+}
+
 // Testing aid: COOP_DEBUG_CHEATS=1 turns the world's cheats on (console /give, /spawn...): a new world has them
 // off, and the mode screen's ENABLE CHEATS button does not take clicks sent by the test tools.
 void ApplyDebugCheats() {
@@ -493,6 +512,7 @@ void Tick(yyc::CInstance* localPlayer) {
                static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_room)) == kRoomWorld);
     ApplyDebugGodMode();
     ApplyDebugCheats();
+    ApplyDebugSpeed(localPlayer);
     if (g_role == Role::kNone || g_leaving) return;
     if (!g_playedWorld && g_role == Role::kHost && !HostWorldAllowed(localPlayer)) {
         g_playedWorld = true;  // back in the menu this ends the session

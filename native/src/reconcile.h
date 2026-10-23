@@ -4,12 +4,25 @@
 // plants, structures, bridges) in an area around the guest; the guest removes what the host does not have and
 // adds what it lacks. Only differences seen in two checks in a row are acted on: a build or a destroy may
 // still be on its way.
+// World check: every 30 s the host also sends its whole world (every object of those kinds, asleep ones too); the
+// guest compares it with its own and only logs the differences that last ("worldcheck:" lines).
 #pragma once
+
+#include <vector>
 
 #include "net.h"
 #include "yyc.h"
 
 namespace coop::reconcile {
+
+struct WorldObject {
+    int object;
+    double x, y;
+};
+
+// Every world object both sides should have - parObject, parHerb, objBridge, asleep ones too - without what moves,
+// treasure chests (each player's own) and interiors. The debug port's "dump" too.
+std::vector<WorldObject> WorldObjects(yyc::CInstance* self);
 
 // Host, game thread, every local player step while connected.
 void HostTick(yyc::CInstance* localPlayer);

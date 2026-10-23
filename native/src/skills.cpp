@@ -13,6 +13,7 @@
 
 #include "character.h"
 #include "log.h"
+#include "mutant.h"
 
 namespace coop::skills {
 
@@ -240,6 +241,7 @@ bool g_swapped = false;
 }  // namespace
 
 void HostSwapIn(yyc::CInstance* puppet, net::PeerId player) {
+    if (Mutant("skills")) return;
     const auto guest = g_guestSkills.find(player);
     if (g_swapped || puppet == nullptr || guest == g_guestSkills.end()) return;
     std::vector<int8_t> own = ReadSkills(puppet);

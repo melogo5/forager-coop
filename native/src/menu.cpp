@@ -12,9 +12,11 @@
 #include "character.h"
 #include "coop_button_png.h"
 #include "coop_ui_png.h"
+#include "debugport.h"
 #include "gui.h"
 #include "lan.h"
 #include "log.h"
+#include "mutant.h"
 #include "session.h"
 #include "steam.h"
 #include "world.h"
@@ -586,6 +588,7 @@ void Step(yyc::CInstance* control) {
 
 void __cdecl ControlStepHook(yyc::CInstance* self, yyc::CInstance* other) {
     g_origControlStep(self, other);
+    debugport::Tick(self);  // the query port answers in the menus too (`self` is the menu, not a player)
     __try {
         Step(self);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -675,7 +678,7 @@ yyc::EventFn g_origModeSelectCreate = nullptr;
 
 void __cdecl ModeSelectCreateHook(yyc::CInstance* self, yyc::CInstance* other) {
     g_origModeSelectCreate(self, other);
-    if (session::CurrentRole() != session::Role::kHost) return;
+    if (session::CurrentRole() != session::Role::kHost || Mutant("modes")) return;
     const int screen = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
     int hidden = 0;
     for (const int slot : kSlotOtherModes) {

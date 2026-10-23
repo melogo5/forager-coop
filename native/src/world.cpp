@@ -15,6 +15,7 @@
 #include "MinHook.h"
 #include "interiors.h"
 #include "log.h"
+#include "mutant.h"
 
 namespace coop::world {
 
@@ -182,6 +183,7 @@ double GlobalNumber(int slot) {
 // again (playtest 4, bug 10; seen on herbs). Before every save: the gone ones leave the lists, the unlisted
 // sleepers are listed. Which coop path leaves them so is not known yet - the log says which ones.
 void PrepareSaveLists(yyc::CInstance* self) {
+    if (Mutant("savelists")) return;
     constexpr int kSlotHerbs = 0x55F, kSlotTrueInstanceCache = 0x8BD, kSlotDeactivated = 0x16C;  // var_slots.tsv
     const double deactivated = GlobalNumber(kSlotDeactivated);
     if (deactivated < 0) return;
@@ -223,6 +225,31 @@ void PrepareSaveLists(yyc::CInstance* self) {
         }
     }
     if (gone + unlisted > 0) Log("world: before the save: %d gone, %d unlisted sleepers", gone, unlisted);
+}
+
+// A herb on global.herbs that is gone stops the game: HerbProcess (WorldControl's Step_1) walks the list and
+// IsDeactivated fails on it ("bool argument is unset", the "UH OH" window) - the same step the id goes bad. So the
+// list is cleaned right before every HerbProcess. SaveGame fails the same way on a gone id in trueInstanceCache
+// (PrepareSaveLists).
+constexpr uint32_t kScriptHerbProcess = 0x004BD0A0;
+yyc::ScriptFn g_origHerbProcess = nullptr;
+int g_herbsLogged = 0;
+
+yyc::RValue* __cdecl HerbProcessHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
+                                     yyc::RValue** args) {
+    constexpr int kSlotHerbs = 0x55F;
+    const double herbs = Mutant("herbs") ? -1 : GlobalNumber(kSlotHerbs);
+    if (herbs >= 0) {
+        const std::vector<int> ids = ListIds(self, herbs);
+        for (int i = static_cast<int>(ids.size()) - 1; i >= 0; --i) {
+            if (yyc::FindInstance(ids[i]) != nullptr) continue;
+            ListCall(self, "ds_list_delete", herbs, i);
+            if (++g_herbsLogged <= 20) {
+                Log("world: herb %d is gone but still listed - taken off (HerbProcess would stop the game)", ids[i]);
+            }
+        }
+    }
+    return g_origHerbProcess(self, other, result, argc, args);
 }
 
 yyc::RValue* __cdecl SaveGameHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
@@ -325,6 +352,10 @@ void RemoveGuestSaveSlot() {
 bool InstallHooks(bool (*isGuest)()) {
     g_isGuest = isGuest;
     RemoveGuestSlot();
+    if (MH_CreateHook(yyc::At<void*>(kScriptHerbProcess), reinterpret_cast<void*>(&HerbProcessHook),
+                      reinterpret_cast<void**>(&g_origHerbProcess)) != MH_OK) {
+        Log("world: hook HerbProcess failed");
+    }
     const MH_STATUS status = MH_CreateHook(yyc::At<void*>(yyc::va::Script_SaveGame),
                                            reinterpret_cast<void*>(&SaveGameHook),
                                            reinterpret_cast<void**>(&g_origSaveGame));

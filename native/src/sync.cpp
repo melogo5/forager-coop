@@ -14,6 +14,7 @@
 #include "MinHook.h"
 #include "chests.h"
 #include "log.h"
+#include "mutant.h"
 #include "puppet.h"
 #include "interiors.h"
 #include "skilltab.h"
@@ -1179,17 +1180,18 @@ void WakeWhere(yyc::CInstance* self, const std::function<bool(yyc::CInstance*)>&
     if (listValue == nullptr || !yyc::IsNumber(*listValue)) return;
     const double list = yyc::ToReal(*listValue);
     std::vector<int> woken;
+    const bool bare = Mutant("wake");  // the old way: activated, left on the lists
     for (int i = static_cast<int>(Builtin(self, "ds_list_size", {list})) - 1; i >= 0; --i) {
         const int id = static_cast<int>(Builtin(self, "ds_list_find_value", {list, double(i)}));
         yyc::CInstance* instance = yyc::FindInstance(id);
         if (instance != nullptr && !pick(instance)) continue;
-        Builtin(self, "ds_list_delete", {list, double(i)});  // gone ones go too: nothing can wake them
+        if (!bare) Builtin(self, "ds_list_delete", {list, double(i)});  // gone ones go too: nothing can wake them
         if (instance == nullptr) continue;
         if (std::find(woken.begin(), woken.end(), id) == woken.end()) woken.push_back(id);
     }
     for (const int id : woken) {
         yyc::RValue stash{};
-        if (yyc::GetVar(id, kSlotStashList, &stash) && yyc::IsNumber(stash)) {
+        if (!bare && yyc::GetVar(id, kSlotStashList, &stash) && yyc::IsNumber(stash)) {
             const double cell = yyc::ToReal(stash);
             for (int at; (at = static_cast<int>(Builtin(self, "ds_list_find_index", {cell, double(id)}))) >= 0;) {
                 Builtin(self, "ds_list_delete", {cell, double(at)});

@@ -20,6 +20,7 @@
 
 #include "gui.h"
 #include "log.h"
+#include "reconcile.h"
 #include "sync.h"
 
 #pragma comment(lib, "ws2_32.lib")
@@ -28,7 +29,7 @@ namespace coop::debugport {
 
 namespace {
 
-constexpr auto kAnswerTimeout = std::chrono::seconds(5);  // the game may be in a menu, where Tick does not run
+constexpr auto kAnswerTimeout = std::chrono::seconds(5);  // a loading screen or a modal window: no Tick runs
 constexpr size_t kMaxLine = 1024;
 constexpr size_t kMaxListed = 100;
 constexpr double kSameSpot = 4;  // pixels, as sync and reconcile match objects
@@ -122,6 +123,22 @@ std::string List(const std::vector<std::string>& w) {
     return out.str();
 }
 
+// "dump": every world object that should be the same at every player (reconcile::WorldObjects), as "object x y"
+// sorted, for world-diff.ps1.
+std::string Dump(yyc::CInstance* self) {
+    std::vector<std::string> lines;
+    for (const reconcile::WorldObject& o : reconcile::WorldObjects(self)) {
+        char line[64] = {};
+        snprintf(line, sizeof(line), "%d %.0f %.0f", o.object, o.x, o.y);
+        lines.push_back(line);
+    }
+    std::sort(lines.begin(), lines.end());
+    std::ostringstream out;
+    out << lines.size() << ":";
+    for (const std::string& line : lines) out << " " << line << ";";
+    return out.str();
+}
+
 std::string Call(yyc::CInstance* self, const std::vector<std::string>& w) {
     std::vector<yyc::RValue> args;
     for (size_t i = 2; i < w.size(); ++i) args.push_back(yyc::Real(Number(w[i])));
@@ -198,7 +215,8 @@ std::string Answer(yyc::CInstance* self, const std::string& line) {
         return text;
     }
     if (c == "call" && w.size() >= 2) return Call(self, w);
-    return "unknown command (ping, player, count, list, at, var, set, event, global, call)";
+    if (c == "dump") return Dump(self);
+    return "unknown command (ping, player, count, list, at, var, set, event, global, call, dump)";
 }
 
 // One connection at a time: lines in, an answer each, until the client hangs up.
@@ -284,9 +302,8 @@ void Tick(yyc::CInstance* localPlayer) {
         if (first == "woken" && !object.empty()) {
             std::string rest;
             std::getline(in, rest);
-            gui::Begin(localPlayer);
-            gui::Call("instance_activate_object", {double(Slot(object))});
-            sync::RunBeforeCull([localPlayer, request, rest] { Finish(request, Answer(localPlayer, rest)); });
+            sync::WakeThen(localPlayer, Slot(object),
+                           [localPlayer, request, rest] { Finish(request, Answer(localPlayer, rest)); });
             continue;
         }
         Finish(request, Answer(localPlayer, request->line));

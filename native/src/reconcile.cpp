@@ -7,6 +7,8 @@
 #include <cstring>
 #include <initializer_list>
 #include <set>
+#include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -21,6 +23,9 @@ namespace coop::reconcile {
 namespace {
 
 constexpr uint8_t kReconcile = 21;  // host -> guest: Area, then Entry[]
+constexpr uint8_t kWorldCheck = 22;  // host -> guest: CheckEntry[], the whole world (only compared and logged)
+constexpr unsigned kWorldCheckEverySteps = 1800;  // 30 s
+constexpr size_t kWorldCheckShown = 5;
 constexpr unsigned kEverySteps = 300;
 // World objects that stay put (decompiled/data/objects.tsv): parObject (rocks, trees, structures, special
 // objects), parHerb (bushes, crops), objBridge (no parent).
@@ -46,6 +51,10 @@ struct Entry {
     float x, y, depth;
     float sprite, image;  // the look it rolled (ore vs plain rock...)
 };
+struct CheckEntry {
+    int16_t object;
+    int16_t x, y;
+};
 #pragma pack(pop)
 
 struct Local {
@@ -56,6 +65,9 @@ struct Local {
 
 unsigned g_steps = 0;
 size_t g_nextGuest = 0;  // host: whose surroundings the next check covers
+unsigned g_checkSteps = 0;
+using Spot = std::tuple<int, int, int>;  // object, x, y
+std::set<Spot> g_lastHostOnly, g_lastHereOnly;  // guest: the last world check's differences
 std::set<int> g_lastExtra;    // guest: local ids the host did not have at the last check
 std::set<int> g_lastMissing;  // guest: host ids missing here at the last check
 
@@ -158,6 +170,59 @@ void Compare(yyc::CInstance* self, const Area& area, const std::vector<Entry>& h
 
 }  // namespace
 
+std::string Describe(const std::set<Spot>& spots) {
+    std::string text;
+    size_t shown = 0;
+    for (const auto& [object, x, y] : spots) {
+        if (shown++ == kWorldCheckShown) break;
+        text += " " + std::to_string(object) + "@(" + std::to_string(x) + "," + std::to_string(y) + ")";
+    }
+    return text;
+}
+
+// Guest: the host's whole world against ours. Only logged - reconcile repairs around the guest; this shows when and
+// where the worlds part anywhere (a playtest's log is read afterwards). Differences seen in two checks in a row are
+// the real ones: a spawn or destroy may be on its way.
+void CompareWorld(yyc::CInstance* self, const std::vector<CheckEntry>& host) {
+    const std::vector<WorldObject> here = WorldObjects(self);
+    std::vector<bool> used(here.size(), false);
+    std::set<Spot> hostOnly, hereOnly;
+    for (const CheckEntry& e : host) {
+        bool found = false;
+        for (size_t i = 0; i < here.size() && !found; ++i) {
+            if (used[i] || here[i].object != e.object || std::abs(here[i].x - e.x) > kMatchDistance ||
+                std::abs(here[i].y - e.y) > kMatchDistance) {
+                continue;
+            }
+            used[i] = found = true;
+        }
+        if (!found) hostOnly.insert({e.object, e.x, e.y});
+    }
+    for (size_t i = 0; i < here.size(); ++i) {
+        if (!used[i]) {
+            hereOnly.insert({here[i].object, static_cast<int>(std::lround(here[i].x)),
+                             static_cast<int>(std::lround(here[i].y))});
+        }
+    }
+    std::set<Spot> lastingHost, lastingHere;
+    for (const Spot& s : hostOnly) {
+        if (g_lastHostOnly.count(s) > 0) lastingHost.insert(s);
+    }
+    for (const Spot& s : hereOnly) {
+        if (g_lastHereOnly.count(s) > 0) lastingHere.insert(s);
+    }
+    if (!lastingHost.empty() || !lastingHere.empty()) {
+        Log("worldcheck: host %zu objects, here %zu; lasting: host only %zu%s, here only %zu%s", host.size(),
+            here.size(), lastingHost.size(), Describe(lastingHost).c_str(), lastingHere.size(),
+            Describe(lastingHere).c_str());
+    } else {
+        Log("worldcheck: host %zu objects, here %zu - the same (%zu/%zu in flight)", host.size(), here.size(),
+            hostOnly.size(), hereOnly.size());
+    }
+    g_lastHostOnly = std::move(hostOnly);
+    g_lastHereOnly = std::move(hereOnly);
+}
+
 void DebugTick(yyc::CInstance* localPlayer) {
     static const bool enabled = GetEnvironmentVariableA("COOP_DEBUG_DESYNC", nullptr, 0) > 0;
     static unsigned steps = 0;
@@ -182,7 +247,44 @@ void DebugTick(yyc::CInstance* localPlayer) {
     }
 }
 
+std::vector<WorldObject> WorldObjects(yyc::CInstance* self) {
+    // Every instance by id - FindInstance finds asleep ones too, whatever the cull lists say (an instance being woken
+    // is on none of them and not active yet for a step). Ids count up from 100000; a long run of none is the end.
+    constexpr int kFirstId = 100000, kEndGap = 20000;
+    std::vector<int8_t> kept(1024, 0);  // object index -> 0 unknown, 1 listed kind, -1 not
+    std::vector<WorldObject> objects;
+    for (int id = kFirstId, gap = 0; gap < kEndGap; ++id) {
+        yyc::CInstance* instance = yyc::FindInstance(id);
+        gap = instance == nullptr ? gap + 1 : 0;
+        if (instance == nullptr || interiors::IsInterior(id)) continue;
+        const int object = static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_object_index));
+        if (object < 0 || object >= static_cast<int>(kept.size())) continue;
+        if (kept[object] == 0) {
+            bool isKind = false;
+            for (const int kind : kKinds) {
+                isKind = isKind || object == kind ||
+                         Builtin(self, "object_is_ancestor", {double(object), double(kind)}) != 0;
+            }
+            kept[object] = isKind && !Moving(object) && !chests::IsTreasureChest(object) ? 1 : -1;
+        }
+        if (kept[object] != 1) continue;
+        objects.push_back({object, yyc::GetBuiltinReal(instance, yyc::va::YYVar_x),
+                           yyc::GetBuiltinReal(instance, yyc::va::YYVar_y)});
+    }
+    return objects;
+}
+
 void HostTick(yyc::CInstance* localPlayer) {
+    if (++g_checkSteps % kWorldCheckEverySteps == 0) {
+        std::vector<uint8_t> payload;
+        for (const WorldObject& o : WorldObjects(localPlayer)) {
+            const CheckEntry e{static_cast<int16_t>(o.object), static_cast<int16_t>(std::lround(o.x)),
+                               static_cast<int16_t>(std::lround(o.y))};
+            const auto* bytes = reinterpret_cast<const uint8_t*>(&e);
+            payload.insert(payload.end(), bytes, bytes + sizeof(e));
+        }
+        net::Send(kWorldCheck, payload.data(), payload.size());
+    }
     // The guests in turn, each checked every kEverySteps: with more guests the checks come more often, spread out.
     const std::vector<net::PeerId> peers = net::Peers();
     if (peers.empty()) return;
@@ -214,6 +316,13 @@ void HostTick(yyc::CInstance* localPlayer) {
 }
 
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
+    if (message.type == kWorldCheck) {
+        if (message.payload.size() % sizeof(CheckEntry) != 0) return true;
+        std::vector<CheckEntry> host(message.payload.size() / sizeof(CheckEntry));
+        if (!host.empty()) memcpy(host.data(), message.payload.data(), message.payload.size());
+        CompareWorld(localPlayer, host);
+        return true;
+    }
     if (message.type != kReconcile) return false;
     const auto& p = message.payload;
     if (p.size() < sizeof(Area) || (p.size() - sizeof(Area)) % sizeof(Entry) != 0) return true;
@@ -233,6 +342,9 @@ void Reset() {
     g_nextGuest = 0;
     g_lastExtra.clear();
     g_lastMissing.clear();
+    g_checkSteps = 0;
+    g_lastHostOnly.clear();
+    g_lastHereOnly.clear();
 }
 
 }  // namespace coop::reconcile

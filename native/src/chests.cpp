@@ -12,6 +12,7 @@
 #include "MinHook.h"
 #include "character.h"
 #include "log.h"
+#include "mutant.h"
 #include "sync.h"
 
 namespace coop::chests {
@@ -248,7 +249,10 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     if (message.payload.size() != sizeof(ChestMsg)) return true;
     ChestMsg msg{};
     memcpy(&msg, message.payload.data(), sizeof(msg));
-    if (IsHost()) {
+    if (IsHost() && Mutant("chests")) {  // the old rule: opened by anyone, gone for everyone
+        const int local = sync::Resolve(localPlayer, msg.hostId, msg.object, msg.x, msg.y);
+        if (local != 0) sync::RemoveLocal(localPlayer, local);
+    } else if (IsHost()) {
         RememberOpened(message.from, msg);
     } else {
         g_openedHere.push_back(msg);  // removed by the next Tick, once the world is here
