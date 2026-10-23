@@ -5,12 +5,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <set>
 #include <unordered_map>
 #include <vector>
 
 #include "MinHook.h"
 #include "interiors.h"
 #include "log.h"
+#include "mutant.h"
 #include "net.h"
 #include "puppet.h"
 #include "sync.h"
@@ -131,6 +133,9 @@ yyc::BuiltinFn g_origDeactivate = nullptr;
 yyc::BuiltinFn g_origListAdd = nullptr;
 bool g_cullBuiltinsTried = false;
 size_t g_sparedLastStep = 0;  // instances kept awake for guests since the last LogCulling
+bool g_inCull = false;            // inside CullObject (both sides)
+std::set<double> g_cellLists;     // the per-cell lists CullObject files sleepers in (culledInstances)
+constexpr int kSlotDeactivatedInstances = 0x16C;  // global.deactivatedInstances (var_slots.tsv)
 
 bool SeenByGuest(int id) {
     yyc::CInstance* instance = yyc::FindInstance(id);
@@ -160,6 +165,11 @@ void __cdecl DeactivateHook(yyc::RValue* result, yyc::CInstance* self, yyc::CIns
 
 void __cdecl ListAddHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstance* other, int argc,
                          yyc::RValue* args) {
+    if (g_inCull && argc == 2) {
+        const yyc::RValue* asleep = yyc::GlobalVar(kSlotDeactivatedInstances);
+        const double list = yyc::ToReal(args[0]);
+        if (asleep == nullptr || yyc::ToReal(*asleep) != list) g_cellLists.insert(list);
+    }
     if (g_culling && argc == 2 && !g_spared.empty() && static_cast<int>(yyc::ToReal(args[1])) == g_spared.back()) {
         return;  // a spared instance is not filed as asleep
     }
@@ -193,12 +203,18 @@ yyc::RValue* __cdecl CullObjectHook(yyc::CInstance* self, yyc::CInstance* other,
     sync::BeforeCull(self);
     CameraBounds camera{};
     std::vector<CameraBounds> frames = ReadCamera(&camera) ? GuestFrames(camera) : std::vector<CameraBounds>{};
-    if (frames.empty() || !CullBuiltinsReady()) return g_origCullObject(self, other, result, argc, args);
+    const bool hooked = CullBuiltinsReady();
+    if (frames.empty() || !hooked) {
+        g_inCull = hooked;
+        yyc::RValue* r = g_origCullObject(self, other, result, argc, args);
+        g_inCull = false;
+        return r;
+    }
     g_cullFrames = std::move(frames);
     g_spared.clear();
-    g_culling = true;
+    g_culling = g_inCull = true;
     yyc::RValue* r = g_origCullObject(self, other, result, argc, args);
-    g_culling = false;
+    g_culling = g_inCull = false;
     g_sparedLastStep += g_spared.size();
     for (const int id : g_spared) {
         yyc::RValue active = yyc::Real(1);
@@ -207,16 +223,41 @@ yyc::RValue* __cdecl CullObjectHook(yyc::CInstance* self, yyc::CInstance* other,
     return r;
 }
 
+}  // namespace
+
+// The game takes a dying instance off its sleep lists only by its `stashList` (TrueInstanceCleanup): the cell it was
+// last filed in. Filed in another cell too - woken there by anything but ProcessCulls, then moved on and culled
+// again - it stays in that one, and ProcessCulls stops the game on it later ("Unable to find any instance", the
+// host's and the guest's crashes in playtest 5). So every instance_destroy takes the id off every list.
+void ForgetInstance(yyc::CInstance* self, int id) {
+    if (Mutant("forget")) return;
+    constexpr double kDsTypeList = 2;
+    std::vector<double> lists(g_cellLists.begin(), g_cellLists.end());
+    if (const yyc::RValue* asleep = yyc::GlobalVar(kSlotDeactivatedInstances); asleep != nullptr && yyc::IsNumber(*asleep)) {
+        lists.push_back(yyc::ToReal(*asleep));
+    }
+    for (const double list : lists) {
+        if (Builtin(self, "ds_exists", {list, kDsTypeList}) == 0) {
+            g_cellLists.erase(list);  // the room's lists were made again
+            continue;
+        }
+        for (double at; (at = Builtin(self, "ds_list_find_index", {list, double(id)})) >= 0;) {
+            Builtin(self, "ds_list_delete", {list, at});
+        }
+    }
+}
+
+namespace {
+
 // Every ~10 s: how many instances the guests keep awake, and how long the game's list of sleeping instances is
 // (it must not grow while the players stand still).
 void LogCulling(yyc::CInstance* self, unsigned steps) {
     constexpr unsigned kEvery = 600;
-    constexpr int kSlotDeactivatedInstances = 0x16C;  // global.deactivatedInstances (var_slots.tsv)
     if (steps % kEvery != 0) return;
     const yyc::RValue* list = yyc::GlobalVar(kSlotDeactivatedInstances);
     const double asleep = list != nullptr ? Builtin(self, "ds_list_size", {yyc::ToReal(*list)}) : -1;
-    Log("mobs: culling: %zu kept awake for guests in the last %u steps, %.0f asleep", g_sparedLastStep, kEvery,
-        asleep);
+    Log("mobs: culling: %zu kept awake for guests in the last %u steps, %.0f asleep, %zu cell lists",
+        g_sparedLastStep, kEvery, asleep, g_cellLists.size());
     g_sparedLastStep = 0;
 }
 
@@ -414,6 +455,7 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
 
 void Reset() {
     g_targets.clear();
+    g_cellLists.clear();
     g_received = 0;
     g_purgedAt = 0;
 }

@@ -5,6 +5,7 @@
 //   savelists  no list fixing before a save (bug 10)
 //   herbs      dead ids stay on global.herbs (the game stops in HerbProcess)
 //   wake       waking leaves ids on the cull lists (the ProcessCulls crash)
+//   forget     a destroyed instance stays on cull lists other than its last cell
 //   modes      the coop mode screen shows every mode
 #pragma once
 

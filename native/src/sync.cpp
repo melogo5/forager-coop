@@ -14,6 +14,7 @@
 #include "MinHook.h"
 #include "chests.h"
 #include "log.h"
+#include "mobs.h"
 #include "mutant.h"
 #include "puppet.h"
 #include "interiors.h"
@@ -403,8 +404,10 @@ void __cdecl DestroyHook(yyc::CInstance* self, yyc::CInstance* other, int id, in
         puppet::BeginActing(hitter->second);
         g_hitByGuest.erase(hitter);
     }
+    const int targetId = target != nullptr ? static_cast<int>(yyc::GetBuiltinReal(target, yyc::va::YYVar_id)) : 0;
     g_origDestroy(self, other, id, executeEvent);
     if (forGuest) puppet::EndActing();
+    if (targetId != 0 && yyc::FindInstance(targetId) == nullptr) mobs::ForgetInstance(self, targetId);
     if (!synced || chests::IsTreasureChest(info.object)) return;  // an opened chest is gone for its opener only
 
     if (IsHost()) {

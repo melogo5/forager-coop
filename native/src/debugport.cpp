@@ -216,6 +216,20 @@ std::string Answer(yyc::CInstance* self, const std::string& line) {
     }
     if (c == "call" && w.size() >= 2) return Call(self, w);
     if (c == "dump") return Dump(self);
+    if (c == "obj" && w.size() == 2) {  // what an instance id is: object, name, place, asleep or not
+        yyc::CInstance* instance = yyc::FindInstance(Slot(w[1]));
+        if (instance == nullptr) return "no such instance";
+        const double object = yyc::GetBuiltinReal(instance, yyc::va::YYVar_object_index);
+        yyc::RValue arg = yyc::Real(object);
+        yyc::RValue name{};
+        yyc::CallBuiltin("object_get_name", self, 1, &arg, &name);
+        char text[160] = {};
+        snprintf(text, sizeof(text), "%.0f %s at (%.0f, %.0f)%s", object, yyc::ToString(name).c_str(),
+                 yyc::GetBuiltinReal(instance, yyc::va::YYVar_x), yyc::GetBuiltinReal(instance, yyc::va::YYVar_y),
+                 yyc::IsDeactivated(instance) ? " asleep" : "");
+        yyc::Free(&name);
+        return text;
+    }
     return "unknown command (ping, player, count, list, at, var, set, event, global, call, dump)";
 }
 

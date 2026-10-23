@@ -76,10 +76,26 @@ class Reader:
             self.skip_value(self.keys[key][1])
 
 
-def drop_empty_records(raw, keys):
-    """The zone record with the empty maps of its lists (Instances, Herbs, ...) removed, and how many there were."""
+def rest_parses(raw, keys, at):
+    """True when raw[at:] reads as the zone's next top-level fields, right to its end."""
     r = Reader(raw, keys)
-    out, empty = bytearray(), 0
+    r.p = at
+    try:
+        while r.p < len(raw):
+            key = struct.unpack_from('<H', raw, r.p)[0]
+            r.p += 2
+            r.skip_value(keys[key][1])
+        return r.p == len(raw)
+    except (ValueError, IndexError, struct.error):
+        return False
+
+
+def drop_empty_records(raw, keys):
+    """The zone record with its lists (Instances, Herbs, Entities, ...) repaired, and how many records were bad:
+    empty maps are dropped, and a list whose count is larger than the maps written (playtest 5: Entities) ends
+    where the zone's next fields begin."""
+    r = Reader(raw, keys)
+    out, bad = bytearray(), 0
     while r.p < len(raw):
         start = r.p
         key = struct.unpack_from('<H', raw, r.p)[0]
@@ -92,15 +108,23 @@ def drop_empty_records(raw, keys):
         count = struct.unpack_from('<H', raw, r.p)[0]
         r.p += 2
         kept = []
-        for _ in range(count):
+        for i in range(count):
             at = r.p
-            r.skip_map()
+            try:
+                r.skip_map()
+            except (ValueError, IndexError, struct.error):
+                if not rest_parses(raw, keys, at):
+                    raise
+                r.p = at
+                bad += count - i
+                print(f'  {keys[key][0]}: {count} records counted, {i} written - the count is fixed')
+                break
             if raw[at] == 0:
-                empty += 1
+                bad += 1
             else:
                 kept.append(raw[at:r.p])
         out += raw[start:start + 2] + struct.pack('<H', len(kept)) + b''.join(kept)
-    return bytes(out), empty
+    return bytes(out), bad
 
 
 def main():
@@ -109,9 +133,9 @@ def main():
     keys = parse_keys(chunks[KEY_TABLE][1])
     total = 0
     for chunk in chunks[1:]:
-        chunk[1], empty = drop_empty_records(chunk[1], keys)
-        total += empty
-    print(f'{sys.argv[1]}: {total} empty records')
+        chunk[1], bad = drop_empty_records(chunk[1], keys)
+        total += bad
+    print(f'{sys.argv[1]}: {total} bad records')
     if len(sys.argv) > 2 and total > 0:
         open(sys.argv[2], 'wb').write(write_chunks(data, chunks))
         print(f'written {sys.argv[2]}')

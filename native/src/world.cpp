@@ -220,7 +220,12 @@ void PrepareSaveLists(yyc::CInstance* self) {
                 if (++gone <= 10) Log("world: instance %d is gone but still listed - left out of the save", ids[i]);
             } else if (yyc::IsDeactivated(instance) && listed.insert(ids[i]).second) {
                 ListCall(self, "ds_list_add", deactivated, ids[i]);
-                if (++unlisted <= 10) Log("world: instance %d sleeps unlisted - listed so the save wakes it", ids[i]);
+                if (++unlisted <= 10) {
+                    Log("world: instance %d (object %.0f at %.0f, %.0f) sleeps unlisted - listed so the save wakes it",
+                        ids[i], yyc::GetBuiltinReal(const_cast<yyc::CInstance*>(instance), yyc::va::YYVar_object_index),
+                        yyc::GetBuiltinReal(const_cast<yyc::CInstance*>(instance), yyc::va::YYVar_x),
+                        yyc::GetBuiltinReal(const_cast<yyc::CInstance*>(instance), yyc::va::YYVar_y));
+                }
             }
         }
     }
