@@ -7,6 +7,8 @@
 //   wake       waking leaves ids on the cull lists (the ProcessCulls crash)
 //   forget     a destroyed instance stays on cull lists other than its last cell
 //   modes      the coop mode screen shows every mode
+//   storagelock  the chest open here is sent while open (the other side's lock on it is released)
+//   vaultslots   each player's vaults have that player's own number of cells
 #pragma once
 
 #include <windows.h>

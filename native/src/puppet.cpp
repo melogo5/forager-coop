@@ -217,10 +217,13 @@ void __cdecl DrawHook(yyc::CInstance* self, yyc::CInstance* other) {
     g_actorId = previous;
 }
 
-// Damage meant for a puppet must not land on the local player (for now it is dropped).
+// Damage meant for a puppet must not land on the local player (for now it is dropped): DmgPlayer hurts PlayerFind(),
+// the local player, whoever was hit. A puppet is `other` when it touches the attacker, and `self` when the attacker
+// goes through the allies - a slime landing (`with (parAlly) if (place_meeting(x, y, slime)) DmgPlayer(...)`) hurt
+// the host when it landed on the guest (playtest 5).
 yyc::RValue* __cdecl DmgPlayerHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                    yyc::RValue** args) {
-    if (IsPuppetInstance(other)) return result;
+    if (IsPuppetInstance(other) || IsPuppetInstance(self)) return result;
     return g_origDmgPlayer(self, other, result, argc, args);
 }
 

@@ -12,7 +12,9 @@
 
 #include "MinHook.h"
 #include "log.h"
+#include "mutant.h"
 #include "net.h"
+#include "session.h"
 #include "stations.h"
 #include "sync.h"
 
@@ -23,6 +25,7 @@ namespace {
 constexpr uint8_t kStorage = 40;      // contents on close; also releases the chest
 constexpr uint8_t kStorageLock = 41;  // the sender opened this chest
 constexpr uint8_t kStorageDenied = 42;  // host -> guest: someone else had that chest open first; close it
+constexpr uint8_t kVaultSlots = 43;     // u8: guest -> host its own vault cells, host -> guest everyone's most
 constexpr uint32_t kVaultInteract = 0x00BC88D0;  // objVault Other_11: opens the storage menu
 constexpr uint32_t kStorageMenuDestroy = 0x00E51ED0;  // objStorageInventory Destroy_0
 constexpr int kSlotOwner = 0x6CA;                     // the menu's chest
@@ -160,10 +163,10 @@ void SendContents(yyc::CInstance* self, int chestId) {
         payload.size());
 }
 
-// How many of a vault's 9 cells this player may use: objVault Create_0 sets maxSlots = 6, +3 with skill 23
-// (HasSkill: skillUnlocked[23] == 2). Create runs with whatever skills are in place then - the guest's vaults come
-// from the host's save before the guest's own skills are applied, and the host builds a guest's vault with the
-// guest's skills - so each side sets it from its own player's skills (playtest 4, bug 5).
+// How many of a vault's 9 cells are used: objVault Create_0 sets maxSlots = 6, +3 with skill 23 (HasSkill:
+// skillUnlocked[23] == 2), with whatever skills are in place then (the guest's vaults come from the host's save before
+// its own skills are applied). Vaults are shared, so they have 9 cells for everyone once any player has the skill:
+// with each player's own count, the host did not see what the guest put in cells 7-9 (playtests 4 and 5).
 constexpr int kSlotMaxSlots = 0x639;
 constexpr int kSlotSkillUnlocked = 0x7BF;  // global.skillUnlocked
 constexpr int kSkillMoreVaultSlots = 23;
@@ -173,6 +176,25 @@ double OwnVaultSlots() {
     if (skills == nullptr || (skills->kind & yyc::kKindMask) != yyc::kArray) return 0;
     yyc::RValue copy = *skills;  // a plain copy: no reference taken or freed
     return yyc::ToReal(yyc::ArrayElement(&copy, kSkillMoreVaultSlots)) == 2 ? 9 : 6;
+}
+
+std::unordered_map<net::PeerId, double> g_peerSlots;  // host: each guest's own count; guest: the host's shared one
+double g_sentSlots = 0;
+
+// Every second: guests tell the host their own count, the host tells the guests the most of all.
+double SharedVaultSlots() {
+    const double own = OwnVaultSlots();
+    double shared = own;
+    for (const auto& [peer, slots] : g_peerSlots) {
+        if (!Mutant("vaultslots")) shared = (std::max)(shared, slots);
+    }
+    const double told = session::CurrentRole() == session::Role::kHost ? shared : own;
+    if (told > 0 && told != g_sentSlots) {
+        const uint8_t value = static_cast<uint8_t>(told);
+        net::Send(kVaultSlots, &value, 1);
+        g_sentSlots = told;
+    }
+    return shared;
 }
 
 void KeepVaultSlots(int chestId, double slots) {
@@ -190,12 +212,14 @@ void KeepVaultSlots(int chestId, double slots) {
 // every second each side sends the vaults whose contents changed since both last agreed (PLAYTEST.md #12, #13).
 void WatchVaults(yyc::CInstance* self) {
     const int count = static_cast<int>(CallReal(self, "instance_number", {yyc::Real(kObjVault)}));
-    const double slots = OwnVaultSlots();
+    const double slots = SharedVaultSlots();
     for (int i = 0; i < count; ++i) {
         const int chestId = static_cast<int>(CallReal(self, "instance_find", {yyc::Real(kObjVault), yyc::Real(i)}));
         if (yyc::FindInstance(chestId) == nullptr) continue;
         if (slots > 0) KeepVaultSlots(chestId, slots);
-        if (LockedByPeer(chestId)) continue;
+        // The chest open here goes out when it closes: sent while open, it released the other side's lock on it
+        // (ApplyContents), so both players had it open at once - items doubled or lost (playtest 5).
+        if (LockedByPeer(chestId) || (chestId == g_ownOpen && !Mutant("storagelock"))) continue;
         const size_t hash = Hash(Encode(self, chestId));
         const auto known = g_known.find(chestId);
         if (known == g_known.end()) {
@@ -396,12 +420,17 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
         }
         return true;
     }
+    if (message.type == kVaultSlots) {
+        if (message.payload.size() == 1) g_peerSlots[message.from] = message.payload[0];
+        return true;
+    }
     if (message.type != kStorage) return false;
     ApplyContents(localPlayer, message);
     return true;
 }
 
 void OnPeerJoined(net::PeerId peer) {
+    g_sentSlots = 0;  // the newcomer hears the vaults' cells at the next watch
     for (const int chestId : g_lockedByPeer) {
         yyc::CInstance* chest = yyc::FindInstance(chestId);
         if (chest == nullptr) continue;
@@ -411,6 +440,7 @@ void OnPeerJoined(net::PeerId peer) {
 }
 
 void OnPeerLeft(yyc::CInstance* localPlayer, net::PeerId peer) {
+    g_peerSlots.erase(peer);
     std::vector<int> freed;
     for (const auto& [chestId, owner] : g_lockOwners) {
         if (owner == peer) freed.push_back(chestId);
@@ -428,6 +458,8 @@ void Reset() {
     g_ownOpen = 0;
     g_known.clear();
     g_steps = 0;
+    g_peerSlots.clear();
+    g_sentSlots = 0;
 }
 
 }  // namespace coop::storage
