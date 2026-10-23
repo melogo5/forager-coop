@@ -663,6 +663,36 @@ void __cdecl ButtonUser0Hook(yyc::CInstance* self, yyc::CInstance* other) {
     lan::StartListening();
 }
 
+// COOP -> CREATE -> "+": coop worlds are Classic only (session.cpp sends a host of another mode back to the menu),
+// so the mode screen (uiModeSelect) shows only Classic. Its other mode buttons - LUI nodes, which are instances - are
+// faded out, shrunk to nothing and made inert. They stay on modeButtonList: taken off it, a click on Classic no
+// longer opened its PLAY panel. Arrow keys can still land on a hidden mode; session.cpp then turns the world away.
+constexpr uint32_t kModeSelectCreate = 0x00D47440;  // gml_Object_uiModeSelect_Create_0
+constexpr int kSlotOtherModes[] = {0x7B2, 0x7F0, 0x556};  // singleIslandButton, speedRunButton, hardModeButton
+constexpr int kSlotNodeHidden[] = {0x55, 0x815, 0x913, 0x91C, 0x820, 0x822, 0x5A3};  // alpha, startAlpha, xscale,
+                                                                                    // yscale, startX/Yscale, interactable
+yyc::EventFn g_origModeSelectCreate = nullptr;
+
+void __cdecl ModeSelectCreateHook(yyc::CInstance* self, yyc::CInstance* other) {
+    g_origModeSelectCreate(self, other);
+    if (session::CurrentRole() != session::Role::kHost) return;
+    const int screen = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
+    int hidden = 0;
+    for (const int slot : kSlotOtherModes) {
+        yyc::RValue nodeValue{};
+        const bool haveNode = yyc::GetVar(screen, slot, &nodeValue) && yyc::IsNumber(nodeValue);
+        const int node = haveNode ? static_cast<int>(yyc::ToReal(nodeValue)) : 0;
+        yyc::Free(&nodeValue);
+        if (yyc::FindInstance(node) == nullptr) continue;
+        for (const int var : kSlotNodeHidden) {
+            yyc::RValue zero = yyc::Real(0);
+            yyc::SetVar(node, var, &zero);
+        }
+        ++hidden;
+    }
+    Log("menu: mode screen for a coop world - %d modes other than Classic hidden", hidden);
+}
+
 bool Hook(uint32_t va, void* detour, void* original) {
     const MH_STATUS status = MH_CreateHook(yyc::At<void*>(va), detour, static_cast<void**>(original));
     if (status != MH_OK) Log("menu: hook @ VA %08X failed: %s", va, MH_StatusToString(status));
@@ -677,6 +707,7 @@ bool MenuInstall() {
     ok = Hook(kButtonStep, reinterpret_cast<void*>(&ButtonStepHook), &g_origButtonStep) && ok;
     ok = Hook(kButtonDraw, reinterpret_cast<void*>(&ButtonDrawHook), &g_origButtonDraw) && ok;
     ok = Hook(kButtonUser0, reinterpret_cast<void*>(&ButtonUser0Hook), &g_origButtonUser0) && ok;
+    ok = Hook(kModeSelectCreate, reinterpret_cast<void*>(&ModeSelectCreateHook), &g_origModeSelectCreate) && ok;
     return ok;
 }
 
