@@ -1,7 +1,7 @@
 // Testing aid ("mutation twins"): COOP_DEBUG_MUTANT=<name>[,<name>...] puts a fixed bug back, so the fix's test can
 // show it fails without the fix (tools/gametest/mutants.ps1). A test that cannot fail proves nothing.
 //   skills     the host acts for a guest with its own skills (playtest 4, bug 7)
-//   chests     a chest the guest opened goes away at the host too (bug 9)
+//   chests     chests are the game's own: one key opens a key chest for its opener only
 //   savelists  no list fixing before a save (bug 10)
 //   herbs      dead ids stay on global.herbs (the game stops in HerbProcess)
 //   wake       waking leaves ids on the cull lists (the ProcessCulls crash)

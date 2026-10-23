@@ -2,35 +2,46 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <fstream>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "MinHook.h"
-#include "character.h"
 #include "log.h"
 #include "mutant.h"
+#include "stations.h"
 #include "sync.h"
 
 namespace coop::chests {
 
 namespace {
 
-constexpr uint8_t kChestOpened = 93;  // guest -> host: the guest opened it; host -> guest: one it opened before
-constexpr uint8_t kChestMoved = 97;   // host -> guest: ChestMoveMsg, where a new chest came to rest
+constexpr uint8_t kChestOpened = 93;   // ChestMsg, any -> host -> the rest: a keyless chest opened; open yours
+constexpr uint8_t kChestMoved = 97;    // host -> guest: ChestMoveMsg, where a new chest came to rest
+constexpr uint8_t kChestKey = 98;      // guest -> host: ChestMsg, the guest put a key in this chest
+constexpr uint8_t kChestKeys = 99;     // host -> guests: KeysMsg, keys in it so far
+constexpr uint8_t kChestReward = 100;  // host -> guests: RewardMsg, every key is in: open it, the reward is this item
 // The chests' Other_11 (opening: loot, animation; the chest destroys itself afterwards).
 constexpr uint32_t kOpenEvents[] = {
-    0x00C3CC20,  // objTreasureChest
+    0x00C3CC20,  // objTreasureChest: needs a key (item 110), gives a gear item (objItemGet)
     0x00C47C10,  // objTreasureChestSmall
     0x00C53AA0,  // objTreasureChestVoid
 };
 constexpr int kOpenEventCount = sizeof(kOpenEvents) / sizeof(kOpenEvents[0]);
 constexpr int kFirstChest = 150, kLastChest = 153;  // objTreasureChest .. objTreasureChestSmallFrozen
+constexpr int kObjKeyChest = 150;
+constexpr int kObjItemGet = 289;      // the reward the key chest makes: its `item` is what the player gets
+constexpr double kKeyItem = 110;      // what objTreasureChest Other_11 counts and removes (ItemCount/RemoveItem)
+constexpr uint32_t kScriptItemCount = 0x006AB090;
+constexpr uint32_t kScriptRemoveItem = 0x006B6FC0;
+constexpr uint32_t kScriptGainItem = 0x006AC690;
 constexpr int kSlotUsable = 0x8CA;    // decompiled/code/var_slots.tsv: false once the chest has opened
 constexpr int kSlotGrounded = 0x54D;  // true once the chest has stopped sliding off what it landed on
+constexpr int kSlotItem = 0x5B8;
 constexpr unsigned kEverySteps = 60;
 constexpr double kSameSpot = 4;
 
@@ -46,13 +57,22 @@ struct ChestMoveMsg {
     float fromX, fromY;  // where the guest's copy was spawned
     float x, y;
 };
+struct KeysMsg {
+    ChestMsg chest;
+    uint8_t have, need;
+};
+struct RewardMsg {
+    ChestMsg chest;
+    float item;
+};
 #pragma pack(pop)
 
 yyc::EventFn g_orig[kOpenEventCount] = {};
 bool (*g_isHost)() = nullptr;
 unsigned g_steps = 0;
-// Guest: the chests this player has opened (here or in an earlier session): they stay gone here.
-std::vector<ChestMsg> g_openedHere;
+bool g_opening = false;                          // we run a chest's own opening: not news
+std::set<int> g_keyGiven;                        // chests (local ids) this player put a key in
+std::map<int, std::set<net::PeerId>> g_keys;     // host: chest -> the players whose key is in it
 // Host: where each treasure chest was when the guests last heard of it.
 struct Spot {
     double x, y;
@@ -79,35 +99,146 @@ double CallReal(yyc::CInstance* self, const char* name, std::vector<double> valu
     return number;
 }
 
+double CallScript(uint32_t va, yyc::CInstance* player, double arg) {
+    yyc::RValue value = yyc::Real(arg);
+    yyc::RValue* args[1] = {&value};
+    yyc::RValue result{};
+    yyc::At<yyc::ScriptFn>(va)(player, player, &result, 1, args);
+    const double number = yyc::ToReal(result);
+    yyc::Free(&result);
+    return number;
+}
+
 ChestMsg Describe(yyc::CInstance* chest, int id) {
     return {sync::HostIdOf(id), static_cast<int32_t>(yyc::GetBuiltinReal(chest, yyc::va::YYVar_object_index)),
             static_cast<float>(yyc::GetBuiltinReal(chest, yyc::va::YYVar_x)),
             static_cast<float>(yyc::GetBuiltinReal(chest, yyc::va::YYVar_y))};
 }
 
-std::wstring OpenedFile(net::PeerId guest) { return character::GuestDataFile(character::HostGuestName(guest), ".chests"); }
+// kOpenEvents' index for a hooked chest kind (150, 151, 152; the frozen small chest is not hooked).
+int EventIndex(int object) { return object == kObjKeyChest ? 0 : object == 151 ? 1 : 2; }
 
-// Each player opens every chest once (playtest 4, bug 9): the guest's opening stays the guest's - the host keeps
-// its chest, and remembers the guest's for its next visit. Only a chest that really opens counts: one that needs
-// a key the player lacks stays (PLAYTEST3.md #3).
+bool Opened(int id) { return yyc::FindInstance(id) == nullptr || ReadNumber(id, kSlotUsable) == 0; }
+
+// The chest's own opening, run here for `player` (as if it pressed E).
+void OpenHere(yyc::CInstance* chest, yyc::CInstance* player) {
+    const int object = static_cast<int>(yyc::GetBuiltinReal(chest, yyc::va::YYVar_object_index));
+    g_opening = true;
+    g_orig[EventIndex(object)](chest, player);
+    g_opening = false;
+}
+
+// The newest objItemGet (the one an opening just made: ids only grow), or 0.
+int NewestReward(yyc::CInstance* self) {
+    int newest = 0;
+    const int count = static_cast<int>(CallReal(self, "instance_number", {double(kObjItemGet)}));
+    for (int i = 0; i < count; ++i) {
+        newest = (std::max)(newest, static_cast<int>(CallReal(self, "instance_find", {double(kObjItemGet), double(i)})));
+    }
+    return newest;
+}
+
+// The key chest's opening for `player`, and the reward it made (0 if none).
+int OpenForReward(yyc::CInstance* chest, yyc::CInstance* player) {
+    const int before = NewestReward(player);
+    OpenHere(chest, player);
+    const int after = NewestReward(player);
+    return after > before ? after : 0;
+}
+
+void SayKeys(yyc::CInstance* player, int have, int need) {
+    const std::string text = "Keys in the chest: " + std::to_string(have) + "/" + std::to_string(need);
+    stations::Say(player, text.c_str());
+}
+
+// Host: every player's key is in - the host's chest opens with the game's own code (for that it gets back the key
+// it put in), and the guests open theirs with the same reward.
+void OpenForEveryone(yyc::CInstance* localPlayer, int chestId, const ChestMsg& msg) {
+    yyc::CInstance* chest = yyc::FindInstance(chestId);
+    g_keys.erase(chestId);
+    g_keyGiven.erase(chestId);
+    if (chest == nullptr) return;
+    CallScript(kScriptGainItem, localPlayer, kKeyItem);
+    const int reward = OpenForReward(chest, localPlayer);
+    const RewardMsg out{msg, static_cast<float>(reward != 0 ? ReadNumber(reward, kSlotItem) : -1)};
+    net::Send(kChestReward, &out, sizeof(out));
+    Log("chests: every key is in chest %d at (%.0f, %.0f) - opened for everyone, reward item %.0f", msg.object, msg.x,
+        msg.y, out.item);
+}
+
+// Host: `from` put a key in the chest.
+void AddKey(yyc::CInstance* localPlayer, int chestId, const ChestMsg& msg, net::PeerId from) {
+    std::set<net::PeerId>& keys = g_keys[chestId];
+    keys.insert(from);
+    const int need = 1 + static_cast<int>(net::Peers().size());
+    const int have = static_cast<int>(keys.size());
+    const KeysMsg out{msg, static_cast<uint8_t>(have), static_cast<uint8_t>(need)};
+    net::Send(kChestKeys, &out, sizeof(out));
+    SayKeys(localPlayer, have, need);
+    Log("chests: player %u put a key in chest %d at (%.0f, %.0f): %d/%d", from, msg.object, msg.x, msg.y, have, need);
+    if (have >= need) OpenForEveryone(localPlayer, chestId, msg);
+}
+
+// A key chest: every player puts a key in, and then all get the same reward at once (playtest 5: with each player's
+// own chest, a rejoin brought back the host's world, where the host had opened it). Without a session the game's own.
+void OpenKeyChest(yyc::CInstance* self, yyc::CInstance* player, int id) {
+    if (Opened(id)) return;
+    if (g_keyGiven.count(id) > 0) {
+        stations::Say(player, "Waiting for the other players' keys");
+        return;
+    }
+    if (CallScript(kScriptItemCount, player, kKeyItem) < 1) {
+        g_orig[0](self, player);  // the game says a key is needed
+        return;
+    }
+    CallScript(kScriptRemoveItem, player, kKeyItem);
+    g_keyGiven.insert(id);
+    const ChestMsg msg = Describe(self, id);
+    if (IsHost()) {
+        AddKey(player, id, msg, net::kHostPeer);
+    } else {
+        net::Send(kChestKey, &msg, sizeof(msg));
+        Log("chests: put a key in chest %d at (%.0f, %.0f)", msg.object, msg.x, msg.y);
+    }
+}
+
 template <int N>
 void __cdecl OpenHook(yyc::CInstance* self, yyc::CInstance* other) {
-    if (!net::IsConnected() || self == nullptr || IsHost()) {
+    if (!net::IsConnected() || self == nullptr || g_opening || Mutant("chests")) {
         g_orig[N](self, other);
         return;
     }
     const int id = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
+    if (N == 0) {
+        OpenKeyChest(self, other, id);
+        return;
+    }
+    // Keyless: opened here, then at every other player too (each gets its own loot).
     const ChestMsg msg = Describe(self, id);
-    const bool wasUsable = yyc::FindInstance(id) != nullptr && ReadNumber(id, kSlotUsable) != 0;
+    const bool wasUsable = !Opened(id);
     g_orig[N](self, other);
-    if (!wasUsable || (yyc::FindInstance(id) != nullptr && ReadNumber(id, kSlotUsable) != 0)) return;  // still shut
-    g_openedHere.push_back(msg);
+    if (!wasUsable || !Opened(id)) return;
     net::Send(kChestOpened, &msg, sizeof(msg));
-    Log("chests: opened chest %d at (%.0f, %.0f) here", msg.object, msg.x, msg.y);
+    Log("chests: opened chest %d at (%.0f, %.0f) here - it opens for everyone", msg.object, msg.x, msg.y);
 }
 
 constexpr yyc::EventFn kHooks[] = {&OpenHook<0>, &OpenHook<1>, &OpenHook<2>};
 static_assert(sizeof(kHooks) / sizeof(kHooks[0]) == kOpenEventCount, "one hook per chest");
+
+// The local copy of a chest a message is about (woken first if asleep), then `action` with it.
+template <typename Action>
+void WithChest(yyc::CInstance* self, const ChestMsg& msg, Action action, bool woken = false) {
+    const int local = sync::Resolve(self, msg.hostId, msg.object, msg.x, msg.y);
+    if (local == 0 && !woken) {
+        sync::WakeThen(self, msg.object, [self, msg, action] { WithChest(self, msg, action, true); });
+        return;
+    }
+    if (local == 0) {
+        Log("chests: chest %d at (%.0f, %.0f) is not here", msg.object, msg.x, msg.y);
+        return;
+    }
+    action(local);
+}
 
 // Calls `visit(instance, id)` for every active treasure chest.
 template <typename Visit>
@@ -119,21 +250,6 @@ void ForEachChest(yyc::CInstance* self, Visit visit) {
             if (yyc::CInstance* chest = yyc::FindInstance(id)) visit(chest, id);
         }
     }
-}
-
-// Guest: chests this player opened before stay gone, also when the world snapshot or a spawn brings them back.
-void RemoveOpened(yyc::CInstance* self) {
-    if (g_openedHere.empty()) return;
-    ForEachChest(self, [self](yyc::CInstance* chest, int id) {
-        const ChestMsg here = Describe(chest, id);
-        for (const ChestMsg& opened : g_openedHere) {
-            if (opened.object != here.object || std::hypot(opened.x - here.x, opened.y - here.y) > kSameSpot) continue;
-            sync::RemoveLocal(self, id);
-            Log("chests: chest %d at (%.0f, %.0f) was opened by this player before - removed", here.object, here.x,
-                here.y);
-            return;
-        }
-    });
 }
 
 // Host: a new chest slides off whatever it landed on (its Collision events) before it is `grounded`; the guests
@@ -175,11 +291,11 @@ void ApplyMove(yyc::CInstance* self, const ChestMoveMsg& msg) {
     Log("chests: chest %d moved to (%.0f, %.0f) as at the host", msg.object, msg.x, msg.y);
 }
 
-// Host: the guest opened a chest - kept on its file for the guest's next visit.
-void RememberOpened(net::PeerId guest, const ChestMsg& msg) {
-    std::ofstream(OpenedFile(guest), std::ios::binary | std::ios::app)
-        .write(reinterpret_cast<const char*>(&msg), sizeof(msg));
-    Log("chests: guest %u opened chest %d at (%.0f, %.0f); the host keeps its own", guest, msg.object, msg.x, msg.y);
+template <typename T>
+bool Read(const net::Message& message, T* out) {
+    if (message.payload.size() != sizeof(T)) return false;
+    memcpy(out, message.payload.data(), sizeof(T));
+    return true;
 }
 
 }  // namespace
@@ -188,22 +304,7 @@ bool IsTreasureChest(int object) { return object >= kFirstChest && object <= kLa
 
 void Tick(yyc::CInstance* localPlayer) {
     if (!net::IsConnected() || ++g_steps % kEverySteps != 0) return;
-    if (IsHost()) {
-        SendRestingPlaces(localPlayer);
-    } else {
-        RemoveOpened(localPlayer);
-    }
-}
-
-void HostOnGuest(net::PeerId peer) {
-    std::ifstream in(OpenedFile(peer), std::ios::binary);
-    ChestMsg msg{};
-    int sent = 0;
-    while (in.read(reinterpret_cast<char*>(&msg), sizeof(msg))) {
-        net::SendTo(peer, kChestOpened, &msg, sizeof(msg));
-        ++sent;
-    }
-    if (sent > 0) Log("chests: guest %u had opened %d chests before", peer, sent);
+    if (IsHost()) SendRestingPlaces(localPlayer);
 }
 
 void DebugTick(yyc::CInstance* localPlayer) {
@@ -237,33 +338,64 @@ bool InstallHooks(bool (*isHost)()) {
 }
 
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
-    if (message.type == kChestMoved) {
-        ChestMoveMsg msg{};
-        if (message.payload.size() == sizeof(msg) && !IsHost()) {
-            memcpy(&msg, message.payload.data(), sizeof(msg));
-            ApplyMove(localPlayer, msg);
+    switch (message.type) {
+        case kChestMoved: {
+            ChestMoveMsg msg{};
+            if (Read(message, &msg) && !IsHost()) ApplyMove(localPlayer, msg);
+            return true;
         }
-        return true;
+        case kChestOpened: {  // a keyless chest someone opened: ours opens too
+            ChestMsg msg{};
+            if (!Read(message, &msg)) return true;
+            if (IsHost()) net::SendExcept(message.from, kChestOpened, &msg, sizeof(msg));
+            WithChest(localPlayer, msg, [localPlayer, msg](int local) {
+                if (Opened(local)) return;
+                OpenHere(yyc::FindInstance(local), localPlayer);
+                Log("chests: the other player opened chest %d at (%.0f, %.0f) - opened here too", msg.object, msg.x,
+                    msg.y);
+            });
+            return true;
+        }
+        case kChestKey: {  // host: a guest's key
+            ChestMsg msg{};
+            if (!Read(message, &msg) || !IsHost()) return true;
+            const net::PeerId from = message.from;
+            WithChest(localPlayer, msg, [localPlayer, msg, from](int local) { AddKey(localPlayer, local, msg, from); });
+            return true;
+        }
+        case kChestKeys: {
+            KeysMsg msg{};
+            if (Read(message, &msg)) SayKeys(localPlayer, msg.have, msg.need);
+            return true;
+        }
+        case kChestReward: {  // every key is in: open ours, and its reward is the host's
+            RewardMsg msg{};
+            if (!Read(message, &msg)) return true;
+            WithChest(localPlayer, msg.chest, [localPlayer, msg](int local) {
+                g_keyGiven.erase(local);
+                if (Opened(local)) return;
+                CallScript(kScriptGainItem, localPlayer, kKeyItem);  // the key its opening takes
+                const int reward = OpenForReward(yyc::FindInstance(local), localPlayer);
+                if (reward != 0 && msg.item >= 0) {
+                    yyc::RValue item = yyc::Real(msg.item);
+                    yyc::SetVar(reward, kSlotItem, &item);
+                }
+                Log("chests: chest %d at (%.0f, %.0f) opened for everyone - reward item %.0f", msg.chest.object,
+                    msg.chest.x, msg.chest.y, msg.item);
+            });
+            return true;
+        }
+        default:
+            return false;
     }
-    if (message.type != kChestOpened) return false;
-    if (message.payload.size() != sizeof(ChestMsg)) return true;
-    ChestMsg msg{};
-    memcpy(&msg, message.payload.data(), sizeof(msg));
-    if (IsHost() && Mutant("chests")) {  // the old rule: opened by anyone, gone for everyone
-        const int local = sync::Resolve(localPlayer, msg.hostId, msg.object, msg.x, msg.y);
-        if (local != 0) sync::RemoveLocal(localPlayer, local);
-    } else if (IsHost()) {
-        RememberOpened(message.from, msg);
-    } else {
-        g_openedHere.push_back(msg);  // removed by the next Tick, once the world is here
-    }
-    return true;
 }
 
 void Reset() {
-    g_openedHere.clear();
+    g_keyGiven.clear();
+    g_keys.clear();
     g_spots.clear();
     g_steps = 0;
+    g_opening = false;
 }
 
 }  // namespace coop::chests

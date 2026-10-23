@@ -53,7 +53,7 @@ namespace coop {
 
 namespace {
 
-constexpr uint32_t kProtocolVersion = 12;  // 12: treasure chests are each player's own; where new ones come to rest
+constexpr uint32_t kProtocolVersion = 13;  // 13: chests with a key per player; shared vault cells; world checks
 constexpr unsigned kSendEverySteps = 3;       // 60 fps game step -> 20 updates/s
 constexpr unsigned kAnnounceEverySteps = 30;  // refresh the LAN announcement twice a second
 constexpr int kSlotGodMode = 0x54C;           // global.godMode (decompiled/code/var_slots.tsv)
@@ -279,7 +279,6 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             // The guest's character answer is out; now the world, so it arrives after it.
             if (guestIntroduced) {
                 skills::HostOnGuest(character::HostGuestName(message.from), message.from);
-                chests::HostOnGuest(message.from);
                 world::HostRequestSnapshot(localPlayer, message.from);
             }
             continue;

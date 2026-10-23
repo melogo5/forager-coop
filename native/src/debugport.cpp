@@ -216,6 +216,24 @@ std::string Answer(yyc::CInstance* self, const std::string& line) {
     }
     if (c == "call" && w.size() >= 2) return Call(self, w);
     if (c == "dump") return Dump(self);
+    if (c == "sleepcheck") {  // world objects asleep but not on global.deactivatedInstances: "N: id; ..."
+        std::vector<double> listed;
+        if (const yyc::RValue* asleep = yyc::GlobalVar(0x16C); asleep != nullptr && yyc::IsNumber(*asleep)) {
+            const double list = yyc::ToReal(*asleep);
+            const int n = static_cast<int>(gui::Call("ds_list_size", {list}));
+            for (int i = 0; i < n; ++i) listed.push_back(gui::Call("ds_list_find_value", {list, double(i)}));
+        }
+        std::ostringstream out;
+        int count = 0;
+        for (int id = 100000, gap = 0; gap < 20000; ++id) {
+            yyc::CInstance* instance = yyc::FindInstance(id);
+            gap = instance == nullptr ? gap + 1 : 0;
+            if (instance == nullptr || !yyc::IsDeactivated(instance)) continue;
+            if (std::find(listed.begin(), listed.end(), double(id)) != listed.end()) continue;
+            if (count++ < 20) out << " " << id << ";";
+        }
+        return std::to_string(count) + ":" + out.str();
+    }
     if (c == "obj" && w.size() == 2) {  // what an instance id is: object, name, place, asleep or not
         yyc::CInstance* instance = yyc::FindInstance(Slot(w[1]));
         if (instance == nullptr) return "no such instance";

@@ -18,6 +18,7 @@
 //   script <hex address> [n...]  -> a GML script's result (address from decompiled/code/index.tsv)
 //   dump                         -> "N: object x y; ..." every world object, asleep ones too (world-diff.ps1)
 //   obj <id>                     -> "object name at (x, y) [asleep]": what an instance id is
+//   sleepcheck                   -> "N: id; ..." instances asleep but on no sleep list (being woken)
 // It answers in the world and in the menus (there `player` is the menu object).
 #pragma once
 
