@@ -222,9 +222,8 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     std::vector<Entry> host((p.size() - sizeof(Area)) / sizeof(Entry));
     if (!host.empty()) memcpy(host.data(), p.data() + sizeof(Area), host.size() * sizeof(Entry));
     // What lies off the guest's screen is asleep (culled): wake the area up and look right before the next cull.
-    Builtin(localPlayer, "instance_activate_region",
-            {area.left - kSlack, area.top - kSlack, area.right - area.left + 2 * kSlack,
-             area.bottom - area.top + 2 * kSlack, 1});
+    sync::WakeRegion(localPlayer, area.left - kSlack, area.top - kSlack, area.right - area.left + 2 * kSlack,
+                     area.bottom - area.top + 2 * kSlack);
     sync::RunBeforeCull([localPlayer, area, host] { Compare(localPlayer, area, host); });
     return true;
 }

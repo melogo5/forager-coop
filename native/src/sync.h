@@ -30,6 +30,9 @@ void BeforeCull(yyc::CInstance* self);
 // Game thread: wakes every instance of `object` up (off-screen ones are deactivated) and runs `action` next
 // step, right before the game culls again - the only moment the woken instances are active.
 void WakeThen(yyc::CInstance* self, int object, std::function<void()> action);
+// Game thread: wakes the sleeping (culled) instances inside the rectangle, as the game's ProcessCulls does - off
+// its sleep lists too. Never instance_activate_* directly: the lists would keep stale ids (sync.cpp, WakeWhere).
+void WakeRegion(yyc::CInstance* self, double left, double top, double width, double height);
 // Game thread: runs `action` next step right before the game culls (after the caller woke something up).
 void RunBeforeCull(std::function<void()> action);
 

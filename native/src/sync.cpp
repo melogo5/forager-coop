@@ -21,6 +21,8 @@
 
 namespace coop::sync {
 
+void WakeInstance(yyc::CInstance* self, int id);
+
 namespace {
 
 enum MessageType : uint8_t {
@@ -773,10 +775,9 @@ void ApplyDestroy(yyc::CInstance* self, const ObjectMsg& msg) {
     if (TryDestroy(self, msg, local)) return;
     if (local == 0 && IsDrop(self, msg.object)) return;  // the host's own loot, collected at once: never sent
     if (local != 0) {
-        Builtin(self, "instance_activate_object", {double(local)});
+        WakeInstance(self, local);
     } else {
-        Builtin(self, "instance_activate_region",
-                {msg.x - kMatchDistance, msg.y - kMatchDistance, 2 * kMatchDistance, 2 * kMatchDistance, 1});
+        WakeRegion(self, msg.x - kMatchDistance, msg.y - kMatchDistance, 2 * kMatchDistance, 2 * kMatchDistance);
     }
     g_pendingDestroys.push_back({msg, local, 0});
 }
@@ -1168,8 +1169,60 @@ void Tick(yyc::CInstance* localPlayer) {
 
 std::vector<std::function<void()>> g_afterWake;
 
+// Waking as ProcessCulls does: off global.deactivatedInstances and off the cell's list it was culled into
+// (`stashList`), then activated. A bare instance_activate_* left the id in those lists: when the instance moved on
+// and died, ProcessCulls later met it in the old cell - "Unable to find any instance" (a GML error: the host's
+// crash after a guest killed a woken boar) - and SaveGame met sleepers it did not know of (playtest 4, bug 10).
+void WakeWhere(yyc::CInstance* self, const std::function<bool(yyc::CInstance*)>& pick) {
+    constexpr int kSlotDeactivated = 0x16C, kSlotStashList = 0x824;  // decompiled/code/var_slots.tsv
+    const yyc::RValue* listValue = yyc::GlobalVar(kSlotDeactivated);
+    if (listValue == nullptr || !yyc::IsNumber(*listValue)) return;
+    const double list = yyc::ToReal(*listValue);
+    std::vector<int> woken;
+    for (int i = static_cast<int>(Builtin(self, "ds_list_size", {list})) - 1; i >= 0; --i) {
+        const int id = static_cast<int>(Builtin(self, "ds_list_find_value", {list, double(i)}));
+        yyc::CInstance* instance = yyc::FindInstance(id);
+        if (instance != nullptr && !pick(instance)) continue;
+        Builtin(self, "ds_list_delete", {list, double(i)});  // gone ones go too: nothing can wake them
+        if (instance == nullptr) continue;
+        if (std::find(woken.begin(), woken.end(), id) == woken.end()) woken.push_back(id);
+    }
+    for (const int id : woken) {
+        yyc::RValue stash{};
+        if (yyc::GetVar(id, kSlotStashList, &stash) && yyc::IsNumber(stash)) {
+            const double cell = yyc::ToReal(stash);
+            for (int at; (at = static_cast<int>(Builtin(self, "ds_list_find_index", {cell, double(id)}))) >= 0;) {
+                Builtin(self, "ds_list_delete", {cell, double(at)});
+            }
+        }
+        yyc::Free(&stash);
+        Builtin(self, "instance_activate_object", {double(id)});
+    }
+}
+
+void WakeKind(yyc::CInstance* self, int object) {
+    WakeWhere(self, [self, object](yyc::CInstance* instance) {
+        const int kind = static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_object_index));
+        return kind == object || Builtin(self, "object_is_ancestor", {double(kind), double(object)}) != 0;
+    });
+}
+
+void WakeRegion(yyc::CInstance* self, double left, double top, double width, double height) {
+    WakeWhere(self, [=](yyc::CInstance* instance) {
+        const double x = yyc::GetBuiltinReal(instance, yyc::va::YYVar_x);
+        const double y = yyc::GetBuiltinReal(instance, yyc::va::YYVar_y);
+        return x >= left && x <= left + width && y >= top && y <= top + height;
+    });
+}
+
+void WakeInstance(yyc::CInstance* self, int id) {
+    WakeWhere(self, [id](yyc::CInstance* instance) {
+        return static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_id)) == id;
+    });
+}
+
 void WakeThen(yyc::CInstance* self, int object, std::function<void()> action) {
-    Builtin(self, "instance_activate_object", {double(object)});
+    WakeKind(self, object);
     g_afterWake.push_back(std::move(action));
 }
 

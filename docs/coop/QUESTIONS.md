@@ -93,8 +93,9 @@ _(пока нет)_
 - **Пустые записи в сейве зоны** ([PLAYTEST4.md](PLAYTEST4.md) #10): какой путь коопа оставляет посадку уничтоженной,
   но в `global.herbs`, или спящей, но не в `global.deactivatedInstances` — не найдено. Защита перед каждым
   сохранением пишет в лог хоста `world: instance N is gone but still listed` / `sleeps unlisted`: по этим строкам
-  в следующем плейтесте искать причину. Подозрение — наш culling у хоста (`mobs.cpp`, щадим объекты у гостей) и
-  `sync::WakeThen` (будит всех экземпляров вида, без списка). Испорченный мир чинится `tools/gametest/cinder_fix.py
+  в следующем плейтесте искать причину. Вероятная причина — голое `instance_activate_*` в
+  `sync::WakeThen` (с 2026-10-23 будится как в `ProcessCulls`, см. PLAYTEST4.md); если строки всё же появятся —
+  смотреть ещё culling хоста (`mobs.cpp`, щадим объекты у гостей). Испорченный мир чинится `tools/gametest/cinder_fix.py
   <in.cin> <out.cin>`.
 - **Вылеты гостя** (#3): причины узнаем из строк `crash: the game reported an error` в следующем плейтесте. Может
   помочь и `%LOCALAPPDATA%\Forager\error.log` друга (там его последняя ошибка).
