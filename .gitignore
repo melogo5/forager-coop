@@ -3,3 +3,4 @@ ghidra/
 native/build/
 tools/gametest/shots/
 .claude/
+__pycache__/
