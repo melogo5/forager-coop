@@ -55,7 +55,7 @@ namespace coop {
 
 namespace {
 
-constexpr uint32_t kProtocolVersion = 14;  // 14: the tool swing; hits shown to every player
+constexpr uint32_t kProtocolVersion = 15;  // 15: a guest greets first (net.cpp); 14: the tool swing
 constexpr unsigned kSendEverySteps = 3;       // 60 fps game step -> 20 updates/s
 constexpr unsigned kAnnounceEverySteps = 30;  // refresh the LAN announcement twice a second
 constexpr int kSlotGodMode = 0x54C;           // global.godMode (decompiled/code/var_slots.tsv)
@@ -208,6 +208,25 @@ uint32_t OurProtocol();
 
 // Different builds of the patch may go out of sync: both players are warned, the game goes on. A Windows
 // message box on its own thread, so the game keeps running behind it.
+void ShowWarning(const std::wstring& text) {
+    std::thread([text] {
+        const int answer = MessageBoxW(nullptr, text.c_str(), L"Forager coop", MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND);
+        Log("session: warning closed (%d, error %lu)", answer, GetLastError());
+    }).detach();
+}
+
+// Host: the game port is taken (another program, another copy of the game): say so once - nobody can join over
+// LAN/VPN, and before this the host waited for guests that could never come.
+void WarnIfPortClosed() {
+    static bool warned = false;
+    if (warned || !net::ListenFailed()) return;
+    warned = true;
+    Log("session: port %u could not be opened - guests cannot join over LAN/VPN", kGamePort);
+    ShowWarning(L"Coop cannot open port " + std::to_wstring(kGamePort) +
+                L" - another program (or another copy of Forager) is using it.\n\n"
+                L"Friends cannot join over LAN, Hamachi or Radmin until it is free. Steam invites still work.");
+}
+
 void WarnVersion(uint32_t theirs) {
     Log("session: the other player has protocol %u, ours is %u - playing on, with a warning", theirs, OurProtocol());
     wchar_t text[256];
@@ -215,10 +234,7 @@ void WarnVersion(uint32_t theirs) {
              L"The other player has a different version of the coop patch (theirs %u, yours %u).\n\n"
              L"You can play, but things may go out of sync. Best to use the same version.",
              theirs, OurProtocol());
-    std::thread([message = std::wstring(text)] {
-        const int answer = MessageBoxW(nullptr, message.c_str(), L"Forager coop", MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND);
-        Log("session: version warning closed (%d, error %lu)", answer, GetLastError());
-    }).detach();
+    ShowWarning(text);
 }
 
 // The protocol version this side speaks. Testing aid: COOP_DEBUG_PROTOCOL=<n> pretends to be another build.
@@ -245,6 +261,35 @@ constexpr uint8_t kSharedTypes[] = {
     94,  // stations: craft state
     93,  // chests: a treasure chest opened
 };
+
+// Types only the host sends. One from a guest is a broken or hostile peer: the host drops it (it obeyed before - a
+// guest's coins total set the host's coins, its clock the host's time of day, its world files rewrote a slot).
+constexpr uint8_t kHostOnlyTypes[] = {
+    3,  4,  5,  6,       // world: the snapshot
+    7,  8,  9,           // session: bye, another guest's state, a guest gone
+    10, 11, 16, 18, 19,  // sync: spawn, destroy, spawn ack, census, shared progress
+    20, 21, 22,          // mobs, reconcile, world check
+    31,                  // character: the stored character
+    42,                  // storage: denied
+    50,                  // land: an island bought
+    60,                  // clock
+    80,                  // coins: the total
+    95,                  // stations: denied
+    97, 99, 100,         // chests: moved, keys so far, reward
+};
+
+bool FromGuestButHostOnly(const net::Message& message) {
+    if (g_role != Role::kHost || message.from == net::kHostPeer) return false;
+    if (std::find(std::begin(kHostOnlyTypes), std::end(kHostOnlyTypes), message.type) == std::end(kHostOnlyTypes)) {
+        return false;
+    }
+    static DWORD lastLog = 0;
+    if (GetTickCount() - lastLog > 5000) {
+        lastLog = GetTickCount();
+        Log("session: guest %u sent message type %u, which only the host sends - ignored", message.from, message.type);
+    }
+    return true;
+}
 
 void Relay(const net::Message& message) {
     if (std::find(std::begin(kSharedTypes), std::end(kSharedTypes), message.type) == std::end(kSharedTypes)) return;
@@ -277,7 +322,7 @@ void HandleMessages(yyc::CInstance* localPlayer) {
     std::vector<net::Message> inbox;
     net::Drain(inbox);
     for (const auto& message : inbox) {
-        if (IsStaleClaim(message)) continue;
+        if (IsStaleClaim(message) || FromGuestButHostOnly(message)) continue;
         if (g_role == Role::kHost && message.from != net::kHostPeer) Relay(message);
         if (sync::Handle(message, localPlayer) || mobs::Handle(message, localPlayer) ||
             storage::Handle(message, localPlayer) || land::Handle(message, localPlayer) ||
@@ -540,7 +585,10 @@ void Tick(yyc::CInstance* localPlayer) {
     const bool connected = !peers.empty();
     if (g_role == Role::kHost && g_steps % kAnnounceEverySteps == 0) Announce(peers.size());
     TrackPeers(localPlayer, peers);
-    if (g_role == Role::kHost) world::HostTick();
+    if (g_role == Role::kHost) {
+        world::HostTick();
+        WarnIfPortClosed();
+    }
     if (g_role == Role::kGuest) {
         character::GuestTick(localPlayer);
     }

@@ -277,6 +277,7 @@ void ApplyContents(yyc::CInstance* self, const net::Message& message, bool woken
     if (p.size() < sizeof(Header)) return;
     Header header{};
     memcpy(&header, p.data(), sizeof(header));
+    if (header.object != kObjVault || header.rows > kMaxRows) return;
     const int chestId = sync::Resolve(self, header.hostId, header.object, header.x, header.y);
     if (chestId == 0 && !woken) {
         sync::WakeThen(self, header.object, [self, message] { ApplyContents(self, message, true); });
@@ -399,6 +400,7 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
         if (message.payload.size() >= sizeof(Header)) {
             Header header{};
             memcpy(&header, message.payload.data(), sizeof(header));
+            if (header.object != kObjVault) return true;
             const int chestId = sync::Resolve(localPlayer, header.hostId, header.object, header.x, header.y);
             if (message.from != net::kHostPeer && chestId != 0 && !AllowLock(chestId, message.from, header)) {
                 return true;
@@ -421,7 +423,10 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
         return true;
     }
     if (message.type == kVaultSlots) {
-        if (message.payload.size() == 1) g_peerSlots[message.from] = message.payload[0];
+        constexpr uint8_t kFewestCells = 6, kMostCells = 9;  // a vault's cells, without and with every upgrade
+        if (message.payload.size() == 1 && message.payload[0] >= kFewestCells && message.payload[0] <= kMostCells) {
+            g_peerSlots[message.from] = message.payload[0];
+        }
         return true;
     }
     if (message.type != kStorage) return false;

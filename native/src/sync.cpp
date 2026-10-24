@@ -231,6 +231,12 @@ void SendToOtherGuests(net::PeerId from, MessageType type, const InstanceInfo& i
     ++g_sent[type & 15];
 }
 
+// `instance` is an `object` or one of its children.
+bool IsKind(yyc::CInstance* self, yyc::CInstance* instance, int object) {
+    const int own = static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_object_index));
+    return own == object || (object >= 0 && Builtin(self, "object_is_ancestor", {double(own), double(object)}) != 0);
+}
+
 bool IsDrop(yyc::CInstance* self, int object) {
     return object == kParResource ||
            (object >= 0 && Builtin(self, "object_is_ancestor", {double(object), double(kParResource)}) != 0);
@@ -621,6 +627,10 @@ void SendHp(yyc::CInstance* target, uint8_t hitter = kNoHitter) {
 }
 
 void ApplyHp(yyc::CInstance* self, const HpMsg& msg) {
+    if (!std::isfinite(msg.hp) || !std::isfinite(msg.alpha) || !std::isfinite(msg.last) || !std::isfinite(msg.white)) {
+        return;
+    }
+    if (IsHost() && !IsSynced(self, msg.object)) return;  // a guest repairs world objects only
     const int local = Resolve(self, msg.id, msg.object, msg.x, msg.y);
     if (local == 0) return;
     const int slots[4] = {kSlotHp, kSlotHpAlpha, kSlotHpLast, kSlotHpWhite};
@@ -831,13 +841,22 @@ void RetryDestroys(yyc::CInstance* self, bool countAttempt) {
 }
 
 
-// Host: the instance a guest message refers to (by the host id it carries, else by object and position).
+// Host: the instance a guest message refers to (by the host id it carries, else by object and position) - only a
+// world object of the kind the message names (an id alone could name anything, the host's own player too).
 yyc::CInstance* ResolveOnHost(yyc::CInstance* self, const ObjectMsg& msg) {
+    if (!IsSynced(self, msg.object)) return nullptr;
     if (msg.id > 0) {
-        if (yyc::CInstance* instance = yyc::FindInstance(msg.id)) return instance;
+        yyc::CInstance* instance = yyc::FindInstance(msg.id);
+        if (instance != nullptr && IsKind(self, instance, msg.object)) return instance;
+        if (instance != nullptr) {
+            Log("sync: a guest named instance %d as object %d, but it is object %.0f", msg.id, msg.object,
+                yyc::GetBuiltinReal(instance, yyc::va::YYVar_object_index));
+        }
     }
     return FindAt(self, msg.object, msg.x, msg.y);
 }
+
+bool IsFinite(const ObjectMsg& msg) { return std::isfinite(msg.x) && std::isfinite(msg.y) && std::isfinite(msg.depth); }
 
 // `woken`: the second try, after waking up the object's kind (the host may have culled what the guest hit).
 void ApplyHit(yyc::CInstance* self, net::PeerId from, const ObjectMsg& msg, bool woken = false) {
@@ -847,8 +866,8 @@ void ApplyHit(yyc::CInstance* self, net::PeerId from, const ObjectMsg& msg, bool
         WakeThen(self, msg.object, [self, from, msg] { ApplyHit(self, from, msg, true); });
         return;
     }
-    Log("sync: guest hit object %d at (%.0f, %.0f): %s (dmg %.1f, guest %u)", msg.object, msg.x, msg.y,
-        target == nullptr ? "not found" : guest == nullptr ? "no puppet" : "applied", msg.depth, from);
+    Log("sync: guest hit object %d (host id %d) at (%.0f, %.0f): %s (dmg %.1f, guest %u)", msg.object, msg.id,
+        msg.x, msg.y, target == nullptr ? "not found" : guest == nullptr ? "no puppet" : "applied", msg.depth, from);
     if (target == nullptr || guest == nullptr) return;
     const int targetId = static_cast<int>(yyc::GetBuiltinReal(target, yyc::va::YYVar_id));
     g_hitByGuest[targetId] = from;
@@ -875,6 +894,10 @@ void ApplyHit(yyc::CInstance* self, net::PeerId from, const ObjectMsg& msg, bool
 // Host: build what the guest built (as the guest, for anything that asks who "the player" is) and tell
 // the guest which instance it became.
 void ApplyGuestSpawn(yyc::CInstance* self, net::PeerId from, const ObjectMsg& msg) {
+    if (!IsFinite(msg) || (!IsSynced(self, msg.object) && !IsScrollSpawner(msg.object))) {
+        Log("sync: guest %u asked to build object %d - not something players build; ignored", from, msg.object);
+        return;
+    }
     puppet::BeginActing(from);
     ++g_applyingRemote;
     const int id = static_cast<int>(
@@ -902,6 +925,8 @@ void ApplyGuestDestroyed(yyc::CInstance* self, net::PeerId from, const ObjectMsg
 
 // Host: XP the guest earned, added to the shared progress.
 void ApplyXp(yyc::CInstance* localPlayer, const XpMsg& msg) {
+    constexpr float kMaxXpAtOnce = 1e6f;
+    if (!(msg.amount >= 0 && msg.amount <= kMaxXpAtOnce)) return;  // NaN fails both
     Log("sync: +%.1f XP from the guest", msg.amount);
     yyc::RValue amount = yyc::Real(msg.amount);
     yyc::RValue* args[1] = {&amount};
@@ -1334,7 +1359,8 @@ int HostIdOf(int localId) {
 int Resolve(yyc::CInstance* self, int hostId, int object, double x, double y) {
     if (hostId > 0) {
         const int local = IsHost() ? hostId : ReplicaOf(hostId);
-        if (local != 0 && yyc::FindInstance(local) != nullptr) return local;
+        yyc::CInstance* instance = local != 0 ? yyc::FindInstance(local) : nullptr;
+        if (instance != nullptr && IsKind(self, instance, object)) return local;
     }
     yyc::CInstance* found = FindAt(self, object, x, y);
     return found != nullptr ? static_cast<int>(yyc::GetBuiltinReal(found, yyc::va::YYVar_id)) : 0;

@@ -214,6 +214,8 @@ void ApplyDirt(yyc::CInstance* localPlayer, net::PeerId from, const std::vector<
     if (p.size() < 2 * sizeof(double) + 1) return;
     double xy[2] = {};
     memcpy(xy, p.data(), sizeof(xy));
+    constexpr size_t kMaxDirtText = 64;
+    if (!std::isfinite(xy[0]) || !std::isfinite(xy[1]) || p.size() > 2 * sizeof(double) + 1 + kMaxDirtText) return;
     const uint8_t kind = p[2 * sizeof(double)];
     const size_t at = 2 * sizeof(double) + 1;
     yyc::RValue values[3] = {yyc::Real(xy[0]), yyc::Real(xy[1]), {}};
@@ -358,7 +360,7 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
         if (message.payload.size() == sizeof(LandfillMsg)) {
             LandfillMsg msg{};
             memcpy(&msg, message.payload.data(), sizeof(msg));
-            ApplyLandfill(localPlayer, message.from, msg);
+            if (std::isfinite(msg.x) && std::isfinite(msg.y)) ApplyLandfill(localPlayer, message.from, msg);
         }
         return true;
     }

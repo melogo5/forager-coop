@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -48,6 +49,7 @@ constexpr uint32_t kScriptStructureEdit = 0x0070CA50;
 constexpr uint8_t kItemEdit = 0;
 constexpr uint8_t kStructureEdit = 1;
 constexpr int kMaxEffectArgs = 4;
+constexpr int kEffectArgs = 3;
 constexpr size_t kMaxEffects = 256;  // pending, between two sends
 
 struct State {
@@ -207,9 +209,18 @@ bool DecodeTree(const uint8_t* data, size_t size, std::vector<int8_t>* tree, std
     for (uint16_t e = 0; e < effectCount; ++e) {
         Effect effect;
         uint8_t argc = 0;
-        if (!take(&effect.script, 1) || !take(&argc, 1) || argc > kMaxEffectArgs) return false;
+        // ItemEdit and StructureEdit always take 3 arguments (every call in the game); others would make them read
+        // past what they were given.
+        if (!take(&effect.script, 1) || !take(&argc, 1) || argc != kEffectArgs ||
+            (effect.script != kItemEdit && effect.script != kStructureEdit)) {
+            return false;
+        }
         effect.args.resize(argc);
         if (!take(effect.args.data(), argc * sizeof(double))) return false;
+        for (const double arg : effect.args) {
+            if (!std::isfinite(arg)) return false;
+        }
+        if (effects->size() >= kMaxEffects) return false;
         effects->push_back(std::move(effect));
     }
     return at == size;
@@ -440,6 +451,7 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
         if (message.from != net::kHostPeer) net::SendExcept(message.from, kSkills, p.data(), p.size());
         return true;
     }
+    if ((p[0] == kNothingStored || p[0] == kStored) && message.from != net::kHostPeer) return true;  // host's say
     if (p[0] == kUpload) {  // host
         State state;
         if (!Decode(p.data() + 1, p.size() - 1, &state)) return true;

@@ -491,7 +491,10 @@ void Update(yyc::CInstance* localPlayer, net::PeerId player, const State& target
         Approach(instance, yyc::va::YYVar_x, target.x);
         Approach(instance, yyc::va::YYVar_y, target.y);
     }
-    yyc::SetBuiltinReal(instance, yyc::va::YYVar_sprite_index, target.sprite);
+    constexpr int kSpriteCount = 1388;  // decompiled/data/sprites.tsv; another index fails the puppet's drawing
+    if (target.sprite >= 0 && target.sprite < kSpriteCount) {
+        yyc::SetBuiltinReal(instance, yyc::va::YYVar_sprite_index, target.sprite);
+    }
     yyc::SetBuiltinReal(instance, yyc::va::YYVar_image_index, target.imageIndex);
     yyc::SetBuiltinReal(instance, yyc::va::YYVar_image_xscale, target.xscale);
     yyc::SetBuiltinReal(instance, yyc::va::YYVar_image_yscale, target.yscale);

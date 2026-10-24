@@ -272,6 +272,10 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     if (n > kMaxRequirement || at + n * sizeof(double) != p.size()) return true;
     q.requirement.resize(n);
     if (n > 0) memcpy(q.requirement.data(), p.data() + at, n * sizeof(double));
+    // Only NPCs have quests: on anything else the quest scripts fail (a GML error).
+    if (object != kParNPC && CallReal(localPlayer, "object_is_ancestor", {double(object), double(kParNPC)}) == 0) {
+        return true;
+    }
     // The NPC may be off-screen here, i.e. deactivated: wake its kind up first.
     sync::WakeThen(localPlayer, object, [localPlayer, object, q] { Apply(localPlayer, object, q); });
     return true;

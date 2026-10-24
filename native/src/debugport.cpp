@@ -251,6 +251,13 @@ std::string Answer(yyc::CInstance* self, const std::string& line) {
     return "unknown command (ping, player, count, list, at, var, set, event, global, call, dump)";
 }
 
+bool LooksLikeHttp(const std::string& line) {
+    for (const char* verb : {"GET ", "POST ", "PUT ", "HEAD ", "OPTIONS ", "DELETE ", "PATCH "}) {
+        if (line.rfind(verb, 0) == 0) return true;
+    }
+    return line.find(" HTTP/") != std::string::npos;
+}
+
 // One connection at a time: lines in, an answer each, until the client hangs up.
 void Serve(SOCKET client) {
     std::string pending;
@@ -264,11 +271,16 @@ void Serve(SOCKET client) {
             std::string line = pending.substr(0, end);
             pending.erase(0, end + 1);
             if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (LooksLikeHttp(line)) {  // a web page posting to 127.0.0.1 must not drive the game
+                closesocket(client);
+                return;
+            }
             auto request = std::make_shared<Request>();
             request->line = line.substr(0, kMaxLine);
             std::unique_lock<std::mutex> lock(g_lock);
             g_queue.push_back(request);
             const bool done = g_answered.wait_for(lock, kAnswerTimeout, [&request] { return request->done; });
+            if (!done) g_queue.erase(std::remove(g_queue.begin(), g_queue.end(), request), g_queue.end());
             const std::string reply = (done ? request->reply : "timeout (not in a world?)") + "\n";
             lock.unlock();
             send(client, reply.data(), static_cast<int>(reply.size()), 0);

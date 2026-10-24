@@ -441,6 +441,12 @@ void LeaveDenied(yyc::CInstance* self, const Key& key) {
 
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     if (message.type == kStationState) {
+        // A guest's craft must not overwrite one running here at the host's own station.
+        if (message.from != net::kHostPeer && message.payload.size() >= 12) {
+            int32_t head[3] = {};
+            memcpy(head, message.payload.data(), sizeof(head));
+            if (UsedHere(localPlayer, Key{head[0], head[1], head[2]})) return true;
+        }
         ApplyState(localPlayer, message.payload);
         return true;
     }

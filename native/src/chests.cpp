@@ -349,8 +349,8 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
         }
         case kChestOpened: {  // a keyless chest someone opened: ours opens too
             ChestMsg msg{};
-            if (!Read(message, &msg)) return true;
-            if (IsHost()) net::SendExcept(message.from, kChestOpened, &msg, sizeof(msg));
+            // A key chest opens only when every key is in; the session already passes this on to the others.
+            if (!Read(message, &msg) || !IsTreasureChest(msg.object) || msg.object == kObjKeyChest) return true;
             WithChest(localPlayer, msg, [localPlayer, msg](int local) {
                 if (Opened(local)) return;
                 OpenHere(yyc::FindInstance(local), localPlayer);
@@ -361,7 +361,7 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
         }
         case kChestKey: {  // host: a guest's key
             ChestMsg msg{};
-            if (!Read(message, &msg) || !IsHost()) return true;
+            if (!Read(message, &msg) || !IsHost() || msg.object != kObjKeyChest) return true;
             const net::PeerId from = message.from;
             WithChest(localPlayer, msg, [localPlayer, msg, from](int local) { AddKey(localPlayer, local, msg, from); });
             return true;

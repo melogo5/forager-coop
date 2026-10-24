@@ -1,7 +1,9 @@
 // Links between the host and its guests (a star: guests talk only to the host), over TCP or Steam P2P. Background threads accept,
-// connect and receive; the game thread sends and drains received messages. Frame on the wire:
+// connect, receive and send (each link has its own send queue and writer, so sending never waits for the network);
+// the game thread queues messages and drains received ones. Frame on the wire:
 // [u32 body size][body], body = [u8 type][payload] (bodies up to 8 MB). The sender is not on the wire: the
-// receiving side knows it from the connection.
+// receiving side knows it from the connection. A guest's first frame is a greeting: until it comes the host
+// keeps that link out of Peers(), sends it nothing and hands up nothing from it, and drops it after 10 s.
 #pragma once
 
 #include <cstdint>
@@ -34,6 +36,8 @@ void Stop();
 
 // Any link is up (a guest: to the host; the host: to at least one guest).
 bool IsConnected();
+// Host: the game port could not be opened (in use?) - nobody can join over TCP.
+bool ListenFailed();
 // The peers linked right now, in the order they connected.
 std::vector<PeerId> Peers();
 // Host: to every guest; guest: to the host. False if not connected or a send failed.
@@ -42,6 +46,9 @@ bool Send(uint8_t type, const void* payload, size_t size);
 bool SendTo(PeerId peer, uint8_t type, const void* payload, size_t size);
 // Host: to every guest but `except` (passing on what that guest said).
 void SendExcept(PeerId except, uint8_t type, const void* payload, size_t size);
+// Bytes queued for `peer` and not sent yet (0 if not linked). A big transfer waits on it to keep the queue short;
+// a peer whose queue grows past ~96 MB is dropped.
+size_t Backlog(PeerId peer);
 // Moves every message received since the last call into `out`.
 void Drain(std::vector<Message>& out);
 

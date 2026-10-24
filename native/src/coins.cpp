@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
@@ -74,6 +75,8 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     double value = 0;
     if (message.payload.size() != sizeof(value)) return true;
     memcpy(&value, message.payload.data(), sizeof(value));
+    constexpr double kMostCoins = 1e9;
+    if (!std::isfinite(value) || std::fabs(value) > kMostCoins) return true;  // would spoil the shared coins and the save
     double current = 0;
     if (!ReadCoins(localPlayer, &current)) return true;
     if (message.type == kCoinsChange) {  // host

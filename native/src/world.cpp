@@ -32,6 +32,7 @@ enum MessageType : uint8_t {
 
 constexpr int kSaveSettleSteps = 120;  // SaveGame is async; ~2 s at 60 fps is plenty for a few-KB slot
 constexpr size_t kChunkSize = 32 * 1024;
+constexpr size_t kMaxBacklog = 4 * 1024 * 1024;  // snapshot bytes queued for a guest before the sender waits
 constexpr size_t kMaxPath = 200;
 constexpr uint32_t kMaxFileSize = 64u * 1024 * 1024;
 constexpr char kMarkerName[] = "coop_world.txt";
@@ -94,6 +95,7 @@ bool SendFile(net::PeerId peer, const fs::path& root, const fs::path& file) {
     for (size_t offset = 0; offset < data.size(); offset += kChunkSize) {
         const size_t size = (std::min)(kChunkSize, data.size() - offset);
         if (!net::SendTo(peer, kWorldChunk, data.data() + offset, size)) return false;
+        while (net::Backlog(peer) > kMaxBacklog) Sleep(5);  // this thread, not the game, waits for a slow link
     }
     return true;
 }

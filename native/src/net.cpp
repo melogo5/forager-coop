@@ -6,6 +6,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
+#include <cstring>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -32,23 +35,48 @@ constexpr DWORD kPingEveryMs = 1000;
 // A Steam link silent this long is gone. Steam's own session state is no help: as long as we keep sending, Steam
 // keeps "connecting" to a peer that has quit (PLAYTEST2: a guest who left stayed in the game).
 constexpr DWORD kSteamSilentMs = 10000;
+// The guest's first frame: this greeting. Until it comes the host shows the link to nobody, sends it nothing, and
+// takes nothing from it; a link that does not greet within kGreetMs (anything that is not our patch: a port scan,
+// a stuck client) is closed, so it cannot hold a guest slot. Never handed up.
+constexpr uint8_t kNetHello = 0xFE;
+constexpr char kGreeting[] = "FCOOP1";
+constexpr size_t kGreetingSize = sizeof(kGreeting) - 1;
+constexpr DWORD kGreetMs = 10000;
+// Frames waiting to go to one peer. A peer that stops reading (suspended, its network gone quiet) would make the
+// queue grow for good: past this much the link is dropped.
+constexpr size_t kMaxQueued = 96 * 1024 * 1024;
+constexpr DWORD kCloseSendTimeoutMs = 2000;    // Stop(): how long the last frames (the host's goodbye) may take
 
-// One link: a TCP socket, or a Steam account reached through Steam's P2P network. Sends to it are serialized by its
-// own lock, so a long send (a world snapshot) to one guest does not hold up the others.
+using FramePtr = std::shared_ptr<const std::vector<uint8_t>>;
+
+// One link: a TCP socket, or a Steam account reached through Steam's P2P network. Frames to it go into its own
+// queue and its writer thread sends them, so no sender ever waits for the network - not the game thread, and not
+// one guest for another (a world snapshot to a slow guest held up the host's game, REVIEW.md).
 struct Connection {
-    SOCKET socket = INVALID_SOCKET;  // guarded by sendLock once shared
+    SOCKET socket = INVALID_SOCKET;  // closed when the last owner lets go (receive loop, writer, the list)
     uint64_t steamId = 0;            // a Steam link (then no socket)
     PeerId id = kHostPeer;
-    std::mutex sendLock;
+    std::atomic<bool> greeted{false};  // host: the guest's greeting came (always true on a guest)
     std::atomic<bool> dropped{false};  // Stop() let go of it: whatever still arrives is not queued
     std::vector<uint8_t> pending;      // Steam: bytes of a frame still coming (Steam receive thread only)
     DWORD since = GetTickCount();
     std::atomic<DWORD> heard{GetTickCount()};  // Steam: when the last packet came
+
+    std::mutex queueLock;  // guards the rest
+    std::condition_variable wake;
+    std::deque<FramePtr> queue;
+    size_t queued = 0;     // bytes in the queue
+    bool closing = false;  // the writer sends what is queued, then ends the link
+    bool abandon = false;  // ... or ends it right away
+
+    ~Connection() {
+        if (socket != INVALID_SOCKET) closesocket(socket);
+    }
 };
 using ConnectionPtr = std::shared_ptr<Connection>;
 
 std::mutex g_lock;                         // guards g_connections, g_listener, g_inbox, g_nextGuestId
-std::vector<ConnectionPtr> g_connections;  // in the order they connected
+std::vector<ConnectionPtr> g_connections;  // in the order they connected; greeted or not
 std::atomic<unsigned> g_joinGeneration{0};  // Stop() bumps it: older join threads give up
 std::atomic<unsigned> g_hostGeneration{0};  // ... and older host threads
 SOCKET g_listener = INVALID_SOCKET;
@@ -60,7 +88,8 @@ std::atomic<ConnectHandler> g_onConnect{nullptr};
 int g_maxGuests = 0;                          // host
 std::atomic<bool> g_steamHosting{false};      // host: Steam guests are taken too
 std::atomic<unsigned> g_steamGeneration{0};   // Stop() bumps it: the Steam receive thread ends
-std::atomic<bool> g_steamThread{false};       // a Steam receive thread is running
+std::atomic<unsigned> g_steamThreadGeneration{~0u};  // the generation a Steam receive thread was started for
+std::atomic<bool> g_listenFailed{false};
 
 bool RecvExact(SOCKET s, uint8_t* buffer, size_t size) {
     size_t done = 0;
@@ -72,17 +101,135 @@ bool RecvExact(SOCKET s, uint8_t* buffer, size_t size) {
     return true;
 }
 
-bool IdInUse(PeerId id) {  // under g_lock
-    return std::any_of(g_connections.begin(), g_connections.end(), [id](const ConnectionPtr& c) { return c->id == id; });
+size_t BodySize(const uint8_t* header) {
+    return header[0] | (header[1] << 8) | (header[2] << 16) | (static_cast<size_t>(header[3]) << 24);
 }
 
-// Under g_lock: the next guest id, skipping the host's and any still in use.
-PeerId NextGuestId() {
-    while (g_nextGuestId == kHostPeer || IdInUse(g_nextGuestId)) ++g_nextGuestId;
-    return g_nextGuestId++;
+FramePtr Frame(uint8_t type, const void* payload, size_t size) {
+    const size_t body = size + 1;
+    auto frame = std::make_shared<std::vector<uint8_t>>(kHeaderSize + body);
+    for (size_t i = 0; i < kHeaderSize; ++i) (*frame)[i] = static_cast<uint8_t>(body >> (8 * i));
+    (*frame)[kHeaderSize] = type;
+    if (size > 0) memcpy(frame->data() + kHeaderSize + 1, payload, size);
+    return frame;
 }
 
-ConnectionPtr Register(SOCKET s, PeerId id) {
+void SetTimeout(SOCKET s, int option, DWORD ms) {
+    setsockopt(s, SOL_SOCKET, option, reinterpret_cast<const char*>(&ms), sizeof(ms));
+}
+
+// ---- sending: a queue and a writer thread per link ----
+
+// Any thread: ends the link - after what is already queued, unless `now`. The writer does the rest (EndLink).
+void Close(Connection& connection, bool now) {
+    {
+        std::lock_guard<std::mutex> guard(connection.queueLock);
+        connection.closing = true;
+        connection.abandon = connection.abandon || now;
+    }
+    connection.wake.notify_all();
+}
+
+// False if the link is closing or its queue is full (then it is dropped: the peer is not reading).
+bool Enqueue(Connection& connection, const FramePtr& frame) {
+    bool queued = false;
+    {
+        std::lock_guard<std::mutex> guard(connection.queueLock);
+        if (connection.closing) return false;
+        if (connection.queued + frame->size() > kMaxQueued) {
+            Log("net: peer %u does not take what we send (%zu bytes waiting) - dropping it", connection.id,
+                connection.queued);
+            connection.closing = connection.abandon = true;
+        } else {
+            connection.queue.push_back(frame);
+            connection.queued += frame->size();
+            queued = true;
+        }
+    }
+    connection.wake.notify_all();
+    return queued;
+}
+
+// A blocking send; send() may take a large frame in several pieces. Over Steam the frame goes in packets of up to
+// kP2PChunk, which arrive in order and are joined again (FeedSteam).
+bool Write(const Connection& connection, const std::vector<uint8_t>& frame) {
+    if (connection.steamId != 0) {
+        for (size_t at = 0; at < frame.size(); at += kP2PChunk) {
+            const size_t size = (std::min)(kP2PChunk, frame.size() - at);
+            if (!steam::SendP2P(connection.steamId, frame.data() + at, static_cast<uint32_t>(size))) return false;
+        }
+        return true;
+    }
+    size_t sent = 0;
+    while (sent < frame.size()) {
+        const int n = send(connection.socket, reinterpret_cast<const char*>(frame.data() + sent),
+                           static_cast<int>(frame.size() - sent), 0);
+        if (n <= 0) return false;
+        sent += static_cast<size_t>(n);
+    }
+    return true;
+}
+
+void Forget(const ConnectionPtr& connection) {
+    std::lock_guard<std::mutex> guard(g_lock);
+    g_connections.erase(std::remove(g_connections.begin(), g_connections.end(), connection), g_connections.end());
+}
+
+// The writer's last act: the link is over for both directions. A TCP receive loop wakes up from recv() and ends.
+void EndLink(const ConnectionPtr& connection, bool clean) {
+    Forget(connection);
+    if (connection->steamId != 0) {
+        if (clean) Write(*connection, *Frame(kNetClose, nullptr, 0));  // Steam says nothing when a link ends: we do
+        steam::CloseP2P(connection->steamId);
+        return;
+    }
+    if (clean) shutdown(connection->socket, SD_SEND);  // what we sent arrives before the end
+    shutdown(connection->socket, SD_BOTH);
+}
+
+void WriterLoop(ConnectionPtr connection) {
+    bool clean = true;
+    for (;;) {
+        FramePtr frame;
+        {
+            std::unique_lock<std::mutex> lock(connection->queueLock);
+            connection->wake.wait(lock, [&] { return !connection->queue.empty() || connection->closing; });
+            if (connection->abandon) {
+                connection->queue.clear();
+                connection->queued = 0;
+                clean = false;
+            }
+            if (connection->queue.empty()) break;  // closing, and all sent
+            frame = std::move(connection->queue.front());
+            connection->queue.pop_front();
+            connection->queued -= frame->size();
+        }
+        if (!Write(*connection, *frame)) {
+            clean = false;
+            break;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> guard(connection->queueLock);
+        connection->closing = true;  // later sends are refused
+        connection->queue.clear();
+        connection->queued = 0;
+    }
+    EndLink(connection, clean);
+}
+
+ConnectionPtr NewConnection(SOCKET s, uint64_t steamId, PeerId id, bool greeted) {
+    auto connection = std::make_shared<Connection>();
+    connection->socket = s;
+    connection->steamId = steamId;
+    connection->id = id;
+    connection->greeted = greeted;
+    return connection;
+}
+
+void StartWriter(const ConnectionPtr& connection) { std::thread(WriterLoop, connection).detach(); }
+
+void PrepareSocket(SOCKET s) {
     const BOOL noDelay = TRUE;
     setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&noDelay), sizeof(noDelay));
     // A peer gone without a word (VPN cut, power off) would otherwise stay linked for good, holding its slot,
@@ -90,32 +237,33 @@ ConnectionPtr Register(SOCKET s, PeerId id) {
     tcp_keepalive keepalive{1, 10000, 2000};
     DWORD unused = 0;
     WSAIoctl(s, SIO_KEEPALIVE_VALS, &keepalive, sizeof(keepalive), nullptr, 0, &unused, nullptr, nullptr);
-    auto connection = std::make_shared<Connection>();
-    connection->socket = s;
-    connection->id = id;
-    std::lock_guard<std::mutex> guard(g_lock);
-    g_connections.push_back(connection);
-    return connection;
 }
 
-void Unregister(const ConnectionPtr& connection) {
-    {
-        std::lock_guard<std::mutex> guard(g_lock);
-        g_connections.erase(std::remove(g_connections.begin(), g_connections.end(), connection), g_connections.end());
-    }
-    std::lock_guard<std::mutex> guard(connection->sendLock);
-    if (connection->steamId != 0) {
-        steam::CloseP2P(connection->steamId);
-        connection->steamId = 0;
+FramePtr Greeting() { return Frame(kNetHello, kGreeting, kGreetingSize); }
+
+// ---- receiving ----
+
+// Host: the first frame of a guest's link must be its greeting; anything else ends the link.
+void Greet(const ConnectionPtr& connection, const uint8_t* body, size_t size) {
+    if (body[0] != kNetHello || size != 1 + kGreetingSize || memcmp(body + 1, kGreeting, kGreetingSize) != 0) {
+        Log("net: guest %u did not greet (first frame type %u, %zu bytes) - not our patch? dropping it",
+            connection->id, body[0], size);
+        Close(*connection, true);
         return;
     }
-    closesocket(connection->socket);
-    connection->socket = INVALID_SOCKET;
+    if (connection->socket != INVALID_SOCKET) SetTimeout(connection->socket, SO_RCVTIMEO, 0);
+    connection->greeted = true;
+    Log("net: guest %u greeted", connection->id);
 }
 
 // A frame's body from `connection`: to the receive handler or into the inbox.
 void Deliver(const ConnectionPtr& connection, const uint8_t* body, size_t size) {
     if (connection->dropped) return;
+    if (!connection->greeted) {
+        Greet(connection, body, size);
+        return;
+    }
+    if (body[0] == kNetHello) return;
     Message message;
     message.type = body[0];
     message.from = connection->id;
@@ -126,13 +274,13 @@ void Deliver(const ConnectionPtr& connection, const uint8_t* body, size_t size) 
     g_inbox.push_back(std::move(message));
 }
 
-// Receives frames until the peer goes away, then forgets the link.
+// Receives frames until the peer goes away, then ends the link.
 void ReceiveLoop(ConnectionPtr connection) {
-    const SOCKET s = connection->socket;  // only Unregister, below, changes it
+    const SOCKET s = connection->socket;
     uint8_t header[kHeaderSize];
     std::vector<uint8_t> body;
     while (RecvExact(s, header, sizeof(header))) {
-        const size_t size = header[0] | (header[1] << 8) | (header[2] << 16) | (static_cast<size_t>(header[3]) << 24);
+        const size_t size = BodySize(header);
         if (size == 0 || size > kMaxBody) {
             Log("net: bad frame size %zu from peer %u, dropping connection", size, connection->id);
             break;
@@ -142,16 +290,30 @@ void ReceiveLoop(ConnectionPtr connection) {
         Deliver(connection, body.data(), size);
     }
     Log("net: connection to peer %u closed", connection->id);
-    Unregister(connection);
+    Close(*connection, true);
 }
 
-void Connected(SOCKET s, PeerId id) {
-    ConnectionPtr connection = Register(s, id);
-    if (const ConnectHandler onConnect = g_onConnect.load()) onConnect(id);
-    ReceiveLoop(std::move(connection));
+// Under g_lock: the next guest id, skipping the host's and any still in use.
+PeerId NextGuestId() {
+    const auto inUse = [](PeerId id) {
+        return std::any_of(g_connections.begin(), g_connections.end(),
+                           [id](const ConnectionPtr& c) { return c->id == id; });
+    };
+    while (g_nextGuestId == kHostPeer || inUse(g_nextGuestId)) ++g_nextGuestId;
+    return g_nextGuestId++;
 }
 
-void HostThread(uint16_t port, int maxGuests, unsigned generation) {
+// Host: a new guest's link, listed at once (so two guests connecting together cannot both take the last slot);
+// nullptr if the session is full or hosting stopped meanwhile.
+ConnectionPtr AddGuest(SOCKET s, uint64_t steamId, unsigned generation, const std::atomic<unsigned>& current) {
+    std::lock_guard<std::mutex> guard(g_lock);
+    if (current != generation || static_cast<int>(g_connections.size()) >= g_maxGuests) return nullptr;
+    ConnectionPtr connection = NewConnection(s, steamId, NextGuestId(), false);
+    g_connections.push_back(connection);
+    return connection;
+}
+
+void HostThread(uint16_t port, unsigned generation) {
     SOCKET listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     sockaddr_in address{};
     address.sin_family = AF_INET;
@@ -160,6 +322,8 @@ void HostThread(uint16_t port, int maxGuests, unsigned generation) {
     if (listener == INVALID_SOCKET || bind(listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0 ||
         listen(listener, SOMAXCONN) != 0) {
         Log("net: cannot listen on port %u (error %d)", port, WSAGetLastError());
+        if (listener != INVALID_SOCKET) closesocket(listener);
+        g_listenFailed = true;
         return;
     }
     {
@@ -170,26 +334,28 @@ void HostThread(uint16_t port, int maxGuests, unsigned generation) {
         }
         g_listener = listener;
     }
-    Log("net: hosting on port %u for up to %d guests", port, maxGuests);
+    Log("net: hosting on port %u for up to %d guests", port, g_maxGuests);
     while (g_hostGeneration == generation) {
         sockaddr_in peer{};
         int peerSize = sizeof(peer);
         const SOCKET client = accept(listener, reinterpret_cast<sockaddr*>(&peer), &peerSize);
-        if (client == INVALID_SOCKET) continue;  // Stop() closes the listener: the loop then ends
+        if (client == INVALID_SOCKET) {  // Stop() closes the listener: the loop then ends
+            if (g_hostGeneration == generation) Sleep(50);
+            continue;
+        }
         char ip[INET_ADDRSTRLEN] = {};
         inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip));
-        PeerId id = kHostPeer;
-        {
-            std::lock_guard<std::mutex> guard(g_lock);
-            if (static_cast<int>(g_connections.size()) < maxGuests) id = NextGuestId();
-        }
-        if (id == kHostPeer) {
-            Log("net: rejecting %s, the session is full (%d guests)", ip, maxGuests);
+        PrepareSocket(client);
+        SetTimeout(client, SO_RCVTIMEO, kGreetMs);  // lifted by its greeting
+        ConnectionPtr connection = AddGuest(client, 0, generation, g_hostGeneration);
+        if (connection == nullptr) {
+            Log("net: rejecting %s, the session is full (%d guests)", ip, g_maxGuests);
             closesocket(client);
             continue;
         }
-        Log("net: guest %u connected from %s", id, ip);
-        std::thread(Connected, client, id).detach();
+        Log("net: guest %u connected from %s", connection->id, ip);
+        StartWriter(connection);
+        std::thread(ReceiveLoop, connection).detach();
     }
     Log("net: stopped hosting");
 }
@@ -214,12 +380,19 @@ void JoinThread(std::string host, uint16_t port, unsigned generation) {
             Sleep(kRetryMs);
             continue;
         }
-        if (g_joinGeneration != generation) {
-            closesocket(s);
-            break;
+        PrepareSocket(s);
+        ConnectionPtr connection = NewConnection(s, 0, kHostPeer, true);
+        {
+            std::lock_guard<std::mutex> guard(g_lock);
+            if (g_joinGeneration != generation) break;  // stopped meanwhile: the socket closes with `connection`
+            g_connections.push_back(connection);
         }
         Log("net: connected to %s:%u", host.c_str(), port);
-        Connected(s, kHostPeer);
+        Enqueue(*connection, Greeting());
+        StartWriter(connection);
+        if (const ConnectHandler onConnect = g_onConnect.load()) onConnect(kHostPeer);
+        ReceiveLoop(connection);
+        connection.reset();
         Sleep(kRetryMs);
     }
 }
@@ -235,38 +408,17 @@ bool Startup() {
     return true;
 }
 
-std::vector<uint8_t> Frame(uint8_t type, const void* payload, size_t size) {
-    const size_t body = size + 1;
-    std::vector<uint8_t> frame(kHeaderSize + body);
-    for (size_t i = 0; i < kHeaderSize; ++i) frame[i] = static_cast<uint8_t>(body >> (8 * i));
-    frame[kHeaderSize] = type;
-    if (size > 0) memcpy(frame.data() + kHeaderSize + 1, payload, size);
-    return frame;
-}
-
-// A blocking send under the link's lock; send() may take a large frame in several pieces. Over Steam the frame
-// goes in packets of up to kP2PChunk, which arrive in order and are joined again (FeedSteam).
-bool SendFrame(Connection& connection, const std::vector<uint8_t>& frame) {
-    std::lock_guard<std::mutex> guard(connection.sendLock);
-    if (connection.steamId != 0) {
-        for (size_t at = 0; at < frame.size(); at += kP2PChunk) {
-            const size_t size = (std::min)(kP2PChunk, frame.size() - at);
-            if (!steam::SendP2P(connection.steamId, frame.data() + at, static_cast<uint32_t>(size))) return false;
-        }
-        return true;
-    }
-    if (connection.socket == INVALID_SOCKET) return false;
-    size_t sent = 0;
-    while (sent < frame.size()) {
-        const int n = send(connection.socket, reinterpret_cast<const char*>(frame.data() + sent),
-                           static_cast<int>(frame.size() - sent), 0);
-        if (n <= 0) return false;
-        sent += static_cast<size_t>(n);
-    }
-    return true;
-}
-
+// The links a game can see: greeted ones (a guest's link to its host always is).
 std::vector<ConnectionPtr> Connections() {
+    std::lock_guard<std::mutex> guard(g_lock);
+    std::vector<ConnectionPtr> greeted;
+    for (const auto& connection : g_connections) {
+        if (connection->greeted) greeted.push_back(connection);
+    }
+    return greeted;
+}
+
+std::vector<ConnectionPtr> AllConnections() {
     std::lock_guard<std::mutex> guard(g_lock);
     return g_connections;
 }
@@ -281,15 +433,6 @@ ConnectionPtr FindSteam(uint64_t steamId) {
     return nullptr;
 }
 
-ConnectionPtr RegisterSteam(uint64_t steamId, PeerId id) {
-    auto connection = std::make_shared<Connection>();
-    connection->steamId = steamId;
-    connection->id = id;
-    std::lock_guard<std::mutex> guard(g_lock);
-    g_connections.push_back(connection);
-    return connection;
-}
-
 // Adds a packet's bytes to the link's stream and hands up every complete frame; false when the link is over (the
 // peer closed it, or sent garbage).
 bool FeedSteam(const ConnectionPtr& connection, const std::vector<uint8_t>& data) {
@@ -298,7 +441,7 @@ bool FeedSteam(const ConnectionPtr& connection, const std::vector<uint8_t>& data
     size_t at = 0;
     while (pending.size() - at >= kHeaderSize) {
         const uint8_t* h = pending.data() + at;
-        const size_t size = h[0] | (h[1] << 8) | (h[2] << 16) | (static_cast<size_t>(h[3]) << 24);
+        const size_t size = BodySize(h);
         if (size == 0 || size > kMaxBody) {
             Log("net: bad frame size %zu from peer %u", size, connection->id);
             return false;
@@ -314,35 +457,37 @@ bool FeedSteam(const ConnectionPtr& connection, const std::vector<uint8_t>& data
 }
 
 // Host: a packet from a Steam account with no link yet - a new guest if steam.cpp accepted it (in our lobby).
-ConnectionPtr NewSteamGuest(uint64_t steamId) {
+ConnectionPtr NewSteamGuest(uint64_t steamId, unsigned generation) {
     if (!g_steamHosting || !steam::IsAccepted(steamId)) return nullptr;
-    PeerId id = kHostPeer;
-    {
-        std::lock_guard<std::mutex> guard(g_lock);
-        if (static_cast<int>(g_connections.size()) < g_maxGuests) id = NextGuestId();
-    }
-    if (id == kHostPeer) {
+    ConnectionPtr connection = AddGuest(INVALID_SOCKET, steamId, generation, g_steamGeneration);
+    if (connection == nullptr) {
         Log("net: rejecting Steam account %llu, the session is full", static_cast<unsigned long long>(steamId));
         steam::CloseP2P(steamId);
         return nullptr;
     }
-    Log("net: guest %u connected through Steam (%llu)", id, static_cast<unsigned long long>(steamId));
-    return RegisterSteam(steamId, id);
+    Log("net: guest %u connected through Steam (%llu)", connection->id, static_cast<unsigned long long>(steamId));
+    StartWriter(connection);
+    return connection;
 }
 
 // Every second: a ping down each Steam link, and links silent for too long (the peer quit, crashed or lost Steam)
-// are forgotten once past their grace period.
+// or that never greeted are let go.
 void CheckSteamLinks() {
-    const std::vector<uint8_t> ping = Frame(kNetPing, nullptr, 0);
+    const FramePtr ping = Frame(kNetPing, nullptr, 0);
     const DWORD now = GetTickCount();
-    for (const auto& connection : Connections()) {
+    for (const auto& connection : AllConnections()) {
         if (connection->steamId == 0) continue;
-        if (now - connection->since >= kSteamGraceMs && now - connection->heard > kSteamSilentMs) {
-            Log("net: Steam link to peer %u is gone (silent for %lu ms)", connection->id, now - connection->heard);
-            Unregister(connection);
+        if (!connection->greeted && now - connection->since > kGreetMs) {
+            Log("net: Steam guest %u did not greet - dropping it", connection->id);
+            Close(*connection, true);
             continue;
         }
-        SendFrame(*connection, ping);
+        if (now - connection->since >= kSteamGraceMs && now - connection->heard > kSteamSilentMs) {
+            Log("net: Steam link to peer %u is gone (silent for %lu ms)", connection->id, now - connection->heard);
+            Close(*connection, true);
+            continue;
+        }
+        Enqueue(*connection, ping);
     }
 }
 
@@ -355,12 +500,12 @@ void SteamThread(unsigned generation) {
         while (g_steamGeneration == generation && steam::ReadP2P(&data, &from)) {
             any = true;
             ConnectionPtr connection = FindSteam(from);
-            if (connection == nullptr) connection = NewSteamGuest(from);
+            if (connection == nullptr) connection = NewSteamGuest(from, generation);
             if (connection == nullptr) continue;
             connection->heard = GetTickCount();
             if (FeedSteam(connection, data)) continue;
             Log("net: Steam link to peer %u closed", connection->id);
-            Unregister(connection);
+            Close(*connection, true);
         }
         if (GetTickCount() - lastCheck >= kPingEveryMs) {
             lastCheck = GetTickCount();
@@ -368,19 +513,21 @@ void SteamThread(unsigned generation) {
         }
         if (!any) Sleep(kSteamIdleMs);
     }
-    g_steamThread = false;
 }
 
+// One receive thread per generation: an old one (after Stop) ends by itself on its generation check.
 void EnsureSteamThread() {
-    if (g_steamThread.exchange(true)) return;
-    std::thread(SteamThread, g_steamGeneration.load()).detach();
+    const unsigned generation = g_steamGeneration.load();
+    if (g_steamThreadGeneration.exchange(generation) == generation) return;
+    std::thread(SteamThread, generation).detach();
 }
 
 }  // namespace
 
 void StartHost(uint16_t port, int maxGuests) {
     g_maxGuests = maxGuests;
-    if (Startup()) std::thread(HostThread, port, maxGuests, g_hostGeneration.load()).detach();
+    g_listenFailed = false;
+    if (Startup()) std::thread(HostThread, port, g_hostGeneration.load()).detach();
 }
 
 void HostSteam() {
@@ -394,8 +541,14 @@ void StartJoinSteam(uint64_t hostSteamId) {
     if (!steam::Ready()) return;
     EnsureSteamThread();
     Log("net: connecting to Steam account %llu", static_cast<unsigned long long>(hostSteamId));
-    RegisterSteam(hostSteamId, kHostPeer);
-    if (const ConnectHandler onConnect = g_onConnect.load()) onConnect(kHostPeer);  // its first packet opens the P2P session
+    ConnectionPtr connection = NewConnection(INVALID_SOCKET, hostSteamId, kHostPeer, true);
+    {
+        std::lock_guard<std::mutex> guard(g_lock);
+        g_connections.push_back(connection);
+    }
+    Enqueue(*connection, Greeting());  // its first packet opens the P2P session
+    StartWriter(connection);
+    if (const ConnectHandler onConnect = g_onConnect.load()) onConnect(kHostPeer);
 }
 
 void StartJoin(const std::string& host, uint16_t port) {
@@ -407,34 +560,31 @@ void Stop() {
     ++g_hostGeneration;
     ++g_steamGeneration;
     g_steamHosting = false;
-    const std::vector<uint8_t> close = Frame(kNetClose, nullptr, 0);
-    std::lock_guard<std::mutex> guard(g_lock);
-    for (const auto& connection : g_connections) {
-        connection->dropped = true;
-        if (connection->steamId != 0) {
-            SendFrame(*connection, close);  // Steam says nothing when a link ends: we do
-            steam::CloseP2P(connection->steamId);
-            continue;
+    std::vector<ConnectionPtr> connections;
+    {
+        std::lock_guard<std::mutex> guard(g_lock);
+        connections.swap(g_connections);
+        if (g_listener != INVALID_SOCKET) {
+            closesocket(g_listener);  // wakes the host thread up from accept()
+            g_listener = INVALID_SOCKET;
         }
-        shutdown(connection->socket, SD_BOTH);  // its receive loop then closes it
+        g_inbox.clear();
     }
-    g_connections.clear();
-    if (g_listener != INVALID_SOCKET) {
-        closesocket(g_listener);  // wakes the host thread up from accept()
-        g_listener = INVALID_SOCKET;
+    // Each writer sends what is queued (the host's goodbye) - for a short while at most - and ends its link.
+    for (const auto& connection : connections) {
+        connection->dropped = true;
+        if (connection->socket != INVALID_SOCKET) SetTimeout(connection->socket, SO_SNDTIMEO, kCloseSendTimeoutMs);
+        Close(*connection, false);
     }
-    g_inbox.clear();
 }
 
-bool IsConnected() {
-    std::lock_guard<std::mutex> guard(g_lock);
-    return !g_connections.empty();
-}
+bool IsConnected() { return !Connections().empty(); }
+
+bool ListenFailed() { return g_listenFailed; }
 
 std::vector<PeerId> Peers() {
-    std::lock_guard<std::mutex> guard(g_lock);
     std::vector<PeerId> peers;
-    for (const auto& connection : g_connections) peers.push_back(connection->id);
+    for (const auto& connection : Connections()) peers.push_back(connection->id);
     return peers;
 }
 
@@ -442,26 +592,35 @@ bool Send(uint8_t type, const void* payload, size_t size) {
     if (size + 1 > kMaxBody) return false;
     const std::vector<ConnectionPtr> connections = Connections();
     if (connections.empty()) return false;
-    const std::vector<uint8_t> frame = Frame(type, payload, size);
+    const FramePtr frame = Frame(type, payload, size);
     bool ok = true;
-    for (const auto& connection : connections) ok = SendFrame(*connection, frame) && ok;
+    for (const auto& connection : connections) ok = Enqueue(*connection, frame) && ok;
     return ok;
 }
 
 bool SendTo(PeerId peer, uint8_t type, const void* payload, size_t size) {
     if (size + 1 > kMaxBody) return false;
     for (const auto& connection : Connections()) {
-        if (connection->id == peer) return SendFrame(*connection, Frame(type, payload, size));
+        if (connection->id == peer) return Enqueue(*connection, Frame(type, payload, size));
     }
     return false;
 }
 
 void SendExcept(PeerId except, uint8_t type, const void* payload, size_t size) {
     if (size + 1 > kMaxBody) return;
-    const std::vector<uint8_t> frame = Frame(type, payload, size);
+    const FramePtr frame = Frame(type, payload, size);
     for (const auto& connection : Connections()) {
-        if (connection->id != except) SendFrame(*connection, frame);
+        if (connection->id != except) Enqueue(*connection, frame);
     }
+}
+
+size_t Backlog(PeerId peer) {
+    for (const auto& connection : Connections()) {
+        if (connection->id != peer) continue;
+        std::lock_guard<std::mutex> guard(connection->queueLock);
+        return connection->queued;
+    }
+    return 0;
 }
 
 void SetReceiveHandler(ReceiveHandler handler) { g_handler = handler; }
