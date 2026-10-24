@@ -24,11 +24,21 @@ Check "every trap is the same at the guest" (@($hostTraps | Where-Object { (Gues
 
 $full = $hostTraps | Where-Object { $_.item -ne '-4' } | Select-Object -First 1
 if ($full) {
-  Ask $g "event $((GuestTrapAt $full.at).id) 7 11" | Out-Null  # the guest collects it
+  $itemCount = 'script 6AB090'  # ItemCount(item): how many the asking player carries
+  $hadBefore = [double](Ask $g "$itemCount $($full.item)")
+  Ask $g "event $((GuestTrapAt $full.at).id) 7 11" | Out-Null  # the guest collects it (asks the host)
   Start-Sleep 2
   $afterGuest = (GuestTrapAt $full.at).item
   $afterHost = Ask $h "var $($full.id) 0xF8 0"
+  $hasAfter = [double](Ask $g "$itemCount $($full.item)")
   Check "the guest collected the trap at $($full.at): empty at the guest ($afterGuest) and at the host ($afterHost)" ($afterGuest -eq '-4' -and $afterHost -eq '-4')
+  Check "the catch (item $($full.item)) went into the guest's inventory: $hadBefore -> $hasAfter" ($hasAfter -gt $hadBefore)
+  # A second collect of the same trap (as if a second player came a moment later) gives nothing.
+  Ask $g "set $((GuestTrapAt $full.at).id) 0xF8 0 $($full.item)" | Out-Null
+  Ask $g "event $((GuestTrapAt $full.at).id) 7 11" | Out-Null
+  Start-Sleep 2
+  $hasLate = [double](Ask $g "$itemCount $($full.item)")
+  Check "collecting the emptied trap again gives nothing ($hasAfter -> $hasLate) and empties the copy ($((GuestTrapAt $full.at).item))" ($hasLate -eq $hasAfter -and (GuestTrapAt $full.at).item -eq '-4')
 } else {
   'note: no trap holds a catch now - the collect check is skipped'
 }

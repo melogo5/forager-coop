@@ -275,6 +275,7 @@ constexpr uint8_t kHostOnlyTypes[] = {
     60,                  // clock
     80,                  // coins: the total
     95,                  // stations: denied
+    96,                  // traps: what a trap holds (a guest asks with 101)
     97, 99, 100,         // chests: moved, keys so far, reward
 };
 
