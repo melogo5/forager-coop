@@ -55,10 +55,13 @@ void SaveOwn(const Look& look) {
     Log("look: own costume kept:%s", text.str().c_str());
 }
 
+// The slots in use; `count` comes off the wire, so never more than the array holds.
+int Slots(const Look& look) { return (std::min)(static_cast<int>(look.count), kMaxSlots); }
+
 }  // namespace
 
 bool operator==(const Look& a, const Look& b) {
-    return a.count == b.count && std::equal(a.items, a.items + a.count, b.items);
+    return a.count == b.count && std::equal(a.items, a.items + Slots(a), b.items);
 }
 
 Look Read(yyc::CInstance* player) {
@@ -83,7 +86,7 @@ Look Read(yyc::CInstance* player) {
 void Apply(yyc::CInstance* player, const Look& look) {
     if (player == nullptr || look.count == 0) return;
     const int id = static_cast<int>(yyc::GetBuiltinReal(player, yyc::va::YYVar_id));
-    for (int i = 0; i < look.count; ++i) {
+    for (int i = 0; i < Slots(look); ++i) {
         yyc::RValue item = yyc::Real(look.items[i]);
         yyc::SetVarAt(id, kSlotCosmetic, i, &item);
     }

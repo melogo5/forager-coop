@@ -1383,7 +1383,14 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     }
 }
 
+void ResetTransient() {
+    g_applyingRemote = 0;
+    g_dryHit = false;
+    g_crafting = 0;
+}
+
 void Reset() {
+    ResetTransient();
     g_hostToLocal.clear();
     g_localToHost.clear();
     g_hitByGuest.clear();

@@ -480,6 +480,7 @@ void Update(yyc::CInstance* localPlayer, net::PeerId player, const State& target
     if (puppet == nullptr) puppet = Create(localPlayer, player, target);
     if (puppet == nullptr) return;
     yyc::CInstance* instance = puppet->instance;
+    if (!std::isfinite(target.x) || !std::isfinite(target.y)) return;  // a broken state would put NaN in the world
 
     const double dx = target.x - yyc::GetBuiltinReal(instance, yyc::va::YYVar_x);
     const double dy = target.y - yyc::GetBuiltinReal(instance, yyc::va::YYVar_y);

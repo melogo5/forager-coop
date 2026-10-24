@@ -7,7 +7,7 @@
 Разборы плейтестов: [PLAYTEST.md](PLAYTEST.md), [PLAYTEST2.md](PLAYTEST2.md), [PLAYTEST3.md](PLAYTEST3.md),
 [PLAYTEST4.md](PLAYTEST4.md), [PLAYTEST5.md](PLAYTEST5.md) (предпоследний: испорченный сейв и его починка, текст GML-ошибок в логе, навыки гостя при
 его ударах, сундуки-сокровища у каждого свои, дроп последнему ударившему, свитки, ремонт, ячейки хранилища).
-Идеи на потом: [IDEAS.md](IDEAS.md). Интерьеры в комнате мира (в работе): [INTERIORS.md](INTERIORS.md).
+Идеи на потом: [IDEAS.md](IDEAS.md). Ревью кода и список доработок: [REVIEW.md](REVIEW.md). Интерьеры в комнате мира (в работе): [INTERIORS.md](INTERIORS.md).
 
 ## Работает
 

@@ -12,6 +12,7 @@
 
 #include "MinHook.h"
 #include "character.h"
+#include "files.h"
 #include "log.h"
 #include "mutant.h"
 #include "skilltab.h"
@@ -444,8 +445,11 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
         if (!Decode(p.data() + 1, p.size() - 1, &state)) return true;
         const std::string name = character::HostGuestName(message.from);
         const std::wstring path = character::GuestDataFile(name, ".skills");
-        std::ofstream(path, std::ios::binary | std::ios::trunc)
-            .write(reinterpret_cast<const char*>(p.data() + 1), static_cast<std::streamsize>(p.size() - 1));
+        // coop_guests may not exist yet (the first character save comes later); WriteAtomic makes it.
+        if (!coop::files::WriteAtomic(path, p.data() + 1, p.size() - 1)) {
+            Log("skills: cannot keep guest '%s' points", name.c_str());
+            return true;
+        }
         Log("skills: kept guest '%s' points (%u earned, %u spent)", name.c_str(), state.earned, state.learned);
         return true;
     }

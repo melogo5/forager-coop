@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "MinHook.h"
+#include "files.h"
 #include "log.h"
 #include "mutant.h"
 #include "yyc.h"
@@ -298,10 +299,19 @@ void RepairZone(yyc::CInstance* self, const fs::path& path) {
         offset += size;
     }
     for (const Bytes& comp : packed) out.insert(out.end(), comp.begin(), comp.end());
+    // The first broken copy is the one worth keeping: a later repair of the same file must not replace it.
     std::error_code error;
-    fs::copy_file(path, fs::path(path).concat(L".broken"), fs::copy_options::overwrite_existing, error);
-    std::ofstream(path, std::ios::binary | std::ios::trunc).write(reinterpret_cast<const char*>(out.data()),
-                                                                 static_cast<std::streamsize>(out.size()));
+    const fs::path broken = fs::path(path).concat(L".broken");
+    if (!fs::exists(broken, error)) fs::copy_file(path, broken, error);
+    if (error) {
+        Log("savefix: %s - cannot keep the broken copy (%s); left as it is", path.filename().u8string().c_str(),
+            error.message().c_str());
+        return;
+    }
+    if (!coop::files::WriteAtomic(path, out.data(), out.size())) {
+        Log("savefix: %s - cannot write the repair; left as it is", path.filename().u8string().c_str());
+        return;
+    }
     Log("savefix: %s had %d bad records (%s) - repaired before loading; the broken one is kept as .broken",
         path.filename().u8string().c_str(), bad, what.c_str());
 }

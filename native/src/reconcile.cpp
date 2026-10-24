@@ -151,7 +151,8 @@ void Compare(yyc::CInstance* self, const Area& area, const std::vector<Entry>& h
         ++removed;
     }
     for (const Entry& e : host) {
-        if (missing.count(e.id) == 0 || g_lastMissing.count(e.id) == 0) continue;
+        // A destroy that came after the host's list was taken must not be undone.
+        if (missing.count(e.id) == 0 || g_lastMissing.count(e.id) == 0 || sync::WasDestroyed(e.id)) continue;
         const int id = sync::SpawnReplica(self, e.id, e.object, e.x, e.y, e.depth);
         yyc::CInstance* replica = id != 0 ? yyc::FindInstance(id) : nullptr;
         if (replica != nullptr && e.sprite >= 0) {

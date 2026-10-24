@@ -379,6 +379,7 @@ void __cdecl EndStepHook(yyc::CInstance* self, yyc::CInstance* other) {
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         Log("mobs: apply crashed (code 0x%08lX)", GetExceptionCode());
         g_targets.clear();
+        sync::ResetTransient();
     }
 }
 

@@ -1,7 +1,8 @@
 # One coop session that exercises most features at once and prints PASS/FAIL per check.
 # Run it on a fresh world: delete the test saves first (never saveData0 - the user's real world).
-# Usage: regress.ps1 [-Seconds 60]
-param([int]$Seconds = 60)
+# Usage: regress.ps1 [-Seconds 60] [-HostSlot <n>]   (-HostSlot: load saveData<n> instead of a new world - for when
+# many saves make the new-world clicks unsafe; use a test slot)
+param([int]$Seconds = 60, [int]$HostSlot = -1)
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path (Split-Path $PSScriptRoot))
 $ctl = Join-Path $PSScriptRoot 'gamectl.ps1'
@@ -11,7 +12,8 @@ $errorsBefore = if (Test-Path $errorLog) { (Get-Item $errorLog).LastWriteTime } 
 
 Stop-Process -Name Forager -Force -ErrorAction SilentlyContinue
 Wait-Process -Name Forager -Timeout 30 -ErrorAction SilentlyContinue
-$r = & (Join-Path $PSScriptRoot 'coopflow.ps1') -NewWorld -Cheats -GodMode -GuestName 'Regress' `
+$world = if ($HostSlot -ge 0) { @{HostSlot = $HostSlot} } else { @{NewWorld = $true} }
+$r = & (Join-Path $PSScriptRoot 'coopflow.ps1') @world -Cheats -GodMode -GuestName 'Regress' `
   -HostEnv @{COOP_DEBUG_ENEMY = '26'; COOP_DEBUG_COINS = '50'} `
   -GuestEnv @{COOP_DEBUG_AUTOHIT = '1'; COOP_DEBUG_BUILD = '109'; COOP_DEBUG_CRAFTDROP = '1'; COOP_DEBUG_COINS = '100'; COOP_DEBUG_STORAGE = '1'}
 $h = [int]($r -replace '.*HOST=(\d+).*', '$1'); $g = [int]($r -replace '.*GUEST=(\d+).*', '$1')

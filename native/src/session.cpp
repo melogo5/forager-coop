@@ -356,6 +356,7 @@ void TrackPeers(yyc::CInstance* localPlayer, const std::vector<net::PeerId>& pee
         net::Send(kPeerGone, &peer, sizeof(peer));
         storage::OnPeerLeft(localPlayer, peer);
         stations::OnPeerLeft(peer);
+        chests::OnPeerLeft(localPlayer, peer);
     }
     g_peers = peers;
 }
@@ -620,6 +621,8 @@ void Host() {
     if (g_role != Role::kNone) return;
     g_role = Role::kHost;
     g_myName = character::OwnName();
+    net::SetReceiveHandler(nullptr);
+    net::SetConnectHandler(nullptr);
     net::StartHost(kGamePort, MaxGuests());
     lan::StartAnnouncing(kGamePort);
     if (steam::Ready()) {
@@ -658,6 +661,9 @@ void Leave() {
     const bool host = g_role == Role::kHost;
     if (host) net::Send(kBye, nullptr, 0);
     net::Stop();
+    // A guest's handlers would otherwise stay on and take the world files of whoever connects to us next.
+    net::SetReceiveHandler(nullptr);
+    net::SetConnectHandler(nullptr);
     steam::LeaveLobby();
     skilltab::Reset();
     puppet::HoldLocalPlayer(false);

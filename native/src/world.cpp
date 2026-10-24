@@ -50,6 +50,8 @@ fs::path g_targetDir;
 std::ofstream g_file;
 uint32_t g_fileRemaining = 0;
 int g_filesReceived = 0;
+uint32_t g_filesExpected = 0;  // as the host announced
+int g_filesBroken = 0;         // rejected, cut short or not written: the world here differs from the host's
 std::atomic<bool> g_ready{false};  // read by the game thread
 
 fs::path SaveRoot() {
@@ -268,9 +270,19 @@ yyc::RValue* __cdecl SaveGameHook(yyc::CInstance* self, yyc::CInstance* other, y
     return r;
 }
 
-void BeginReceive() {
+// Closes the file being written; one that did not get all its bytes counts as broken.
+void EndFile() {
+    if (!g_file.is_open()) return;
+    g_file.close();
+    if (g_fileRemaining != 0 || g_file.fail()) ++g_filesBroken;
+    g_fileRemaining = 0;
+}
+
+void BeginReceive(const std::vector<uint8_t>& payload) {
     g_file.close();
     g_filesReceived = 0;
+    g_filesBroken = 0;
+    g_filesExpected = payload.size() == 4 ? Get32(payload.data()) : 0;
     g_ready = false;
     const fs::path root = SaveRoot();
     if (root.empty()) {
@@ -286,7 +298,7 @@ void BeginReceive() {
 }
 
 void BeginFile(const std::vector<uint8_t>& payload) {
-    g_file.close();
+    EndFile();
     if (g_targetDir.empty() || payload.size() < 2) return;
     const size_t length = payload[0] | (payload[1] << 8);
     if (payload.size() != 2 + length + 4) return;
@@ -294,17 +306,27 @@ void BeginFile(const std::vector<uint8_t>& payload) {
     g_fileRemaining = Get32(payload.data() + 2 + length);
     if (!IsSafeRelativePath(relative) || g_fileRemaining > kMaxFileSize) {
         Log("world: rejected file '%s' (%u bytes)", relative.c_str(), g_fileRemaining);
+        ++g_filesBroken;
         return;
     }
     const fs::path target = g_targetDir / fs::u8path(relative);
     std::error_code error;
     fs::create_directories(target.parent_path(), error);
     g_file.open(target, std::ios::binary | std::ios::trunc);
-    if (g_file.is_open()) ++g_filesReceived;
+    if (g_file.is_open()) {
+        ++g_filesReceived;
+    } else {
+        Log("world: cannot write '%s'", relative.c_str());
+        ++g_filesBroken;
+    }
 }
 
 void WriteChunk(const std::vector<uint8_t>& payload) {
-    if (!g_file.is_open() || payload.size() > g_fileRemaining) return;
+    if (!g_file.is_open()) return;
+    if (payload.size() > g_fileRemaining) {
+        g_file.setstate(std::ios::failbit);  // more than announced: the file is not what the host has
+        return;
+    }
     g_file.write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
     g_fileRemaining -= static_cast<uint32_t>(payload.size());
 }
@@ -371,7 +393,7 @@ bool InstallHooks(bool (*isGuest)()) {
 bool HandleMessage(const net::Message& message) {
     switch (message.type) {
         case kWorldBegin:
-            BeginReceive();
+            BeginReceive(message.payload);
             return true;
         case kWorldFile:
             BeginFile(message.payload);
@@ -380,9 +402,13 @@ bool HandleMessage(const net::Message& message) {
             WriteChunk(message.payload);
             return true;
         case kWorldEnd:
-            g_file.close();
+            EndFile();
             g_ready = g_filesReceived > 0;
             Log("world: received %d files into %s", g_filesReceived, g_targetDir.u8string().c_str());
+            if (g_filesBroken > 0 || g_filesReceived != static_cast<int>(g_filesExpected)) {
+                Log("world: WARNING the world came incomplete: %d of %u files, %d broken - it may differ from the "
+                    "host's", g_filesReceived, g_filesExpected, g_filesBroken);
+            }
             return true;
         default:
             return false;

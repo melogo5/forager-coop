@@ -83,9 +83,14 @@ LONG CALLBACK OnException(EXCEPTION_POINTERS* info) {
         code != EXCEPTION_STACK_OVERFLOW) {
         return EXCEPTION_CONTINUE_SEARCH;
     }
+    // A fault while walking the GML stack comes back here first (vectored handlers run before __except).
+    static thread_local bool busy = false;
+    if (busy) return EXCEPTION_CONTINUE_SEARCH;
+    busy = true;
     const auto address = reinterpret_cast<uintptr_t>(info->ExceptionRecord->ExceptionAddress);
     Log("crash: exception 0x%08lX at VA %08X; GML stack:", code, static_cast<unsigned>(address - yyc::g_imageDelta));
     LogGmlStack();
+    busy = false;
     return EXCEPTION_CONTINUE_SEARCH;
 }
 

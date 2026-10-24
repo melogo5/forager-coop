@@ -2,6 +2,7 @@
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <mstcpip.h>
 
 #include <algorithm>
 #include <atomic>
@@ -54,8 +55,8 @@ SOCKET g_listener = INVALID_SOCKET;
 std::vector<Message> g_inbox;
 PeerId g_nextGuestId = 1;
 bool g_started = false;
-ReceiveHandler g_handler = nullptr;  // set before Start*, read only by the receive threads
-ConnectHandler g_onConnect = nullptr;
+std::atomic<ReceiveHandler> g_handler{nullptr};  // set by the game thread, read by the receive threads
+std::atomic<ConnectHandler> g_onConnect{nullptr};
 int g_maxGuests = 0;                          // host
 std::atomic<bool> g_steamHosting{false};      // host: Steam guests are taken too
 std::atomic<unsigned> g_steamGeneration{0};   // Stop() bumps it: the Steam receive thread ends
@@ -84,6 +85,11 @@ PeerId NextGuestId() {
 ConnectionPtr Register(SOCKET s, PeerId id) {
     const BOOL noDelay = TRUE;
     setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&noDelay), sizeof(noDelay));
+    // A peer gone without a word (VPN cut, power off) would otherwise stay linked for good, holding its slot,
+    // puppet, stations and storages: probe after 10 s of silence, every 2 s; Windows drops the link after 10 misses.
+    tcp_keepalive keepalive{1, 10000, 2000};
+    DWORD unused = 0;
+    WSAIoctl(s, SIO_KEEPALIVE_VALS, &keepalive, sizeof(keepalive), nullptr, 0, &unused, nullptr, nullptr);
     auto connection = std::make_shared<Connection>();
     connection->socket = s;
     connection->id = id;
@@ -114,7 +120,8 @@ void Deliver(const ConnectionPtr& connection, const uint8_t* body, size_t size) 
     message.type = body[0];
     message.from = connection->id;
     message.payload.assign(body + 1, body + size);
-    if (g_handler != nullptr && g_handler(message)) return;
+    const ReceiveHandler handler = g_handler.load();
+    if (handler != nullptr && handler(message)) return;
     std::lock_guard<std::mutex> guard(g_lock);
     g_inbox.push_back(std::move(message));
 }
@@ -140,7 +147,7 @@ void ReceiveLoop(ConnectionPtr connection) {
 
 void Connected(SOCKET s, PeerId id) {
     ConnectionPtr connection = Register(s, id);
-    if (g_onConnect != nullptr) g_onConnect(id);
+    if (const ConnectHandler onConnect = g_onConnect.load()) onConnect(id);
     ReceiveLoop(std::move(connection));
 }
 
@@ -388,7 +395,7 @@ void StartJoinSteam(uint64_t hostSteamId) {
     EnsureSteamThread();
     Log("net: connecting to Steam account %llu", static_cast<unsigned long long>(hostSteamId));
     RegisterSteam(hostSteamId, kHostPeer);
-    if (g_onConnect != nullptr) g_onConnect(kHostPeer);  // its first packet opens the P2P session
+    if (const ConnectHandler onConnect = g_onConnect.load()) onConnect(kHostPeer);  // its first packet opens the P2P session
 }
 
 void StartJoin(const std::string& host, uint16_t port) {

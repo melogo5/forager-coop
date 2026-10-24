@@ -25,6 +25,9 @@ void DebugTick(yyc::CInstance* localPlayer);
 // Game thread: handles a chest message; false if `message` is not one.
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer);
 
+// Host, game thread: `peer` left the session - its key no longer counts, and a chest that now has enough opens.
+void OnPeerLeft(yyc::CInstance* localPlayer, net::PeerId peer);
+
 void Reset();
 
 }  // namespace coop::chests

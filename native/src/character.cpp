@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -11,6 +12,7 @@
 #include <vector>
 
 #include "MinHook.h"
+#include "files.h"
 #include "log.h"
 #include "world.h"
 
@@ -104,11 +106,8 @@ std::vector<uint8_t> ReadFile(const fs::path& path) {
     return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
-void WriteFile(const fs::path& path, const uint8_t* data, size_t size) {
-    std::error_code error;
-    fs::create_directories(path.parent_path(), error);
-    std::ofstream(path, std::ios::binary | std::ios::trunc)
-        .write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
+bool WriteFile(const fs::path& path, const uint8_t* data, size_t size) {
+    return coop::files::WriteAtomic(path, data, size);
 }
 
 double CallReal(yyc::CInstance* self, const char* builtin, yyc::RValue* args, int argc) {
@@ -256,8 +255,18 @@ bool HostHandle(const net::Message& message, yyc::CInstance* localPlayer, bool* 
     }
     if (message.type == kCharacterSave) {
         const std::string name = HostGuestName(message.from);
-        WriteFile(GuestFile(name), message.payload.data(), message.payload.size());
-        Log("character: saved guest '%s' (%zu bytes)", name.c_str(), message.payload.size());
+        const std::vector<uint8_t>& data = message.payload;
+        // An empty or foreign file would replace the stored character and make this guest a new one next time.
+        if (data.size() < 4 || memcmp(data.data(), "cndr", 4) != 0) {
+            Log("character: guest '%s' sent a broken save (%zu bytes) - the stored one is kept", name.c_str(),
+                data.size());
+            return true;
+        }
+        if (!WriteFile(GuestFile(name), data.data(), data.size())) {
+            Log("character: cannot save guest '%s'", name.c_str());
+            return true;
+        }
+        Log("character: saved guest '%s' (%zu bytes)", name.c_str(), data.size());
         return true;
     }
     return false;

@@ -73,6 +73,7 @@ unsigned g_steps = 0;
 bool g_opening = false;                          // we run a chest's own opening: not news
 std::set<int> g_keyGiven;                        // chests (local ids) this player put a key in
 std::map<int, std::set<net::PeerId>> g_keys;     // host: chest -> the players whose key is in it
+std::map<int, ChestMsg> g_keyChests;             // host: the same chests as the guests know them
 // Host: where each treasure chest was when the guests last heard of it.
 struct Spot {
     double x, y;
@@ -156,6 +157,7 @@ void SayKeys(yyc::CInstance* player, int have, int need) {
 void OpenForEveryone(yyc::CInstance* localPlayer, int chestId, const ChestMsg& msg) {
     yyc::CInstance* chest = yyc::FindInstance(chestId);
     g_keys.erase(chestId);
+    g_keyChests.erase(chestId);
     g_keyGiven.erase(chestId);
     if (chest == nullptr) return;
     CallScript(kScriptGainItem, localPlayer, kKeyItem);
@@ -170,6 +172,7 @@ void OpenForEveryone(yyc::CInstance* localPlayer, int chestId, const ChestMsg& m
 void AddKey(yyc::CInstance* localPlayer, int chestId, const ChestMsg& msg, net::PeerId from) {
     std::set<net::PeerId>& keys = g_keys[chestId];
     keys.insert(from);
+    g_keyChests[chestId] = msg;
     const int need = 1 + static_cast<int>(net::Peers().size());
     const int have = static_cast<int>(keys.size());
     const KeysMsg out{msg, static_cast<uint8_t>(have), static_cast<uint8_t>(need)};
@@ -390,9 +393,26 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     }
 }
 
+void OnPeerLeft(yyc::CInstance* localPlayer, net::PeerId peer) {
+    // Fewer players now need fewer keys: a chest that waited only for the one who left opens (and a key the host
+    // put in is not stuck there when the last guest goes).
+    const int need = 1 + static_cast<int>(net::Peers().size());
+    std::vector<int> ready;
+    for (auto& [chestId, keys] : g_keys) {
+        keys.erase(peer);
+        if (!keys.empty() && static_cast<int>(keys.size()) >= need) ready.push_back(chestId);
+    }
+    for (const int chestId : ready) {
+        const ChestMsg msg = g_keyChests[chestId];
+        Log("chests: player %u left - the keys in chest %d are enough now", peer, chestId);
+        OpenForEveryone(localPlayer, chestId, msg);
+    }
+}
+
 void Reset() {
     g_keyGiven.clear();
     g_keys.clear();
+    g_keyChests.clear();
     g_spots.clear();
     g_steps = 0;
     g_opening = false;
