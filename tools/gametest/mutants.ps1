@@ -7,6 +7,7 @@ $checks = [ordered]@{
   skills     = @{ Script = 'guestskills.ps1'; Mutant = 'skills' }
   savelists  = @{ Script = 'savelists.ps1';   Mutant = 'savelists' }
   herbs      = @{ Script = 'herbs.ps1';       Mutant = 'herbs' }
+  savefix    = @{ Script = 'savefix.ps1';     Mutant = 'savefix' }
   vaultlock  = @{ Script = 'vaults.ps1';      Mutant = 'storagelock' }
   vaultcells = @{ Script = 'vaults.ps1';      Mutant = 'vaultslots' }
   wake       = @{ Script = 'sleeplists.ps1';  Mutant = 'wake' }

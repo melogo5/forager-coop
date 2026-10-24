@@ -1,0 +1,554 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2304" height="1444" viewBox="0 0 2304 1444" font-family="Inter, Arial, sans-serif">
+<rect id="background" width="2304" height="1444" fill="#FAFAF7"/>
+<text id="title" x="40" y="60" font-size="34" font-weight="700" fill="#222">Forager — дерево навыков (текущее)</text>
+<text id="subtitle" x="40" y="92" font-size="16" fill="#666">Сетка 8×8 из objSkillGridControl; стартовые навыки 0/16/32/48 в центре, открываются соседние клетки</text>
+<g id="skill-15 lasers">
+<rect x="40" y="120" width="230" height="150" rx="10" fill="#F6D7B0" stroke="#C46A1B" stroke-width="1.5"/>
+<text x="52" y="144" font-size="13" font-weight="700" fill="#C46A1B">#15</text>
+<text x="88" y="144" font-size="15" font-weight="700" fill="#222">лазеры</text>
+<text x="88" y="160" font-size="11" fill="#666">lasers</text>
+<text x="52" y="180" font-size="10.5" fill="#333" xml:space="preserve">• жезлы горняков наносят удвоенный</text>
+<text x="52" y="193" font-size="10.5" fill="#333" xml:space="preserve">  урон</text>
+<text x="52" y="206" font-size="10.5" fill="#333" xml:space="preserve">• дроиды наносят удвоенный урон</text>
+</g>
+<g id="skill-14 engineering">
+<rect x="282" y="120" width="230" height="150" rx="10" fill="#F6D7B0" stroke="#C46A1B" stroke-width="1.5"/>
+<text x="294" y="144" font-size="13" font-weight="700" fill="#C46A1B">#14</text>
+<text x="330" y="144" font-size="15" font-weight="700" fill="#222">инженерия</text>
+<text x="330" y="160" font-size="11" fill="#666">engineering</text>
+<text x="294" y="180" font-size="10.5" fill="#333" xml:space="preserve">• все промышленные постройки</text>
+<text x="294" y="193" font-size="10.5" fill="#333" xml:space="preserve">  работают на 25% быстрее</text>
+<text x="294" y="206" font-size="10.5" fill="#333" xml:space="preserve">• открывает дроидов</text>
+<text x="294" y="219" font-size="10.5" fill="#333" xml:space="preserve">• открывает эми-гранаты</text>
+</g>
+<g id="skill-13 physics">
+<rect x="524" y="120" width="230" height="150" rx="10" fill="#F6D7B0" stroke="#C46A1B" stroke-width="1.5"/>
+<text x="536" y="144" font-size="13" font-weight="700" fill="#C46A1B">#13</text>
+<text x="572" y="144" font-size="15" font-weight="700" fill="#222">физика</text>
+<text x="572" y="160" font-size="11" fill="#666">physics</text>
+<text x="536" y="180" font-size="10.5" fill="#333" xml:space="preserve">• открывает электростанции</text>
+</g>
+<g id="skill-12 jewelry">
+<rect x="766" y="120" width="230" height="150" rx="10" fill="#F6D7B0" stroke="#C46A1B" stroke-width="1.5"/>
+<text x="778" y="144" font-size="13" font-weight="700" fill="#C46A1B">#12</text>
+<text x="814" y="144" font-size="15" font-weight="700" fill="#222">ювелирное дело</text>
+<text x="814" y="160" font-size="11" fill="#666">jewelry</text>
+<text x="778" y="180" font-size="10.5" fill="#333" xml:space="preserve">• открывает амулеты</text>
+<text x="778" y="193" font-size="10.5" fill="#333" xml:space="preserve">• продажа самоцветов дает на 20%</text>
+<text x="778" y="206" font-size="10.5" fill="#333" xml:space="preserve">  больше монет</text>
+</g>
+<g id="skill-28 supply">
+<rect x="1008" y="120" width="230" height="150" rx="10" fill="#F7EBA8" stroke="#B08A00" stroke-width="1.5"/>
+<text x="1020" y="144" font-size="13" font-weight="700" fill="#B08A00">#28</text>
+<text x="1056" y="144" font-size="15" font-weight="700" fill="#222">припасы</text>
+<text x="1056" y="160" font-size="11" fill="#666">supply</text>
+<text x="1020" y="180" font-size="10.5" fill="#333" xml:space="preserve">• на рынках продается больше</text>
+<text x="1020" y="193" font-size="10.5" fill="#333" xml:space="preserve">  предметов</text>
+<text x="1020" y="206" font-size="10.5" fill="#333" xml:space="preserve">• рынки пополняют запас предметов на</text>
+<text x="1020" y="219" font-size="10.5" fill="#333" xml:space="preserve">  50% быстрее</text>
+</g>
+<g id="skill-29 artistry">
+<rect x="1250" y="120" width="230" height="150" rx="10" fill="#F7EBA8" stroke="#B08A00" stroke-width="1.5"/>
+<text x="1262" y="144" font-size="13" font-weight="700" fill="#B08A00">#29</text>
+<text x="1298" y="144" font-size="15" font-weight="700" fill="#222">искусная работа</text>
+<text x="1298" y="160" font-size="11" fill="#666">artistry</text>
+<text x="1262" y="180" font-size="10.5" fill="#333" xml:space="preserve">• продажа созданных предметов дает</text>
+<text x="1262" y="193" font-size="10.5" fill="#333" xml:space="preserve">  на 25% больше монет</text>
+</g>
+<g id="skill-30 colonization">
+<rect x="1492" y="120" width="230" height="150" rx="10" fill="#F7EBA8" stroke="#B08A00" stroke-width="1.5"/>
+<text x="1504" y="144" font-size="13" font-weight="700" fill="#B08A00">#30</text>
+<text x="1540" y="144" font-size="15" font-weight="700" fill="#222">колонизация</text>
+<text x="1540" y="160" font-size="11" fill="#666">colonization</text>
+<text x="1504" y="180" font-size="10.5" fill="#333" xml:space="preserve">• покупка земли на 30% дешевле</text>
+</g>
+<g id="skill-31 logistics">
+<rect x="1734" y="120" width="230" height="150" rx="10" fill="#F7EBA8" stroke="#B08A00" stroke-width="1.5"/>
+<text x="1746" y="144" font-size="13" font-weight="700" fill="#B08A00">#31</text>
+<text x="1782" y="144" font-size="15" font-weight="700" fill="#222">логистика</text>
+<text x="1782" y="160" font-size="11" fill="#666">logistics</text>
+<text x="1746" y="180" font-size="10.5" fill="#333" xml:space="preserve">• у маяков удвоен радиус действия</text>
+<text x="1746" y="193" font-size="10.5" fill="#333" xml:space="preserve">• у жезлов горняков удвоен радиус</text>
+<text x="1746" y="206" font-size="10.5" fill="#333" xml:space="preserve">  действия</text>
+<text x="1746" y="219" font-size="10.5" fill="#333" xml:space="preserve">• у электростанций удвоен радиус</text>
+<text x="1746" y="232" font-size="10.5" fill="#333" xml:space="preserve">  действия</text>
+<text x="1746" y="245" font-size="10.5" fill="#333" xml:space="preserve">• у баллист удвоен радиус действия</text>
+</g>
+<g id="skill-11 automation">
+<rect x="40" y="282" width="230" height="150" rx="10" fill="#F6D7B0" stroke="#C46A1B" stroke-width="1.5"/>
+<text x="52" y="306" font-size="13" font-weight="700" fill="#C46A1B">#11</text>
+<text x="88" y="306" font-size="15" font-weight="700" fill="#222">автоматизация</text>
+<text x="88" y="322" font-size="11" fill="#666">automation</text>
+<text x="52" y="342" font-size="10.5" fill="#333" xml:space="preserve">• открывает жезлы горняков</text>
+<text x="52" y="355" font-size="10.5" fill="#333" xml:space="preserve">• созданные предметы собираются</text>
+<text x="52" y="368" font-size="10.5" fill="#333" xml:space="preserve">  автоматически</text>
+</g>
+<g id="skill-10 railroads">
+<rect x="282" y="282" width="230" height="150" rx="10" fill="#F6D7B0" stroke="#C46A1B" stroke-width="1.5"/>
+<text x="294" y="306" font-size="13" font-weight="700" fill="#C46A1B">#10</text>
+<text x="330" y="306" font-size="15" font-weight="700" fill="#222">железные дороги</text>
+<text x="330" y="322" font-size="11" fill="#666">railroads</text>
+<text x="294" y="342" font-size="10.5" fill="#333" xml:space="preserve">• открывает паровозы</text>
+<text x="294" y="355" font-size="10.5" fill="#333" xml:space="preserve">• открывает железные дороги</text>
+</g>
+<g id="skill-9 smelting">
+<rect x="524" y="282" width="230" height="150" rx="10" fill="#F6D7B0" stroke="#C46A1B" stroke-width="1.5"/>
+<text x="536" y="306" font-size="13" font-weight="700" fill="#C46A1B">#9</text>
+<text x="572" y="306" font-size="15" font-weight="700" fill="#222">выплавка</text>
+<text x="572" y="322" font-size="11" fill="#666">smelting</text>
+<text x="536" y="342" font-size="10.5" fill="#333" xml:space="preserve">• печи работают на 25% быстрее</text>
+<text x="536" y="355" font-size="10.5" fill="#333" xml:space="preserve">• кузницы работают на 25% быстрее</text>
+</g>
+<g id="skill-8 textiles">
+<rect x="766" y="282" width="230" height="150" rx="10" fill="#F6D7B0" stroke="#C46A1B" stroke-width="1.5"/>
+<text x="778" y="306" font-size="13" font-weight="700" fill="#C46A1B">#8</text>
+<text x="814" y="306" font-size="15" font-weight="700" fill="#222">текстиль</text>
+<text x="814" y="322" font-size="11" fill="#666">textiles</text>
+<text x="778" y="342" font-size="10.5" fill="#333" xml:space="preserve">• открывает ботинки</text>
+<text x="778" y="355" font-size="10.5" fill="#333" xml:space="preserve">• открывает перчатки</text>
+</g>
+<g id="skill-24 bargain">
+<rect x="1008" y="282" width="230" height="150" rx="10" fill="#F7EBA8" stroke="#B08A00" stroke-width="1.5"/>
+<text x="1020" y="306" font-size="13" font-weight="700" fill="#B08A00">#24</text>
+<text x="1056" y="306" font-size="15" font-weight="700" fill="#222">сделки</text>
+<text x="1056" y="322" font-size="11" fill="#666">bargain</text>
+<text x="1020" y="342" font-size="10.5" fill="#333" xml:space="preserve">• снижает рыночные цены на 15%</text>
+</g>
+<g id="skill-25 capitalism">
+<rect x="1250" y="282" width="230" height="150" rx="10" fill="#F7EBA8" stroke="#B08A00" stroke-width="1.5"/>
+<text x="1262" y="306" font-size="13" font-weight="700" fill="#B08A00">#25</text>
+<text x="1298" y="306" font-size="15" font-weight="700" fill="#222">капитализм</text>
+<text x="1298" y="322" font-size="11" fill="#666">capitalism</text>
+<text x="1262" y="342" font-size="10.5" fill="#333" xml:space="preserve">• дает опыт за продажу предметов</text>
+<text x="1262" y="355" font-size="10.5" fill="#333" xml:space="preserve">• выброшенные предметы немедленно</text>
+<text x="1262" y="368" font-size="10.5" fill="#333" xml:space="preserve">• отправляются на продажу</text>
+</g>
+<g id="skill-26 treasury">
+<rect x="1492" y="282" width="230" height="150" rx="10" fill="#F7EBA8" stroke="#B08A00" stroke-width="1.5"/>
+<text x="1504" y="306" font-size="13" font-weight="700" fill="#B08A00">#26</text>
+<text x="1540" y="306" font-size="15" font-weight="700" fill="#222">сокровища</text>
+<text x="1540" y="322" font-size="11" fill="#666">treasury</text>
+<text x="1504" y="342" font-size="10.5" fill="#333" xml:space="preserve">• банки приносят монеты на 50%</text>
+<text x="1504" y="355" font-size="10.5" fill="#333" xml:space="preserve">  быстрее,</text>
+<text x="1504" y="368" font-size="10.5" fill="#333" xml:space="preserve">• если рядом есть другие банки</text>
+</g>
+<g id="skill-27 autorepair">
+<rect x="1734" y="282" width="230" height="150" rx="10" fill="#F7EBA8" stroke="#B08A00" stroke-width="1.5"/>
+<text x="1746" y="306" font-size="13" font-weight="700" fill="#B08A00">#27</text>
+<text x="1782" y="306" font-size="15" font-weight="700" fill="#222">авторемонт</text>
+<text x="1782" y="322" font-size="11" fill="#666">autorepair</text>
+<text x="1746" y="342" font-size="10.5" fill="#333" xml:space="preserve">• постройки ремонтируются</text>
+<text x="1746" y="355" font-size="10.5" fill="#333" xml:space="preserve">  автоматически</text>
+</g>
+<g id="skill-7 drilling">
+<rect x="40" y="444" width="230" height="150" rx="10" fill="#F6D7B0" stroke="#C46A1B" stroke-width="1.5"/>
+<text x="52" y="468" font-size="13" font-weight="700" fill="#C46A1B">#7</text>
+<text x="88" y="468" font-size="15" font-weight="700" fill="#222">бурение</text>
+<text x="88" y="484" font-size="11" fill="#666">drilling</text>
+<text x="52" y="504" font-size="10.5" fill="#333" xml:space="preserve">• открывает буровые установки</text>
+<text x="52" y="517" font-size="10.5" fill="#333" xml:space="preserve">• буровые установки могут бесплатно</text>
+<text x="52" y="530" font-size="10.5" fill="#333" xml:space="preserve">  собирать песок</text>
+<text x="52" y="543" font-size="10.5" fill="#333" xml:space="preserve">• дает шанс 25% найти уголь во время</text>
+<text x="52" y="556" font-size="10.5" fill="#333" xml:space="preserve">  копания</text>
+</g>
+<g id="skill-6 manufacturing">
+<rect x="282" y="444" width="230" height="150" rx="10" fill="#F6D7B0" stroke="#C46A1B" stroke-width="1.5"/>
+<text x="294" y="468" font-size="13" font-weight="700" fill="#C46A1B">#6</text>
+<text x="330" y="468" font-size="15" font-weight="700" fill="#222">производство</text>
+<text x="330" y="484" font-size="11" fill="#666">manufacturing</text>
+<text x="294" y="504" font-size="10.5" fill="#333" xml:space="preserve">• открывает фабрики</text>
+</g>
+<g id="skill-5 craftsmanship">
+<rect x="524" y="444" width="230" height="150" rx="10" fill="#F6D7B0" stroke="#C46A1B" stroke-width="1.5"/>
+<text x="536" y="468" font-size="13" font-weight="700" fill="#C46A1B">#5</text>
+<text x="572" y="468" font-size="15" font-weight="700" fill="#222">мастерство</text>
+<text x="572" y="484" font-size="11" fill="#666">craftsmanship</text>
+<text x="536" y="504" font-size="10.5" fill="#333" xml:space="preserve">• открывает молот</text>
+<text x="536" y="517" font-size="10.5" fill="#333" xml:space="preserve">• открывает королевскую сталь</text>
+<text x="536" y="530" font-size="10.5" fill="#333" xml:space="preserve">• открывает королевскую одежду</text>
+</g>
+<g id="skill-4 sewing">
+<rect x="766" y="444" width="230" height="150" rx="10" fill="#F6D7B0" stroke="#C46A1B" stroke-width="1.5"/>
+<text x="778" y="468" font-size="13" font-weight="700" fill="#C46A1B">#4</text>
+<text x="814" y="468" font-size="15" font-weight="700" fill="#222">вышивание</text>
+<text x="814" y="484" font-size="11" fill="#666">sewing</text>
+<text x="778" y="504" font-size="10.5" fill="#333" xml:space="preserve">• открывает кожу</text>
+<text x="778" y="517" font-size="10.5" fill="#333" xml:space="preserve">• швейные мастерские работают на 25%</text>
+<text x="778" y="530" font-size="10.5" fill="#333" xml:space="preserve">  быстрее</text>
+</g>
+<g id="skill-20 trade">
+<rect x="1008" y="444" width="230" height="150" rx="10" fill="#F7EBA8" stroke="#B08A00" stroke-width="1.5"/>
+<text x="1020" y="468" font-size="13" font-weight="700" fill="#B08A00">#20</text>
+<text x="1056" y="468" font-size="15" font-weight="700" fill="#222">торговля</text>
+<text x="1056" y="484" font-size="11" fill="#666">trade</text>
+<text x="1020" y="504" font-size="10.5" fill="#333" xml:space="preserve">• открывает рынки</text>
+</g>
+<g id="skill-21 banking">
+<rect x="1250" y="444" width="230" height="150" rx="10" fill="#F7EBA8" stroke="#B08A00" stroke-width="1.5"/>
+<text x="1262" y="468" font-size="13" font-weight="700" fill="#B08A00">#21</text>
+<text x="1298" y="468" font-size="15" font-weight="700" fill="#222">банковское дело</text>
+<text x="1298" y="484" font-size="11" fill="#666">banking</text>
+<text x="1262" y="504" font-size="10.5" fill="#333" xml:space="preserve">• открывает банки</text>
+</g>
+<g id="skill-22 management">
+<rect x="1492" y="444" width="230" height="150" rx="10" fill="#F7EBA8" stroke="#B08A00" stroke-width="1.5"/>
+<text x="1504" y="468" font-size="13" font-weight="700" fill="#B08A00">#22</text>
+<text x="1540" y="468" font-size="15" font-weight="700" fill="#222">управленец</text>
+<text x="1540" y="484" font-size="11" fill="#666">management</text>
+<text x="1504" y="504" font-size="10.5" fill="#333" xml:space="preserve">• предметы можно отправлять в</text>
+<text x="1504" y="517" font-size="10.5" fill="#333" xml:space="preserve">  хранилища прямо из снаряжения</text>
+<text x="1504" y="530" font-size="10.5" fill="#333" xml:space="preserve">• у хранилищ могут быть закрытые</text>
+<text x="1504" y="543" font-size="10.5" fill="#333" xml:space="preserve">  ячейки предметов</text>
+</g>
+<g id="skill-23 architecture">
+<rect x="1734" y="444" width="230" height="150" rx="10" fill="#F7EBA8" stroke="#B08A00" stroke-width="1.5"/>
+<text x="1746" y="468" font-size="13" font-weight="700" fill="#B08A00">#23</text>
+<text x="1782" y="468" font-size="15" font-weight="700" fill="#222">архитектура</text>
+<text x="1782" y="484" font-size="11" fill="#666">architecture</text>
+<text x="1746" y="504" font-size="10.5" fill="#333" xml:space="preserve">• удвоенная прочность построек</text>
+<text x="1746" y="517" font-size="10.5" fill="#333" xml:space="preserve">• постройки стоят на 25% меньше</text>
+<text x="1746" y="530" font-size="10.5" fill="#333" xml:space="preserve">  материалов</text>
+<text x="1746" y="543" font-size="10.5" fill="#333" xml:space="preserve">• больше ячеек в хранилищах</text>
+</g>
+<g id="skill-3 machinery">
+<rect x="40" y="606" width="230" height="150" rx="10" fill="#F6D7B0" stroke="#C46A1B" stroke-width="1.5"/>
+<text x="52" y="630" font-size="13" font-weight="700" fill="#C46A1B">#3</text>
+<text x="88" y="630" font-size="15" font-weight="700" fill="#222">оборудование</text>
+<text x="88" y="646" font-size="11" fill="#666">machinery</text>
+<text x="52" y="666" font-size="10.5" fill="#333" xml:space="preserve">• открывает пресс для цветов</text>
+<text x="52" y="679" font-size="10.5" fill="#333" xml:space="preserve">• у всех построек есть шанс 10%</text>
+<text x="52" y="692" font-size="10.5" fill="#333" xml:space="preserve">  создать вдвое больше предметов</text>
+</g>
+<g id="skill-2 masonry">
+<rect x="282" y="606" width="230" height="150" rx="10" fill="#F6D7B0" stroke="#C46A1B" stroke-width="1.5"/>
+<text x="294" y="630" font-size="13" font-weight="700" fill="#C46A1B">#2</text>
+<text x="330" y="630" font-size="15" font-weight="700" fill="#222">каменная кладка</text>
+<text x="330" y="646" font-size="11" fill="#666">masonry</text>
+<text x="294" y="666" font-size="10.5" fill="#333" xml:space="preserve">• открывает мастерские каменщиков</text>
+<text x="294" y="679" font-size="10.5" fill="#333" xml:space="preserve">• открывает жаровни</text>
+<text x="294" y="692" font-size="10.5" fill="#333" xml:space="preserve">• постройкам требуется на 25% меньше</text>
+<text x="294" y="705" font-size="10.5" fill="#333" xml:space="preserve">  камня и кирпичей</text>
+</g>
+<g id="skill-1 carpentry">
+<rect x="524" y="606" width="230" height="150" rx="10" fill="#F6D7B0" stroke="#C46A1B" stroke-width="1.5"/>
+<text x="536" y="630" font-size="13" font-weight="700" fill="#C46A1B">#1</text>
+<text x="572" y="630" font-size="15" font-weight="700" fill="#222">плотничное дело</text>
+<text x="572" y="646" font-size="11" fill="#666">carpentry</text>
+<text x="536" y="666" font-size="10.5" fill="#333" xml:space="preserve">• открывает плотничные мастерские</text>
+<text x="536" y="679" font-size="10.5" fill="#333" xml:space="preserve">• постройкам требуется на 25% меньше</text>
+<text x="536" y="692" font-size="10.5" fill="#333" xml:space="preserve">  древесины</text>
+</g>
+<g id="skill-0 industry">
+<rect x="766" y="606" width="230" height="150" rx="10" fill="#F6D7B0" stroke="#C46A1B" stroke-width="4"/>
+<text x="778" y="630" font-size="13" font-weight="700" fill="#C46A1B">#0</text>
+<text x="814" y="630" font-size="15" font-weight="700" fill="#222">промышленность</text>
+<text x="814" y="646" font-size="11" fill="#666">industry</text>
+<text x="778" y="666" font-size="10.5" fill="#333" xml:space="preserve">• открывает сталь</text>
+<text x="778" y="679" font-size="10.5" fill="#333" xml:space="preserve">• открывает стекло</text>
+<text x="778" y="692" font-size="10.5" fill="#333" xml:space="preserve">• дает опыт за возведение построек</text>
+</g>
+<g id="skill-16 economy">
+<rect x="1008" y="606" width="230" height="150" rx="10" fill="#F7EBA8" stroke="#B08A00" stroke-width="4"/>
+<text x="1020" y="630" font-size="13" font-weight="700" fill="#B08A00">#16</text>
+<text x="1056" y="630" font-size="15" font-weight="700" fill="#222">экономика</text>
+<text x="1056" y="646" font-size="11" fill="#666">economy</text>
+<text x="1020" y="666" font-size="10.5" fill="#333" xml:space="preserve">• немедленно дает 40 монет</text>
+<text x="1020" y="679" font-size="10.5" fill="#333" xml:space="preserve">• кузницы всегда создают на 4 монеты</text>
+<text x="1020" y="692" font-size="10.5" fill="#333" xml:space="preserve">  больше</text>
+</g>
+<g id="skill-17 storage">
+<rect x="1250" y="606" width="230" height="150" rx="10" fill="#F7EBA8" stroke="#B08A00" stroke-width="1.5"/>
+<text x="1262" y="630" font-size="13" font-weight="700" fill="#B08A00">#17</text>
+<text x="1298" y="630" font-size="15" font-weight="700" fill="#222">хранение</text>
+<text x="1298" y="646" font-size="11" fill="#666">storage</text>
+<text x="1262" y="666" font-size="10.5" fill="#333" xml:space="preserve">• открывает хранилища</text>
+</g>
+<g id="skill-18 gambling">
+<rect x="1492" y="606" width="230" height="150" rx="10" fill="#F7EBA8" stroke="#B08A00" stroke-width="1.5"/>
+<text x="1504" y="630" font-size="13" font-weight="700" fill="#B08A00">#18</text>
+<text x="1540" y="630" font-size="15" font-weight="700" fill="#222">азартные игры</text>
+<text x="1540" y="646" font-size="11" fill="#666">gambling</text>
+<text x="1504" y="666" font-size="10.5" fill="#333" xml:space="preserve">• открывает игровые автоматы</text>
+</g>
+<g id="skill-19 optics">
+<rect x="1734" y="606" width="230" height="150" rx="10" fill="#F7EBA8" stroke="#B08A00" stroke-width="1.5"/>
+<text x="1746" y="630" font-size="13" font-weight="700" fill="#B08A00">#19</text>
+<text x="1782" y="630" font-size="15" font-weight="700" fill="#222">оптика</text>
+<text x="1782" y="646" font-size="11" fill="#666">optics</text>
+<text x="1746" y="666" font-size="10.5" fill="#333" xml:space="preserve">• открывает маяки</text>
+<text x="1746" y="679" font-size="10.5" fill="#333" xml:space="preserve">• удваивает радиус света в темноте</text>
+</g>
+<g id="skill-35 pet">
+<rect x="40" y="768" width="230" height="150" rx="10" fill="#CDEBC2" stroke="#3E8A2C" stroke-width="1.5"/>
+<text x="52" y="792" font-size="13" font-weight="700" fill="#3E8A2C">#35</text>
+<text x="88" y="792" font-size="15" font-weight="700" fill="#222">питомец</text>
+<text x="88" y="808" font-size="11" fill="#666">pet</text>
+<text x="52" y="828" font-size="10.5" fill="#333" xml:space="preserve">• создает дружественного спутника</text>
+</g>
+<g id="skill-34 farming">
+<rect x="282" y="768" width="230" height="150" rx="10" fill="#CDEBC2" stroke="#3E8A2C" stroke-width="1.5"/>
+<text x="294" y="792" font-size="13" font-weight="700" fill="#3E8A2C">#34</text>
+<text x="330" y="792" font-size="15" font-weight="700" fill="#222">фермерство</text>
+<text x="330" y="808" font-size="11" fill="#666">farming</text>
+<text x="294" y="828" font-size="10.5" fill="#333" xml:space="preserve">• открывает ветряные мельницы</text>
+<text x="294" y="841" font-size="10.5" fill="#333" xml:space="preserve">• открывает опрыскиватели</text>
+</g>
+<g id="skill-33 gathering">
+<rect x="524" y="768" width="230" height="150" rx="10" fill="#CDEBC2" stroke="#3E8A2C" stroke-width="1.5"/>
+<text x="536" y="792" font-size="13" font-weight="700" fill="#3E8A2C">#33</text>
+<text x="572" y="792" font-size="15" font-weight="700" fill="#222">собирательство</text>
+<text x="572" y="808" font-size="11" fill="#666">gathering</text>
+<text x="536" y="828" font-size="10.5" fill="#333" xml:space="preserve">• дает 4 новые ячейки снаряжения</text>
+<text x="536" y="841" font-size="10.5" fill="#333" xml:space="preserve">• дает на 25% больше опыта за</text>
+<text x="536" y="854" font-size="10.5" fill="#333" xml:space="preserve">  растения и урожай</text>
+</g>
+<g id="skill-32 foraging">
+<rect x="766" y="768" width="230" height="150" rx="10" fill="#CDEBC2" stroke="#3E8A2C" stroke-width="4"/>
+<text x="778" y="792" font-size="13" font-weight="700" fill="#3E8A2C">#32</text>
+<text x="814" y="792" font-size="15" font-weight="700" fill="#222">сбор пищи</text>
+<text x="814" y="808" font-size="11" fill="#666">foraging</text>
+<text x="778" y="828" font-size="10.5" fill="#333" xml:space="preserve">• хлопок появляется чаще</text>
+<text x="778" y="841" font-size="10.5" fill="#333" xml:space="preserve">• позволяет находить пшеницу</text>
+<text x="778" y="854" font-size="10.5" fill="#333" xml:space="preserve">• позволяет находить свеклу</text>
+</g>
+<g id="skill-48 magic">
+<rect x="1008" y="768" width="230" height="150" rx="10" fill="#DCCEF2" stroke="#6B46B0" stroke-width="4"/>
+<text x="1020" y="792" font-size="13" font-weight="700" fill="#6B46B0">#48</text>
+<text x="1056" y="792" font-size="15" font-weight="700" fill="#222">магия</text>
+<text x="1056" y="808" font-size="11" fill="#666">magic</text>
+<text x="1020" y="828" font-size="10.5" fill="#333" xml:space="preserve">• дает на 25% больше опыта</text>
+</g>
+<g id="skill-49 alchemy">
+<rect x="1250" y="768" width="230" height="150" rx="10" fill="#DCCEF2" stroke="#6B46B0" stroke-width="1.5"/>
+<text x="1262" y="792" font-size="13" font-weight="700" fill="#6B46B0">#49</text>
+<text x="1298" y="792" font-size="15" font-weight="700" fill="#222">алхимия</text>
+<text x="1298" y="808" font-size="11" fill="#666">alchemy</text>
+<text x="1262" y="828" font-size="10.5" fill="#333" xml:space="preserve">• открывает котелки</text>
+</g>
+<g id="skill-50 inscription">
+<rect x="1492" y="768" width="230" height="150" rx="10" fill="#DCCEF2" stroke="#6B46B0" stroke-width="1.5"/>
+<text x="1504" y="792" font-size="13" font-weight="700" fill="#6B46B0">#50</text>
+<text x="1540" y="792" font-size="15" font-weight="700" fill="#222">магические письмена</text>
+<text x="1540" y="808" font-size="11" fill="#666">inscription</text>
+<text x="1504" y="828" font-size="10.5" fill="#333" xml:space="preserve">• открывает таблички магии</text>
+</g>
+<g id="skill-51 thaumaturgy">
+<rect x="1734" y="768" width="230" height="150" rx="10" fill="#DCCEF2" stroke="#6B46B0" stroke-width="1.5"/>
+<text x="1746" y="792" font-size="13" font-weight="700" fill="#6B46B0">#51</text>
+<text x="1782" y="792" font-size="15" font-weight="700" fill="#222">чародейство</text>
+<text x="1782" y="808" font-size="11" fill="#666">thaumaturgy</text>
+<text x="1746" y="828" font-size="10.5" fill="#333" xml:space="preserve">• открывает свитки и зелья эксперта</text>
+</g>
+<g id="skill-39 geology">
+<rect x="40" y="930" width="230" height="150" rx="10" fill="#CDEBC2" stroke="#3E8A2C" stroke-width="1.5"/>
+<text x="52" y="954" font-size="13" font-weight="700" fill="#3E8A2C">#39</text>
+<text x="88" y="954" font-size="15" font-weight="700" fill="#222">геология</text>
+<text x="88" y="970" font-size="11" fill="#666">geology</text>
+<text x="52" y="990" font-size="10.5" fill="#333" xml:space="preserve">• все камни оставляют после себя</text>
+<text x="52" y="1003" font-size="10.5" fill="#333" xml:space="preserve">  уголь</text>
+</g>
+<g id="skill-38 mining">
+<rect x="282" y="930" width="230" height="150" rx="10" fill="#CDEBC2" stroke="#3E8A2C" stroke-width="1.5"/>
+<text x="294" y="954" font-size="13" font-weight="700" fill="#3E8A2C">#38</text>
+<text x="330" y="954" font-size="15" font-weight="700" fill="#222">горное дело</text>
+<text x="330" y="970" font-size="11" fill="#666">mining</text>
+<text x="294" y="990" font-size="10.5" fill="#333" xml:space="preserve">• камни оставляют после себя на 40%</text>
+<text x="294" y="1003" font-size="10.5" fill="#333" xml:space="preserve">  больше минералов</text>
+</g>
+<g id="skill-37 fishing">
+<rect x="524" y="930" width="230" height="150" rx="10" fill="#CDEBC2" stroke="#3E8A2C" stroke-width="1.5"/>
+<text x="536" y="954" font-size="13" font-weight="700" fill="#3E8A2C">#37</text>
+<text x="572" y="954" font-size="15" font-weight="700" fill="#222">рыбная ловля</text>
+<text x="572" y="970" font-size="11" fill="#666">fishing</text>
+<text x="536" y="990" font-size="10.5" fill="#333" xml:space="preserve">• открывает удочки</text>
+<text x="536" y="1003" font-size="10.5" fill="#333" xml:space="preserve">• ловушки для рыбы действуют на 50%</text>
+<text x="536" y="1016" font-size="10.5" fill="#333" xml:space="preserve">  быстрее</text>
+</g>
+<g id="skill-36 hunting">
+<rect x="766" y="930" width="230" height="150" rx="10" fill="#CDEBC2" stroke="#3E8A2C" stroke-width="1.5"/>
+<text x="778" y="954" font-size="13" font-weight="700" fill="#3E8A2C">#36</text>
+<text x="814" y="954" font-size="15" font-weight="700" fill="#222">охота</text>
+<text x="814" y="970" font-size="11" fill="#666">hunting</text>
+<text x="778" y="990" font-size="10.5" fill="#333" xml:space="preserve">• открывает луки</text>
+<text x="778" y="1003" font-size="10.5" fill="#333" xml:space="preserve">• открывает стрелы</text>
+<text x="778" y="1016" font-size="10.5" fill="#333" xml:space="preserve">• убитые враги оставляют после себя</text>
+<text x="778" y="1029" font-size="10.5" fill="#333" xml:space="preserve">  монеты</text>
+</g>
+<g id="skill-52 combat">
+<rect x="1008" y="930" width="230" height="150" rx="10" fill="#DCCEF2" stroke="#6B46B0" stroke-width="1.5"/>
+<text x="1020" y="954" font-size="13" font-weight="700" fill="#6B46B0">#52</text>
+<text x="1056" y="954" font-size="15" font-weight="700" fill="#222">бой</text>
+<text x="1056" y="970" font-size="11" fill="#666">combat</text>
+<text x="1020" y="990" font-size="10.5" fill="#333" xml:space="preserve">• открывает мечи</text>
+<text x="1020" y="1003" font-size="10.5" fill="#333" xml:space="preserve">• навсегда увеличивает базовый урон</text>
+<text x="1020" y="1016" font-size="10.5" fill="#333" xml:space="preserve">  на 1</text>
+</g>
+<g id="skill-53 evasion">
+<rect x="1250" y="930" width="230" height="150" rx="10" fill="#DCCEF2" stroke="#6B46B0" stroke-width="1.5"/>
+<text x="1262" y="954" font-size="13" font-weight="700" fill="#6B46B0">#53</text>
+<text x="1298" y="954" font-size="15" font-weight="700" fill="#222">уворот</text>
+<text x="1298" y="970" font-size="11" fill="#666">evasion</text>
+<text x="1262" y="990" font-size="10.5" fill="#333" xml:space="preserve">• повышает шанс уклонения на 15%</text>
+</g>
+<g id="skill-54 reagency">
+<rect x="1492" y="930" width="230" height="150" rx="10" fill="#DCCEF2" stroke="#6B46B0" stroke-width="1.5"/>
+<text x="1504" y="954" font-size="13" font-weight="700" fill="#6B46B0">#54</text>
+<text x="1540" y="954" font-size="15" font-weight="700" fill="#222">реагенты</text>
+<text x="1540" y="970" font-size="11" fill="#666">reagency</text>
+<text x="1504" y="990" font-size="10.5" fill="#333" xml:space="preserve">• на создание зелий и свитков</text>
+<text x="1504" y="1003" font-size="10.5" fill="#333" xml:space="preserve">  требуется меньше ресурсов</text>
+</g>
+<g id="skill-55 faith">
+<rect x="1734" y="930" width="230" height="150" rx="10" fill="#DCCEF2" stroke="#6B46B0" stroke-width="1.5"/>
+<text x="1746" y="954" font-size="13" font-weight="700" fill="#6B46B0">#55</text>
+<text x="1782" y="954" font-size="15" font-weight="700" fill="#222">вера</text>
+<text x="1782" y="970" font-size="11" fill="#666">faith</text>
+<text x="1746" y="990" font-size="10.5" fill="#333" xml:space="preserve">• открывает алтари</text>
+</g>
+<g id="skill-43 prospecting">
+<rect x="40" y="1092" width="230" height="150" rx="10" fill="#CDEBC2" stroke="#3E8A2C" stroke-width="1.5"/>
+<text x="52" y="1116" font-size="13" font-weight="700" fill="#3E8A2C">#43</text>
+<text x="88" y="1116" font-size="15" font-weight="700" fill="#222">старательство</text>
+<text x="88" y="1132" font-size="11" fill="#666">prospecting</text>
+<text x="52" y="1152" font-size="10.5" fill="#333" xml:space="preserve">• камни на 10% чаще оставляют после</text>
+<text x="52" y="1165" font-size="10.5" fill="#333" xml:space="preserve">  себя самоцветы</text>
+<text x="52" y="1178" font-size="10.5" fill="#333" xml:space="preserve">• на 30% повышает шанс найти редкие</text>
+<text x="52" y="1191" font-size="10.5" fill="#333" xml:space="preserve">  предметы во время копания</text>
+</g>
+<g id="skill-42 calciverous">
+<rect x="282" y="1092" width="230" height="150" rx="10" fill="#CDEBC2" stroke="#3E8A2C" stroke-width="1.5"/>
+<text x="294" y="1116" font-size="13" font-weight="700" fill="#3E8A2C">#42</text>
+<text x="330" y="1116" font-size="15" font-weight="700" fill="#222">гурман</text>
+<text x="330" y="1132" font-size="11" fill="#666">calciverous</text>
+<text x="294" y="1152" font-size="10.5" fill="#333" xml:space="preserve">• позволяет поедать минералы и</text>
+<text x="294" y="1165" font-size="10.5" fill="#333" xml:space="preserve">  самоцветы</text>
+</g>
+<g id="skill-41 cooking">
+<rect x="524" y="1092" width="230" height="150" rx="10" fill="#CDEBC2" stroke="#3E8A2C" stroke-width="1.5"/>
+<text x="536" y="1116" font-size="13" font-weight="700" fill="#3E8A2C">#41</text>
+<text x="572" y="1116" font-size="15" font-weight="700" fill="#222">кулинария</text>
+<text x="572" y="1132" font-size="11" fill="#666">cooking</text>
+<text x="536" y="1152" font-size="10.5" fill="#333" xml:space="preserve">• открывает кастрюли</text>
+<text x="536" y="1165" font-size="10.5" fill="#333" xml:space="preserve">• открывает сахар</text>
+<text x="536" y="1178" font-size="10.5" fill="#333" xml:space="preserve">• открывает майонез</text>
+<text x="536" y="1191" font-size="10.5" fill="#333" xml:space="preserve">• открывает сыр</text>
+</g>
+<g id="skill-40 ballistics">
+<rect x="766" y="1092" width="230" height="150" rx="10" fill="#CDEBC2" stroke="#3E8A2C" stroke-width="1.5"/>
+<text x="778" y="1116" font-size="13" font-weight="700" fill="#3E8A2C">#40</text>
+<text x="814" y="1116" font-size="15" font-weight="700" fill="#222">баллистика</text>
+<text x="814" y="1132" font-size="11" fill="#666">ballistics</text>
+<text x="778" y="1152" font-size="10.5" fill="#333" xml:space="preserve">• открывает баллисты</text>
+<text x="778" y="1165" font-size="10.5" fill="#333" xml:space="preserve">• луки выпускают по 3 стрелы за раз</text>
+</g>
+<g id="skill-56 renewal">
+<rect x="1008" y="1092" width="230" height="150" rx="10" fill="#DCCEF2" stroke="#6B46B0" stroke-width="1.5"/>
+<text x="1020" y="1116" font-size="13" font-weight="700" fill="#6B46B0">#56</text>
+<text x="1056" y="1116" font-size="15" font-weight="700" fill="#222">второе дыхание</text>
+<text x="1056" y="1132" font-size="11" fill="#666">renewal</text>
+<text x="1020" y="1152" font-size="10.5" fill="#333" xml:space="preserve">• восстанавливает энергию за</text>
+<text x="1020" y="1165" font-size="10.5" fill="#333" xml:space="preserve">  убийство врагов</text>
+</g>
+<g id="skill-57 spellbind">
+<rect x="1250" y="1092" width="230" height="150" rx="10" fill="#DCCEF2" stroke="#6B46B0" stroke-width="1.5"/>
+<text x="1262" y="1116" font-size="13" font-weight="700" fill="#6B46B0">#57</text>
+<text x="1298" y="1116" font-size="15" font-weight="700" fill="#222">колдовство</text>
+<text x="1298" y="1132" font-size="11" fill="#666">spellbind</text>
+<text x="1262" y="1152" font-size="10.5" fill="#333" xml:space="preserve">• усиления действуют на 50% дольше</text>
+<text x="1262" y="1165" font-size="10.5" fill="#333" xml:space="preserve">• дает опыт за использование зелий</text>
+<text x="1262" y="1178" font-size="10.5" fill="#333" xml:space="preserve">• дает опыт за использование свитков</text>
+</g>
+<g id="skill-58 transmutation">
+<rect x="1492" y="1092" width="230" height="150" rx="10" fill="#DCCEF2" stroke="#6B46B0" stroke-width="1.5"/>
+<text x="1504" y="1116" font-size="13" font-weight="700" fill="#6B46B0">#58</text>
+<text x="1540" y="1116" font-size="15" font-weight="700" fill="#222">трансмутация</text>
+<text x="1540" y="1132" font-size="11" fill="#666">transmutation</text>
+<text x="1504" y="1152" font-size="10.5" fill="#333" xml:space="preserve">• открывает сталь пустоты</text>
+<text x="1504" y="1165" font-size="10.5" fill="#333" xml:space="preserve">• позволяет котелкам превращать</text>
+<text x="1504" y="1178" font-size="10.5" fill="#333" xml:space="preserve">  сталь в самоцветы</text>
+</g>
+<g id="skill-59 conjuration">
+<rect x="1734" y="1092" width="230" height="150" rx="10" fill="#DCCEF2" stroke="#6B46B0" stroke-width="1.5"/>
+<text x="1746" y="1116" font-size="13" font-weight="700" fill="#6B46B0">#59</text>
+<text x="1782" y="1116" font-size="15" font-weight="700" fill="#222">колдовство</text>
+<text x="1782" y="1132" font-size="11" fill="#666">conjuration</text>
+<text x="1746" y="1152" font-size="10.5" fill="#333" xml:space="preserve">• магические постройки работают на</text>
+<text x="1746" y="1165" font-size="10.5" fill="#333" xml:space="preserve">  25% быстрее</text>
+</g>
+<g id="skill-47 deposit">
+<rect x="40" y="1254" width="230" height="150" rx="10" fill="#CDEBC2" stroke="#3E8A2C" stroke-width="1.5"/>
+<text x="52" y="1278" font-size="13" font-weight="700" fill="#3E8A2C">#47</text>
+<text x="88" y="1278" font-size="15" font-weight="700" fill="#222">залежи</text>
+<text x="88" y="1294" font-size="11" fill="#666">deposit</text>
+<text x="52" y="1314" font-size="10.5" fill="#333" xml:space="preserve">• открывает каменоломни</text>
+</g>
+<g id="skill-46 prowess">
+<rect x="282" y="1254" width="230" height="150" rx="10" fill="#CDEBC2" stroke="#3E8A2C" stroke-width="1.5"/>
+<text x="294" y="1278" font-size="13" font-weight="700" fill="#3E8A2C">#46</text>
+<text x="330" y="1278" font-size="15" font-weight="700" fill="#222">смекалка</text>
+<text x="330" y="1294" font-size="11" fill="#666">prowess</text>
+<text x="294" y="1314" font-size="10.5" fill="#333" xml:space="preserve">• все постройки для фермы работают</text>
+<text x="294" y="1327" font-size="10.5" fill="#333" xml:space="preserve">  на 25% быстрее</text>
+</g>
+<g id="skill-45 gluttony">
+<rect x="524" y="1254" width="230" height="150" rx="10" fill="#CDEBC2" stroke="#3E8A2C" stroke-width="1.5"/>
+<text x="536" y="1278" font-size="13" font-weight="700" fill="#3E8A2C">#45</text>
+<text x="572" y="1278" font-size="15" font-weight="700" fill="#222">обжорство</text>
+<text x="572" y="1294" font-size="11" fill="#666">gluttony</text>
+<text x="536" y="1314" font-size="10.5" fill="#333" xml:space="preserve">• дает на 20% больше энергии во</text>
+<text x="536" y="1327" font-size="10.5" fill="#333" xml:space="preserve">  время еды</text>
+<text x="536" y="1340" font-size="10.5" fill="#333" xml:space="preserve">• дает опыт за прием пищи</text>
+</g>
+<g id="skill-44 looting">
+<rect x="766" y="1254" width="230" height="150" rx="10" fill="#CDEBC2" stroke="#3E8A2C" stroke-width="1.5"/>
+<text x="778" y="1278" font-size="13" font-weight="700" fill="#3E8A2C">#44</text>
+<text x="814" y="1278" font-size="15" font-weight="700" fill="#222">сбор добычи</text>
+<text x="814" y="1294" font-size="11" fill="#666">looting</text>
+<text x="778" y="1314" font-size="10.5" fill="#333" xml:space="preserve">• дает на 50% больше добычи за</text>
+<text x="778" y="1327" font-size="10.5" fill="#333" xml:space="preserve">  врагов и боссов</text>
+</g>
+<g id="skill-60 destruction">
+<rect x="1008" y="1254" width="230" height="150" rx="10" fill="#DCCEF2" stroke="#6B46B0" stroke-width="1.5"/>
+<text x="1020" y="1278" font-size="13" font-weight="700" fill="#6B46B0">#60</text>
+<text x="1056" y="1278" font-size="15" font-weight="700" fill="#222">разрушение</text>
+<text x="1056" y="1294" font-size="11" fill="#666">destruction</text>
+<text x="1020" y="1314" font-size="10.5" fill="#333" xml:space="preserve">• наносит боссам на 25% больше урона</text>
+</g>
+<g id="skill-61 spirituality">
+<rect x="1250" y="1254" width="230" height="150" rx="10" fill="#DCCEF2" stroke="#6B46B0" stroke-width="1.5"/>
+<text x="1262" y="1278" font-size="13" font-weight="700" fill="#6B46B0">#61</text>
+<text x="1298" y="1278" font-size="15" font-weight="700" fill="#222">духовность</text>
+<text x="1298" y="1294" font-size="11" fill="#666">spirituality</text>
+<text x="1262" y="1314" font-size="10.5" fill="#333" xml:space="preserve">• дает 2 сферы духа</text>
+<text x="1262" y="1327" font-size="10.5" fill="#333" xml:space="preserve">• открывает кузницы духа</text>
+</g>
+<g id="skill-62 summoning">
+<rect x="1492" y="1254" width="230" height="150" rx="10" fill="#DCCEF2" stroke="#6B46B0" stroke-width="1.5"/>
+<text x="1504" y="1278" font-size="13" font-weight="700" fill="#6B46B0">#62</text>
+<text x="1540" y="1278" font-size="15" font-weight="700" fill="#222">призыв</text>
+<text x="1540" y="1294" font-size="11" fill="#666">summoning</text>
+<text x="1504" y="1314" font-size="10.5" fill="#333" xml:space="preserve">• открывает мастерскую знаков</text>
+<text x="1504" y="1327" font-size="10.5" fill="#333" xml:space="preserve">• алтари заряжаются вдвое быстрее</text>
+</g>
+<g id="skill-63 astrology">
+<rect x="1734" y="1254" width="230" height="150" rx="10" fill="#DCCEF2" stroke="#6B46B0" stroke-width="1.5"/>
+<text x="1746" y="1278" font-size="13" font-weight="700" fill="#6B46B0">#63</text>
+<text x="1782" y="1278" font-size="15" font-weight="700" fill="#222">астрология</text>
+<text x="1782" y="1294" font-size="11" fill="#666">astrology</text>
+<text x="1746" y="1314" font-size="10.5" fill="#333" xml:space="preserve">• открывает космическую сталь</text>
+<text x="1746" y="1327" font-size="10.5" fill="#333" xml:space="preserve">• вероятность звездопада</text>
+<text x="1746" y="1340" font-size="10.5" fill="#333" xml:space="preserve">  увеличивается</text>
+</g>
+<g id="legend">
+<text x="1994" y="140" font-size="18" font-weight="700" fill="#222">Ветки</text>
+<rect x="1994" y="160" width="28" height="28" rx="6" fill="#F6D7B0" stroke="#C46A1B" stroke-width="1.5"/>
+<text x="2034" y="179" font-size="14" fill="#222">Промышленность / Industry</text>
+<rect x="1994" y="200" width="28" height="28" rx="6" fill="#F7EBA8" stroke="#B08A00" stroke-width="1.5"/>
+<text x="2034" y="219" font-size="14" fill="#222">Экономика / Economy</text>
+<rect x="1994" y="240" width="28" height="28" rx="6" fill="#CDEBC2" stroke="#3E8A2C" stroke-width="1.5"/>
+<text x="2034" y="259" font-size="14" fill="#222">Собирательство / Foraging</text>
+<rect x="1994" y="280" width="28" height="28" rx="6" fill="#DCCEF2" stroke="#6B46B0" stroke-width="1.5"/>
+<text x="2034" y="299" font-size="14" fill="#222">Магия / Magic</text>
+<rect x="1994" y="330" width="28" height="28" rx="6" fill="#FFF" stroke="#444" stroke-width="4"/>
+<text x="2034" y="349" font-size="14" fill="#222">Корень ветки (старт)</text>
+</g></svg>

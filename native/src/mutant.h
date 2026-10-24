@@ -3,6 +3,7 @@
 //   skills     the host acts for a guest with its own skills (playtest 4, bug 7)
 //   chests     chests are the game's own: one key opens a key chest for its opener only
 //   savelists  no list fixing before a save (bug 10)
+//   savefix    a broken zone file is loaded as it is
 //   herbs      dead ids stay on global.herbs (the game stops in HerbProcess)
 //   wake       waking leaves ids on the cull lists (the ProcessCulls crash)
 //   forget     a destroyed instance stays on cull lists other than its last cell

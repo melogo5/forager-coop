@@ -36,6 +36,7 @@
 #include "puppet.h"
 #include "quests.h"
 #include "reconcile.h"
+#include "savefix.h"
 #include "skills.h"
 #include "fishing.h"
 #include "skilltab.h"
@@ -693,6 +694,7 @@ bool SessionInstall() {
         return false;
     }
     if (!world::InstallHooks([] { return g_role == Role::kGuest; })) return false;
+    savefix::InstallHooks();  // a stopgap: never in the way of the rest
     if (!skilltab::InstallHooks([] { return g_role != Role::kNone; })) return false;
     interiors::InstallHooks([] { return g_role != Role::kNone; });  // work in progress: never in the way of the rest
     if (!fishing::InstallHooks([] { return g_role != Role::kNone; })) return false;
