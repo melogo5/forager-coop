@@ -14,6 +14,7 @@
 #include "character.h"
 #include "log.h"
 #include "mutant.h"
+#include "skilltab.h"
 
 namespace coop::skills {
 
@@ -271,7 +272,10 @@ void TakeTree(const std::vector<uint8_t>& payload, yyc::CInstance* localPlayer) 
         return;
     }
     const std::vector<int8_t> merged = Merge(here, theirs);
-    if (merged != here) WriteSkills(merged);
+    if (merged != here) {
+        WriteSkills(merged);
+        skilltab::RefreshStates(localPlayer);
+    }
     Replay(localPlayer, effects);
     g_tree = Merge(g_tree.size() == theirs.size() ? g_tree : here, theirs);  // a purchase here not sent yet still is
     Log("skills: the shared tree: newly learned here %s(%d learned, %zu purchase calls made)",

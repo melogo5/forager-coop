@@ -359,6 +359,12 @@ void Close(yyc::CInstance* self) {
 
 }  // namespace
 
+void RefreshStates(yyc::CInstance* self) {
+    if (!g_open || self == nullptr) return;
+    gui::Begin(self);
+    ShowSkillStates();
+}
+
 bool InstallHooks(bool (*inSession)()) {
     g_inSession = inSession;
     bool ok = Hook(kVariableGetBuiltin, reinterpret_cast<void*>(&GetBuiltinHook), &g_origGetBuiltin);

@@ -17,6 +17,10 @@ bool InterceptRoomGoto(yyc::CInstance* self, int room);
 // The tree is open: the local player stands still (puppet::HoldLocalPlayer), the world does not.
 bool IsOpen();
 
+// Another player's skills came while the tree is open here: each skill shows its state again (it is set once, on
+// opening; the game itself only changes the skill bought here). `self`: an instance to call builtins as.
+void RefreshStates(yyc::CInstance* self);
+
 // The session ended or the world room went away: forget the tree.
 void Reset();
 
