@@ -202,9 +202,7 @@ unsigned g_applied[16] = {};
 unsigned g_steps = 0;
 constexpr unsigned kStatsEverySteps = 600;
 
-// To everyone, or only to guest `to` when it is set.
-void Send(MessageType type, const InstanceInfo& info, int id, int32_t item = kNoItem,
-          int32_t owner = kOwnerAnyone, int to = -1) {
+ObjectMsg MakeObjectMsg(MessageType type, const InstanceInfo& info, int id, int32_t item, int32_t owner) {
     ObjectMsg msg{id, info.object, static_cast<float>(info.x), static_cast<float>(info.y),
                   static_cast<float>(info.depth), item, owner, -1, 0};
     if (type == kSpawn) {
@@ -213,9 +211,24 @@ void Send(MessageType type, const InstanceInfo& info, int id, int32_t item = kNo
             msg.image = static_cast<float>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_image_index));
         }
     }
+    return msg;
+}
+
+// To everyone, or only to guest `to` when it is set.
+void Send(MessageType type, const InstanceInfo& info, int id, int32_t item = kNoItem,
+          int32_t owner = kOwnerAnyone, int to = -1) {
+    const ObjectMsg msg = MakeObjectMsg(type, info, id, item, owner);
     const bool sent = to < 0 ? net::Send(type, &msg, sizeof(msg))
                              : net::SendTo(static_cast<net::PeerId>(to), type, &msg, sizeof(msg));
     if (sent) ++g_sent[type & 15];
+}
+
+// Host: what guest `from` did to the world, for the other guests as if the host had done it (with 3-4 players
+// a guest's build or removal reached nobody else: the host carries it out quietly, without reporting it).
+void SendToOtherGuests(net::PeerId from, MessageType type, const InstanceInfo& info, int id) {
+    const ObjectMsg msg = MakeObjectMsg(type, info, id, kNoItem, kOwnerAnyone);
+    net::SendExcept(from, type, &msg, sizeof(msg));
+    ++g_sent[type & 15];
 }
 
 bool IsDrop(yyc::CInstance* self, int object) {
@@ -868,16 +881,23 @@ void ApplyGuestSpawn(yyc::CInstance* self, net::PeerId from, const ObjectMsg& ms
         Builtin(self, "instance_create_depth", {msg.x, msg.y, msg.depth, double(msg.object)}));
     --g_applyingRemote;
     puppet::EndActing();
-    if (yyc::FindInstance(id) == nullptr) return;
+    yyc::CInstance* built = yyc::FindInstance(id);
+    if (built == nullptr) return;
     const ObjectMsg ack{id, msg.object, msg.x, msg.y, msg.depth, msg.id};
     net::SendTo(from, kGuestSpawnAck, &ack, sizeof(ack));
+    SendToOtherGuests(from, kSpawn, Describe(built), id);
     Log("sync: guest built object %d at (%.0f, %.0f) -> %d (guest %u)", msg.object, msg.x, msg.y, id, from);
 }
 
-void ApplyGuestDestroyed(yyc::CInstance* self, const ObjectMsg& msg) {
-    if (yyc::CInstance* target = ResolveOnHost(self, msg)) {
-        DestroySilently(self, static_cast<int>(yyc::GetBuiltinReal(target, yyc::va::YYVar_id)));
-    }
+void ApplyGuestDestroyed(yyc::CInstance* self, net::PeerId from, const ObjectMsg& msg) {
+    yyc::CInstance* target = ResolveOnHost(self, msg);
+    if (target == nullptr) return;
+    const InstanceInfo info = Describe(target);
+    // Enemies live and die at the host: a replica the guest lost (a death it played out ahead of the host) must
+    // not take the real one away without its drops and XP.
+    if (IsEnemy(self, info.object)) return;
+    DestroySilently(self, info.id);
+    SendToOtherGuests(from, kDestroy, info, info.id);
 }
 
 // Host: XP the guest earned, added to the shared progress.
@@ -1334,7 +1354,7 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
             if (size == sizeof(ObjectMsg) && IsHost()) ApplyHit(localPlayer, message.from, ReadObject(message));
             return true;
         case kGuestDestroyed:
-            if (size == sizeof(ObjectMsg) && IsHost()) ApplyGuestDestroyed(localPlayer, ReadObject(message));
+            if (size == sizeof(ObjectMsg) && IsHost()) ApplyGuestDestroyed(localPlayer, message.from, ReadObject(message));
             return true;
         case kObjectHp:
             if (size == sizeof(HpMsg)) {
