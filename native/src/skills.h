@@ -1,7 +1,10 @@
-// Each player has its own skills (docs/coop/PLAYTEST.md #9); level and XP stay shared. The world save holds
-// only the host's skills, so the guest's are kept by the host next to its character
-// (saveDataN/coop_guests/<name>.skills) and put back after the guest loads the host's world: its own learned
-// skills instead of the host's, and its own skill points. Every shared level-up earns the guest a point too.
+// One skill tree for everyone (docs/coop/SKILLS.md): a skill learned by any player is learned by all - shown so in
+// every tree, and its effects everywhere. The tree is the host's global.skillUnlocked (the world save keeps it; a
+// joining guest gets it with the world). Whoever buys a skill sends the tree, with the ItemEdit/StructureEdit calls
+// the purchase made (objSkill Step_0: items, recipes and structures it unlocks); the others merge the tree and make
+// the same calls. The host passes a guest's tree on to the other guests.
+// Skill points stay each player's own: a point per shared level-up, minus what that player bought. The host keeps a
+// guest's count next to its character (saveDataN/coop_guests/<name>.skills) and gives it back on joining.
 #pragma once
 
 #include <string>
@@ -11,20 +14,20 @@
 
 namespace coop::skills {
 
+// Creates the hooks (enabled by the caller): ItemEdit and StructureEdit, recorded while a skill is bought.
+bool InstallHooks();
+
+// From the objSkill Step_0 hook: a skill bought now is bought in a coop session; record what it does.
+void RecordPurchases(bool on);
+
 // Host, game thread: guest `peer` has introduced itself as `name`; sends it what is stored for it.
-void HostOnGuest(const std::string& name, net::PeerId peer);
+void HostOnGuest(const std::string& name, net::PeerId peer, yyc::CInstance* localPlayer);
 
-// Game thread, every local player step while connected (both sides; the work is the guest's).
-void Tick(yyc::CInstance* localPlayer);
+// Game thread, every local player step while connected (both sides).
+void Tick(yyc::CInstance* localPlayer, bool host);
 
-// Game thread: handles a skills message (host: stores it; guest: applies it); false if not one.
-bool Handle(const net::Message& message);
-
-// Host, game thread: while the host acts as guest `player` (puppet::BeginActing: its hits, builds, what they
-// destroy), global.skillUnlocked holds that guest's skills - drops and bonuses follow the guest's skills, not the
-// host's (playtest 4, bug 7). `puppet`: any instance to call builtins as. SwapOut puts the host's back.
-void HostSwapIn(yyc::CInstance* puppet, net::PeerId player);
-void HostSwapOut();
+// Game thread: handles a skills message; false if not one.
+bool Handle(const net::Message& message, yyc::CInstance* localPlayer);
 
 // Forgets the session (the guest re-applies on joining again).
 void Reset();

@@ -1,6 +1,6 @@
 // Testing aid ("mutation twins"): COOP_DEBUG_MUTANT=<name>[,<name>...] puts a fixed bug back, so the fix's test can
 // show it fails without the fix (tools/gametest/mutants.ps1). A test that cannot fail proves nothing.
-//   skills     the host acts for a guest with its own skills (playtest 4, bug 7)
+//   skills     a tree from another player is ignored (each keeps its own skill tree)
 //   chests     chests are the game's own: one key opens a key chest for its opener only
 //   savelists  no list fixing before a save (bug 10)
 //   savefix    a broken zone file is loaded as it is

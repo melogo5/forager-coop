@@ -4,7 +4,7 @@ param([string[]]$Only = @())
 $ErrorActionPreference = 'Continue'
 $checks = [ordered]@{
   chests     = @{ Script = 'chests.ps1';      Mutant = 'chests' }
-  skills     = @{ Script = 'guestskills.ps1'; Mutant = 'skills' }
+  skills     = @{ Script = 'sharedskills.ps1'; Mutant = 'skills' }
   savelists  = @{ Script = 'savelists.ps1';   Mutant = 'savelists' }
   herbs      = @{ Script = 'herbs.ps1';       Mutant = 'herbs' }
   savefix    = @{ Script = 'savefix.ps1';     Mutant = 'savefix' }

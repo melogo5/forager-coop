@@ -271,7 +271,7 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             clock::Handle(message, localPlayer) ||
             unlocks::Handle(message, localPlayer) || coins::Handle(message, localPlayer) ||
             progress::Handle(message, localPlayer) || quests::Handle(message, localPlayer) ||
-            stations::Handle(message, localPlayer) || skills::Handle(message) || traps::Handle(message, localPlayer) ||
+            stations::Handle(message, localPlayer) || skills::Handle(message, localPlayer) || traps::Handle(message, localPlayer) ||
             reconcile::Handle(message, localPlayer) || chests::Handle(message, localPlayer)) {
             continue;
         }
@@ -279,7 +279,7 @@ void HandleMessages(yyc::CInstance* localPlayer) {
         if (g_role == Role::kHost && character::HostHandle(message, localPlayer, &guestIntroduced)) {
             // The guest's character answer is out; now the world, so it arrives after it.
             if (guestIntroduced) {
-                skills::HostOnGuest(character::HostGuestName(message.from), message.from);
+                skills::HostOnGuest(character::HostGuestName(message.from), message.from, localPlayer);
                 world::HostRequestSnapshot(localPlayer, message.from);
             }
             continue;
@@ -581,7 +581,7 @@ void Tick(yyc::CInstance* localPlayer) {
     quests::Tick(localPlayer);
     stations::Tick(localPlayer, g_role == Role::kGuest);
     fishing::Tick(localPlayer);
-    skills::Tick(localPlayer);
+    skills::Tick(localPlayer, g_role == Role::kHost);
     HandleMessages(localPlayer);
     if (g_steps % kSendEverySteps == 0) {
         const PlayerStateMsg state = CaptureState(localPlayer);
@@ -703,7 +703,7 @@ bool SessionInstall() {
     if (!sync::InstallHooks(isHost, isGuest) || !mobs::InstallHooks(isHost, isGuest) ||
         !character::InstallHooks(isGuest) || !storage::InstallHooks() || !land::InstallHooks(isHost, isGuest) ||
         !progress::InstallHooks() || !stations::InstallHooks() || !chests::InstallHooks(isHost) ||
-        !traps::InstallHooks(isHost, isGuest)) {
+        !traps::InstallHooks(isHost, isGuest) || !skills::InstallHooks()) {
         return false;
     }
     Role role = Role::kNone;

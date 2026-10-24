@@ -11,6 +11,7 @@
 #include "gui.h"
 #include "log.h"
 #include "puppet.h"
+#include "skills.h"
 
 namespace coop::skilltab {
 
@@ -131,9 +132,12 @@ void __cdecl SkillDrawHook(yyc::CInstance* self, yyc::CInstance* other) {
 }
 
 // The tree's steps lay it out from the room's size: they see the tree's room, not the world.
+// A skill bought there in a session is bought for everyone: skills.h records what the purchase does.
 void __cdecl SkillStepHook(yyc::CInstance* self, yyc::CInstance* other) {
     g_gridRoom = g_open;
+    skills::RecordPurchases(g_inSession != nullptr && g_inSession());
     g_origSkillStep(self, other);
+    skills::RecordPurchases(false);
     g_gridRoom = false;
 }
 

@@ -1,8 +1,9 @@
 # The skill tree over the running world: the host (or with -OnGuest the guest) opens it, holds the mouse on the
 # first available skill until it is bought, then leaves with Esc. Uses the most recently played save (row 1);
 # -Shot saves shots	ree_hover.png and shots	ree_closed.png. Look for 'learned 1' and 'the skill tree closed'.
-# Usage: skilltree.ps1 [-OnGuest] [-Shot] [-HoldMs 5000]
-param([string]$At = '640,360', [int]$HoldMs = 5000, [switch]$Shot, [hashtable]$ExtraEnv = @{}, [switch]$OnGuest)
+# -Slot <n>: that save slot instead of row 1 (e.g. 5, the test slot).
+# Usage: skilltree.ps1 [-OnGuest] [-Shot] [-HoldMs 5000] [-Slot 5]
+param([string]$At = '640,360', [int]$HoldMs = 5000, [switch]$Shot, [hashtable]$ExtraEnv = @{}, [switch]$OnGuest, [int]$Slot = 0)
 $ErrorActionPreference = 'Stop'
 Set-Location 'Z:\repos\forager-coop'
 $d = 'Z:\SteamLibrary\steamapps\common\Forager'
@@ -13,7 +14,8 @@ Wait-Process -Name Forager -Timeout 30 -ErrorAction SilentlyContinue
 $treeEnv = @{COOP_DEBUG_SKILLTREE = '45'} + $ExtraEnv
 $hostEnv = @{COOP_DEBUG_XP = '400'} + $(if ($OnGuest) { @{} } else { $treeEnv })
 $guestEnv = $(if ($OnGuest) { $treeEnv } else { @{} })
-$r = & 'tools\gametest\coopflow.ps1' -HostSlotRow 1 -GodMode -HostEnv $hostEnv -GuestEnv $guestEnv
+$world = if ($Slot -gt 0) { @{HostSlot = $Slot} } else { @{HostSlotRow = 1} }
+$r = & 'tools\gametest\coopflow.ps1' @world -GodMode -HostEnv $hostEnv -GuestEnv $guestEnv
 $h = [int]($r -replace '.*HOST=(\d+).*', '$1'); $g = [int]($r -replace '.*GUEST=(\d+).*', '$1')
 $hostPid = $h; $guestPid = $g
 if ($OnGuest) { $h = $guestPid }  # the tree's side: its window and log

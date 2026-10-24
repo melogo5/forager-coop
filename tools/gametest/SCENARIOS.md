@@ -127,7 +127,7 @@ $ctl = 'Z:\repos\forager-coop\tools\gametest\gamectl.ps1'
 запускают свои игры.
 
 Сценарии-проверки (PASS/FAIL), все через порт запросов: `doubles.ps1` (двойники после перезагрузки мира хоста), `costumes.ps1` (костюмы), `savedcraft.ps1` (крафт из сейва хоста не уходит гостю), `traps.ps1` (ловушки хоста: сбор гостем, улов хоста у гостя), `quests.ps1` (квест NPC, тронутый гостем, у хоста — даже когда NPC далеко), `skilltree.ps1` (покупка в дереве в мире). `doubles`/`savedcraft`/`traps`/`quests` ждут мир с постройками у старта в слоте 4 (`-HostSlot`): например, копию сыгранного мира. Установка DLL перед прогоном — `install.ps1` (ждёт, пока закрывающаяся игра отпустит файл).
-| `COOP_DEBUG_SKILL=<n>` (любой) | через ~10 с отмечает навык n изученным, как покупка; у гостя он уходит хосту (`kept guest ... skills`) и возвращается после перезахода |
+| `COOP_DEBUG_SKILL=<n>` (любой) | через ~10 с отмечает навык n изученным, как покупка (без её эффектов); `=avail<k>` — k-й доступный, ещё не изученный навык. Дерево уходит остальным (`skills: sent the tree` / `the shared tree: newly learned here`). Проверка — `sharedskills.ps1` |
 | `COOP_DEBUG_DESYNC=1` (оба) | через ~8 с хост тихо убирает у себя 3 ближайших к гостю объекта, гость — следующие 3: сверка (`reconcile:`) должна убрать у гостя лишние и вернуть недостающие за ~10 с |
 | `COOP_DEBUG_CHEST=1` (любой) | через ~10 с открывает ближайший `objTreasureChest` (хост ставит его консолью `/spawn objTreasureChest`); у другой стороны копия убирается (`chests: the other player opened ... removed here`) |
 | `COOP_DEBUG_ROOM=<комната>` (любой) | через ~8 с уходит в эту комнату (24 — музей), через ~10 с возвращается в мир; пока его нет, синхронизация у него стоит (`session: left the world room`) |
@@ -144,7 +144,7 @@ $ctl = 'Z:\repos\forager-coop\tools\gametest\gamectl.ps1'
 - **Мутационные близнецы:** `COOP_DEBUG_MUTANT=<имя>[,<имя>]` возвращает исправленный баг (список — `native/src/mutant.h`:
   `skills`, `chests`, `savelists`, `wake`, `modes`). `mutants.ps1 [-Only chests,skills]` гоняет каждую проверку как есть
   (должна пройти) и с её мутантом (должна упасть) и печатает таблицу; «PASSES (test is blind)» — тест ничего не
-  проверяет. Проверки: `chests.ps1`, `guestskills.ps1`, `savelists.ps1`, `sleeplists.ps1`, `modes.ps1` и
+  проверяет. Проверки: `chests.ps1`, `sharedskills.ps1`, `savelists.ps1`, `sleeplists.ps1`, `modes.ps1` и
   `worlddiff-selfcheck.ps1` (сверка мира ловит объект, сделанный только у гостя). Запуск пары с переменными —
   `StartPair` в `lib.ps1`; `Done` в конце даёт код выхода 1 при любом FAIL.
 - `COOP_DEBUG_SPEED=<n>` (обеим играм) — игра в n раз быстрее (`game_set_speed`): рост, ловушки, сутки за время теста.
