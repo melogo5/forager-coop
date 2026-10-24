@@ -61,7 +61,9 @@ struct HpMsg {
     int32_t object;
     float x, y;
     float hp, alpha, last, white;  // what the health bar is drawn from
+    uint8_t hitter;  // the player whose tool hit it (net::PeerId), kNoHitter for a repair
 };
+constexpr uint8_t kNoHitter = 0xFF;
 constexpr int32_t kOwnerAnyone = 0;
 constexpr int32_t kOwnerHost = 1;
 constexpr int32_t kOwnerGuest = 2;
@@ -528,7 +530,7 @@ yyc::RValue* __cdecl RepairKitHook(yyc::CInstance* self, yyc::CInstance* other, 
         const InstanceInfo info = Describe(structure);
         const HpMsg msg{HostIdOf(id), info.object, static_cast<float>(info.x), static_cast<float>(info.y),
                         ReadVar(id, kSlotHp), ReadVar(id, kSlotHpAlpha), ReadVar(id, kSlotHpLast),
-                        ReadVar(id, kSlotHpWhite)};
+                        ReadVar(id, kSlotHpWhite), kNoHitter};
         net::Send(kObjectHp, &msg, sizeof(msg));
         Log("sync: repaired structure %d at (%.0f, %.0f): hp %.0f -> %.0f, sent to the host", info.object, info.x,
             info.y, hp, msg.hp);
@@ -595,13 +597,13 @@ float ReadVar(int id, int slot) {
     return result;
 }
 
-// Host: after a hit, the guest's copy shows the same health bar.
-void SendHp(yyc::CInstance* target) {
+// Host: after a hit, the guest's copy shows the same health bar (and the hit itself, when `hitter` is not that guest).
+void SendHp(yyc::CInstance* target, uint8_t hitter = kNoHitter) {
     if (!IsHost() || !Connected() || target == nullptr) return;
     const InstanceInfo info = Describe(target);
     const HpMsg msg{info.id, info.object, static_cast<float>(info.x), static_cast<float>(info.y),
                     ReadVar(info.id, kSlotHp), ReadVar(info.id, kSlotHpAlpha), ReadVar(info.id, kSlotHpLast),
-                    ReadVar(info.id, kSlotHpWhite)};
+                    ReadVar(info.id, kSlotHpWhite), hitter};
     net::Send(kObjectHp, &msg, sizeof(msg));
 }
 
@@ -655,6 +657,19 @@ void DryHit(yyc::CInstance* target, yyc::CInstance* player) {
     yyc::SetVar(id, kSlotHp, &restored);
 }
 
+// Guest: another player's tool hit (the host's, or a guest's passed on by the host) is shown here as well, as our
+// own hits are. Our own come back too: we have no puppet of ourselves, so those are not shown twice.
+void ShowOthersHit(yyc::CInstance* self, const HpMsg& msg) {
+    if (msg.hitter == kNoHitter || IsEnemy(self, msg.object)) return;
+    yyc::CInstance* hitter = puppet::Instance(msg.hitter);
+    const int local = hitter != nullptr ? Resolve(self, msg.id, msg.object, msg.x, msg.y) : 0;
+    yyc::CInstance* target = local != 0 ? yyc::FindInstance(local) : nullptr;
+    if (target == nullptr) return;
+    puppet::BeginActing(msg.hitter);
+    DryHit(target, hitter);
+    puppet::EndActing();
+}
+
 // Guest: a tool hit is `with (target) event_user(0)` with the player as `other`; the host decides its outcome.
 // Host: its own tool hits are shown on the guest's copy (health bar).
 void __cdecl EventUserHook(yyc::CInstance* self, yyc::CInstance* other, int n) {
@@ -663,7 +678,7 @@ void __cdecl EventUserHook(yyc::CInstance* self, yyc::CInstance* other, int n) {
         g_hitByGuest.erase(id);  // the last hit decides who gets the drop (playtest 4, bug 1)
         const bool synced = IsSynced(self, static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_object_index)));
         g_origEventUser(self, other, n);
-        if (synced) SendHp(yyc::FindInstance(id));
+        if (synced) SendHp(yyc::FindInstance(id), net::kHostPeer);
         return;
     }
     if (n != 0 || !IsGuest() || other == nullptr || other != g_localPlayer || g_applyingRemote > 0 ||
@@ -841,7 +856,7 @@ void ApplyHit(yyc::CInstance* self, net::PeerId from, const ObjectMsg& msg, bool
         yyc::RValue dmg = yyc::Real(puppetDmg);
         yyc::SetVar(guestId, kSlotDmg, &dmg);
     }
-    SendHp(yyc::FindInstance(targetId));  // gone if the hit destroyed it
+    SendHp(yyc::FindInstance(targetId), from);  // gone if the hit destroyed it
 }
 
 // Host: build what the guest built (as the guest, for anything that asks who "the player" is) and tell
@@ -1325,6 +1340,7 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
             if (size == sizeof(HpMsg)) {
                 HpMsg msg{};
                 memcpy(&msg, message.payload.data(), sizeof(msg));
+                if (IsGuest()) ShowOthersHit(localPlayer, msg);
                 ApplyHp(localPlayer, msg);
                 if (IsHost()) {  // a guest's repair: the other guests see it too
                     const int local = Resolve(localPlayer, msg.id, msg.object, msg.x, msg.y);

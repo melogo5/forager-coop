@@ -8,6 +8,7 @@
 #pragma comment(lib, "user32.lib")  // MessageBoxW: the version warning
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
@@ -54,7 +55,7 @@ namespace coop {
 
 namespace {
 
-constexpr uint32_t kProtocolVersion = 13;  // 13: chests with a key per player; shared vault cells; world checks
+constexpr uint32_t kProtocolVersion = 14;  // 14: the tool swing; hits shown to every player
 constexpr unsigned kSendEverySteps = 3;       // 60 fps game step -> 20 updates/s
 constexpr unsigned kAnnounceEverySteps = 30;  // refresh the LAN announcement twice a second
 constexpr int kSlotGodMode = 0x54C;           // global.godMode (decompiled/code/var_slots.tsv)
@@ -95,6 +96,7 @@ struct PlayerStateMsg {
     float hp, hpMax;
     char name[16];  // not 0-terminated when all 16 are used
     look::Look look;  // the costume, for its puppet
+    puppet::Swing swing;  // the biggest since the last update: a hit lasts a step, updates come every few
 };
 struct PeerStateMsg {
     uint8_t player;
@@ -116,6 +118,7 @@ std::string g_myName;         // shown over our character on the other players' 
 std::vector<net::PeerId> g_peers;  // linked at the last step
 bool g_wasInWorld = true;
 std::map<net::PeerId, PlayerStateMsg> g_remotes;  // the other players' last state, shown as puppets
+puppet::Swing g_swing{};  // the local player's swing to send next (KeepSwing)
 
 bool ParseArgs(Role* role, std::string* address, uint16_t* port) {
     int argc = 0;
@@ -164,8 +167,18 @@ PlayerStateMsg CaptureState(yyc::CInstance* player) {
     }
     memcpy(s.name, g_myName.data(), (std::min)(g_myName.size(), sizeof(s.name)));
     s.look = look::Read(player);
+    s.swing = g_swing;
     yyc::Free(&tool);
     return s;
+}
+
+// Every step, after the player's Step_0 (where a hit sets the swing) and before its Step_2 (which eases it back):
+// keeps the biggest swing until it is sent.
+void KeepSwing(yyc::CInstance* player) {
+    const puppet::Swing now = puppet::ReadSwing(player);
+    if (std::fabs(now.toolSwing) >= std::fabs(g_swing.toolSwing)) g_swing = now;
+    g_swing.facing = now.facing;
+    g_swing.angle = now.angle;
 }
 
 // Coop worlds are Classic only for now (QUESTIONS.md): a host that started another mode goes back to the menu.
@@ -583,15 +596,18 @@ void Tick(yyc::CInstance* localPlayer) {
     fishing::Tick(localPlayer);
     skills::Tick(localPlayer, g_role == Role::kHost);
     HandleMessages(localPlayer);
+    KeepSwing(localPlayer);
     if (g_steps % kSendEverySteps == 0) {
         const PlayerStateMsg state = CaptureState(localPlayer);
         net::Send(kPlayerState, &state, sizeof(state));
+        g_swing.toolSwing = 0;  // the next step's swing replaces it
     }
     for (const auto& [player, remote] : g_remotes) {
         puppet::State target{remote.x,      remote.y,     remote.imageIndex, remote.xscale, remote.yscale,
                              remote.depth,  remote.sprite, remote.tool,       remote.hp,     remote.hpMax};
         memcpy(target.name, remote.name, sizeof(target.name));
         target.look = remote.look;
+        target.swing = remote.swing;
         puppet::Update(localPlayer, player, target);
     }
 }

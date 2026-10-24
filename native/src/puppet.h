@@ -11,6 +11,20 @@
 
 namespace coop::puppet {
 
+// How the player's tool and body move on a hit: objPlayer's own variables, which its Step_0 sets at a hit and its
+// Step_2 eases back. A puppet runs neither, so they come from its player. On the wire as is (PlayerStateMsg).
+#pragma pack(push, 1)
+struct Swing {
+    float toolSwing;         // the tool's turn, degrees: -120 or 140 at a hit, back to 0
+    float squashX, squashY;  // objPlayer.xscale/yscale: squashed at a hit, back to 1
+    float facing;            // which side the tool is held on
+    float angle;
+};
+#pragma pack(pop)
+
+// The local player's swing now.
+Swing ReadSwing(yyc::CInstance* player);
+
 struct State {
     float x, y;
     float imageIndex, xscale, yscale, depth;
@@ -19,6 +33,7 @@ struct State {
     float hp, hpMax;
     char name[16];  // shown over the puppet, with its hearts; not 0-terminated when all 16 are used
     look::Look look;  // what the player wears
+    Swing swing;
 };
 
 using LocalStepFn = void (*)(yyc::CInstance* localPlayer);

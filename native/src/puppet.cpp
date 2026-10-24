@@ -348,6 +348,41 @@ void ShowTool(yyc::CInstance* localPlayer, Puppet& puppet, int tool) {
     yyc::SetVar(puppet.id, kSlotToolSelected, &selected);
 }
 
+// objPlayer's swing variables (decompiled/code/var_slots.tsv), read by Draw_0 when it draws the tool in hand.
+constexpr int kSlotToolSwing = 0x89D;
+constexpr int kSlotSquashX = 0x913;
+constexpr int kSlotSquashY = 0x91C;
+constexpr int kSlotFacing = 0x409;
+constexpr int kSlotAngle = 0x57;
+
+double ReadReal(int id, int slot) {
+    yyc::RValue value{};
+    yyc::GetVar(id, slot, &value);
+    const double result = yyc::ToReal(value);
+    yyc::Free(&value);
+    return result;
+}
+
+void WriteReal(int id, int slot, double value) {
+    yyc::RValue v = yyc::Real(value);
+    yyc::SetVar(id, slot, &v);
+}
+
+// A hit (away from `rest`) shows at once; easing back follows the player's updates, as the position does.
+void Ease(int id, int slot, double target, double rest) {
+    const double current = ReadReal(id, slot);
+    const bool hit = std::fabs(target - rest) > std::fabs(current - rest);
+    WriteReal(id, slot, hit ? target : current + (target - current) * kFollow);
+}
+
+void ShowSwing(int id, const Swing& swing) {
+    Ease(id, kSlotToolSwing, swing.toolSwing, 0);
+    Ease(id, kSlotSquashX, swing.squashX, 1);
+    Ease(id, kSlotSquashY, swing.squashY, 1);
+    Ease(id, kSlotAngle, swing.angle, 0);
+    WriteReal(id, kSlotFacing, swing.facing);
+}
+
 void DestroyInstance(yyc::CInstance* localPlayer, const Puppet& puppet) {
     if (yyc::FindInstance(puppet.id) != puppet.instance) return;
     yyc::RValue id = yyc::Real(puppet.id);
@@ -371,6 +406,13 @@ bool InstallHooks(LocalStepFn onLocalStep, LocalStepFn beforeLocalStep1) {
         ok = Hook(kSkippedEvents[i], reinterpret_cast<void*>(Skipped::kHooks[i]), &g_origSkipped[i]) && ok;
     }
     return ok;
+}
+
+Swing ReadSwing(yyc::CInstance* player) {
+    const int id = static_cast<int>(yyc::GetBuiltinReal(player, yyc::va::YYVar_id));
+    return Swing{static_cast<float>(ReadReal(id, kSlotToolSwing)), static_cast<float>(ReadReal(id, kSlotSquashX)),
+                 static_cast<float>(ReadReal(id, kSlotSquashY)), static_cast<float>(ReadReal(id, kSlotFacing)),
+                 static_cast<float>(ReadReal(id, kSlotAngle))};
 }
 
 void SetEnemiesSeeAll(bool on) { g_enemiesSeeAll = on; }
@@ -454,6 +496,7 @@ void Update(yyc::CInstance* localPlayer, net::PeerId player, const State& target
     yyc::SetBuiltinReal(instance, yyc::va::YYVar_image_yscale, target.yscale);
     yyc::SetBuiltinReal(instance, yyc::va::YYVar_depth, target.depth);
     ShowTool(localPlayer, *puppet, target.tool);
+    ShowSwing(puppet->id, target.swing);
     puppet->name.assign(target.name, strnlen(target.name, sizeof(target.name)));
     puppet->hp = target.hp;
     puppet->hpMax = target.hpMax;
