@@ -359,10 +359,23 @@ void Draw(yyc::CInstance* self) {
     gui::End();
 }
 
+// A session that never reached a world - a join still connecting (a mistyped IP retried for good), or CREATE and
+// then back out of the save screen - ends, so the player can start another one (it took a game restart before).
+// False if a session that did reach a world is still on.
+bool CancelUnplayedSession(const char* why) {
+    if (session::CurrentRole() == session::Role::kNone) return true;
+    if (session::PlayedWorld() || g_loadingWorld) return false;
+    Log("menu: %s - the session that never reached a world is cancelled", why);
+    const bool guest = session::CurrentRole() == session::Role::kGuest;
+    session::Leave();
+    if (guest) world::RemoveGuestSaveSlot();  // what had come of the host's world
+    return true;
+}
+
 // Accepted a Steam invite: join that host through Steam. The name is the one typed in the COOP screen last (or
 // the computer's), as for any join.
 void StartJoinSteam(uint64_t host) {
-    if (session::CurrentRole() != session::Role::kNone) {
+    if (!CancelUnplayedSession("a Steam invite")) {
         Log("menu: a Steam invite, but already in a session");
         return;
     }
@@ -373,7 +386,7 @@ void StartJoinSteam(uint64_t host) {
 }
 
 void StartJoin(const std::string& address, uint16_t port) {
-    if (session::CurrentRole() != session::Role::kNone) {
+    if (!CancelUnplayedSession("another join")) {
         g_status = "Already in a session - restart the game to join another one";
         return;
     }
@@ -411,7 +424,7 @@ int DebugHostSlot() {
 
 void CreateServer(yyc::CInstance* control) {
     yyc::CInstance* play = FindMenuButton(control, kSprMenuPlay);
-    if (play == nullptr) return;
+    if (play == nullptr || !CancelUnplayedSession("CREATE")) return;
     session::Host();
     g_open = false;
     yyc::RValue* saveFile = yyc::GlobalVar(yyc::slot::saveFile);
@@ -462,13 +475,19 @@ void UpdateIpInput() {
     g_ipText = typed;
 }
 
+// Back/Esc: leaving the screen while still connecting gives the join up.
+void CloseScreen() {
+    if (session::CurrentRole() == session::Role::kGuest) CancelUnplayedSession("Back while connecting");
+    g_open = false;
+}
+
 void HandleInput(yyc::CInstance* control) {
     UpdateIpInput();
     if (gui::KeyPressed(VK_ESCAPE)) {
         if (g_ipFocused || g_nameFocused) {
             g_ipFocused = g_nameFocused = false;
         } else {
-            g_open = false;
+            CloseScreen();
         }
         return;
     }
@@ -494,7 +513,7 @@ void HandleInput(yyc::CInstance* control) {
     } else if (l.create.Contains(mx, my)) {
         CreateServer(control);
     } else if (l.back.Contains(mx, my)) {
-        g_open = false;
+        CloseScreen();
     } else if (l.connect.Contains(mx, my)) {
         ConnectByIp();
     } else {
@@ -660,6 +679,8 @@ void __cdecl ButtonUser0Hook(yyc::CInstance* self, yyc::CInstance* other) {
         g_nameLoaded = true;
     }
     Log("menu: COOP screen opened");
+    // Back here as a host that never got into a world: it backed out of the save screen.
+    if (session::CurrentRole() == session::Role::kHost) CancelUnplayedSession("back in the menu after CREATE");
     g_ipFocused = false;
     g_status = g_notice;  // empty unless a session just ended for a reason worth telling
     g_notice.clear();

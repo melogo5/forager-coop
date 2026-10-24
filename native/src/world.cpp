@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <mutex>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -46,7 +47,9 @@ std::vector<net::PeerId> g_pendingPeers;  // guests waiting for the save in prog
 bool (*g_isGuest)() = nullptr;
 yyc::ScriptFn g_origSaveGame = nullptr;
 
-// Guest state (receive thread only).
+// Guest state: the receive thread writes it, and the game thread resets it (a join given up while the world was
+// still arriving) - under g_receiveLock.
+std::mutex g_receiveLock;
 fs::path g_targetDir;
 std::ofstream g_file;
 uint32_t g_fileRemaining = 0;
@@ -393,6 +396,8 @@ bool InstallHooks(bool (*isGuest)()) {
 }
 
 bool HandleMessage(const net::Message& message) {
+    if (message.type < kWorldBegin || message.type > kWorldEnd) return false;
+    std::lock_guard<std::mutex> guard(g_receiveLock);
     switch (message.type) {
         case kWorldBegin:
             BeginReceive(message.payload);
@@ -418,6 +423,7 @@ bool HandleMessage(const net::Message& message) {
 }
 
 void Reset() {
+    std::lock_guard<std::mutex> guard(g_receiveLock);
     g_file.close();
     g_fileRemaining = 0;
     g_filesReceived = 0;
