@@ -55,7 +55,7 @@ namespace coop {
 
 namespace {
 
-constexpr uint32_t kProtocolVersion = 15;  // 15: a guest greets first (net.cpp); 14: the tool swing
+constexpr uint32_t kProtocolVersion = 16;  // 16: item unlocks; 15: a guest greets first (net.cpp); 14: the tool swing
 constexpr unsigned kSendEverySteps = 3;       // 60 fps game step -> 20 updates/s
 constexpr unsigned kAnnounceEverySteps = 30;  // refresh the LAN announcement twice a second
 constexpr int kSlotGodMode = 0x54C;           // global.godMode (decompiled/code/var_slots.tsv)

@@ -7,6 +7,7 @@
 #include <cstring>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "MinHook.h"
@@ -127,6 +128,7 @@ bool g_cullBuiltinsTried = false;
 size_t g_sparedLastStep = 0;  // instances kept awake for guests since the last LogCulling
 bool g_inCull = false;            // inside CullObject (both sides)
 std::set<double> g_cellLists;     // the per-cell lists CullObject files sleepers in (culledInstances)
+std::unordered_set<int> g_filed;  // ids CullObject filed as asleep and no destroy has taken off the lists yet
 constexpr int kSlotDeactivatedInstances = 0x16C;  // global.deactivatedInstances (var_slots.tsv)
 
 bool SeenByGuest(int id) {
@@ -164,6 +166,10 @@ void __cdecl ListAddHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstan
     }
     if (g_culling && argc == 2 && !g_spared.empty() && static_cast<int>(yyc::ToReal(args[1])) == g_spared.back()) {
         return;  // a spared instance is not filed as asleep
+    }
+    constexpr int kFirstInstanceId = 100000;  // what else CullObject adds to lists is no instance
+    if (g_inCull && argc == 2 && yyc::ToReal(args[1]) >= kFirstInstanceId) {
+        g_filed.insert(static_cast<int>(yyc::ToReal(args[1])));
     }
     g_origListAdd(result, self, other, argc, args);
 }
@@ -223,6 +229,7 @@ yyc::RValue* __cdecl CullObjectHook(yyc::CInstance* self, yyc::CInstance* other,
 // host's and the guest's crashes in playtest 5). So every instance_destroy takes the id off every list.
 void ForgetInstance(yyc::CInstance* self, int id) {
     if (Mutant("forget")) return;
+    g_filed.erase(id);
     constexpr double kDsTypeList = yyc::kDsTypeList;
     std::vector<double> lists(g_cellLists.begin(), g_cellLists.end());
     if (const yyc::RValue* asleep = yyc::GlobalVar(kSlotDeactivatedInstances); asleep != nullptr && yyc::IsNumber(*asleep)) {
@@ -253,9 +260,22 @@ void LogCulling(yyc::CInstance* self, unsigned steps) {
     g_sparedLastStep = 0;
 }
 
+// A filed id gone without passing ForgetInstance (some destroy no hook sees) would stop the game in ProcessCulls
+// ("Unable to find any instance": the guest's crash right after a skill purchase, 2026-10-25). Such ids go off the
+// lists before ProcessCulls reads them; the log names their count so the way they went can be found.
+void ForgetDead(yyc::CInstance* self) {
+    std::vector<int> dead;
+    for (const int id : g_filed) {
+        if (yyc::FindInstance(id) == nullptr) dead.push_back(id);
+    }
+    for (const int id : dead) ForgetInstance(self, id);
+    if (!dead.empty()) Log("mobs: %zu gone instance(s) taken off the sleep lists (first %d)", dead.size(), dead[0]);
+}
+
 // Wakes what the host's camera shows, then what each guest's frame shows.
 yyc::RValue* __cdecl ProcessCullsHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                       yyc::RValue** args) {
+    ForgetDead(self);
     yyc::RValue* r = g_origProcessCulls(self, other, result, argc, args);
     CameraBounds camera{};
     if (!ReadCamera(&camera)) return r;
@@ -449,6 +469,7 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
 void Reset() {
     g_targets.clear();
     g_cellLists.clear();
+    g_filed.clear();
     g_received = 0;
     g_purgedAt = 0;
 }

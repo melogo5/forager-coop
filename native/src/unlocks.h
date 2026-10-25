@@ -1,7 +1,7 @@
-// Structures unlocked by skills count for both players (docs/coop/SPEC.md): whatever one player can build, the
-// other can build too, although each has its own skills (skills.h). Each side sends the structures it has
-// unlocked (StructureGet(s, 11)); the other unlocks the missing ones with StructureEdit(s, 11, true), as buying
-// a skill does. Nothing is ever locked again; the host's world keeps the guest's unlocks.
+// Structures and items (recipes) unlocked by skills count for all players (docs/coop/SPEC.md): whatever one player
+// can build or craft, the others can too. Each side sends what it has unlocked (StructureGet(s, 11), ItemGet(i, 12));
+// the other unlocks the missing ones with StructureEdit / ItemEdit, as buying a skill does. Nothing is ever locked
+// again; the host's world keeps the guest's unlocks.
 #pragma once
 
 #include "net.h"

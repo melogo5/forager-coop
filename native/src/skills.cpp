@@ -432,7 +432,10 @@ void Tick(yyc::CInstance* localPlayer, bool host) {
             g_applied = true;
         }
         KeepPoints(localPlayer);
-        if (g_steps % kUploadEverySteps == 0) Upload(localPlayer);
+        // A purchase goes up at once: a guest that crashed right after one came back with the point unspent.
+        if (g_steps % kUploadEverySteps == 0 || ReadGlobal(kSlotLearnedSkills) != g_lastSent.learned) {
+            Upload(localPlayer);
+        }
     }
     ShareTree(localPlayer);
 }
