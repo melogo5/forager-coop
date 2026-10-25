@@ -78,6 +78,14 @@ bool IgnoreBusy() {
     return ignore;
 }
 
+double CallReal(yyc::CInstance* self, const char* builtin, std::vector<yyc::RValue> args) {
+    yyc::RValue result{};
+    yyc::CallBuiltin(builtin, self, static_cast<int>(args.size()), args.data(), &result);
+    const double value = yyc::ToReal(result);
+    yyc::Free(&result);
+    return value;
+}
+
 // Only one player at a time may have a chest open. Two guests may still click the same chest at once: the host
 // decides (Handle) and the later one closes it again.
 void __cdecl VaultInteractHook(yyc::CInstance* self, yyc::CInstance* other) {
@@ -88,19 +96,15 @@ void __cdecl VaultInteractHook(yyc::CInstance* self, yyc::CInstance* other) {
         return;
     }
     g_origVaultInteract(self, other);
+    // Ours only if its menu did open: a chest marked open with no menu would never be closed - never watched again,
+    // refused to everyone, locked at the others for good.
+    if (CallReal(self, "instance_number", {yyc::Real(kObjStorageMenu)}) <= 0) return;
     g_ownOpen = chestId;
     if (!net::IsConnected()) return;
     const Header header = Describe(chestId, self, 0);
     net::Send(kStorageLock, &header, sizeof(header));
 }
 
-double CallReal(yyc::CInstance* self, const char* builtin, std::vector<yyc::RValue> args) {
-    yyc::RValue result{};
-    yyc::CallBuiltin(builtin, self, static_cast<int>(args.size()), args.data(), &result);
-    const double value = yyc::ToReal(result);
-    yyc::Free(&result);
-    return value;
-}
 
 void PutCell(std::vector<uint8_t>& out, const yyc::RValue& cell) {
     const uint32_t kind = cell.kind & yyc::kKindMask;
@@ -287,7 +291,14 @@ void ApplyContents(yyc::CInstance* self, const net::Message& message, bool woken
         Log("storage: chest object %d at (%.0f, %.0f) not found", header.object, header.x, header.y);
         return;
     }
-    Release(chestId);
+    // Host: contents from a guest that does not have the chest open (its watcher saw crafting change it) must not
+    // free the chest for the one who does: both would have it open, items doubled or lost (playtest 5).
+    const bool host = session::CurrentRole() == session::Role::kHost;
+    const auto owner = g_lockOwners.find(chestId);
+    const bool someoneElses = host && message.from != net::kHostPeer &&
+                              ((owner != g_lockOwners.end() && owner->second != message.from) || chestId == g_ownOpen);
+    const net::PeerId holder = chestId == g_ownOpen || owner == g_lockOwners.end() ? net::kHostPeer : owner->second;
+    if (!someoneElses) Release(chestId);
     size_t at = sizeof(Header);
     for (size_t i = 0; i < header.rows && at < p.size(); ++i) {
         const size_t columns = p[at++];
@@ -299,6 +310,14 @@ void ApplyContents(yyc::CInstance* self, const net::Message& message, bool woken
         }
     }
     g_known[chestId] = Hash(Encode(self, chestId));  // what the peer has now: not news to send back
+    if (someoneElses) {
+        // The session passed these contents on to the other guests, which frees the chest there: lock it again.
+        if (yyc::CInstance* chest = yyc::FindInstance(chestId)) {
+            const Header lock = Describe(chestId, chest, 0);
+            net::SendExcept(holder, kStorageLock, &lock, sizeof(lock));
+        }
+        Log("storage: chest %d changed by guest %u while %u has it open - kept locked", chestId, message.from, holder);
+    }
     yyc::RValue item{}, amount{};
     yyc::GetVarAt(chestId, kSlotContents, 0, &item);
     yyc::GetVarAt(chestId, kSlotContents, 1, &amount);
@@ -440,6 +459,10 @@ void OnPeerJoined(net::PeerId peer) {
         yyc::CInstance* chest = yyc::FindInstance(chestId);
         if (chest == nullptr) continue;
         const Header header = Describe(chestId, chest, 0);
+        net::SendTo(peer, kStorageLock, &header, sizeof(header));
+    }
+    if (yyc::CInstance* chest = g_ownOpen != 0 ? yyc::FindInstance(g_ownOpen) : nullptr) {  // the host's own
+        const Header header = Describe(g_ownOpen, chest, 0);
         net::SendTo(peer, kStorageLock, &header, sizeof(header));
     }
 }

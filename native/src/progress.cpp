@@ -2,9 +2,11 @@
 
 #include <windows.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
-#include <string>
+#include <initializer_list>
 #include <vector>
 
 #include "MinHook.h"
@@ -14,8 +16,12 @@ namespace coop::progress {
 
 namespace {
 
-constexpr uint8_t kProgressList = 90;  // either way: u8 list index, then the ds_list_write text
+// Either way: u8 list index, then the list's values (f64 each). The receiver adds the ones it lacks: donations are
+// never taken back, so the union is right, and two donations within a second both stay (each side used to replace
+// the whole list with the other's, and one of them was lost - with its items already taken).
+constexpr uint8_t kProgressList = 90;
 constexpr unsigned kEverySteps = 60;
+constexpr size_t kMaxValues = 4096;
 
 struct SharedList {
     const char* name;
@@ -26,7 +32,8 @@ constexpr SharedList kLists[] = {
 };
 constexpr size_t kListCount = sizeof(kLists) / sizeof(kLists[0]);
 
-std::string g_last[kListCount];  // what each list looked like when last sent or received
+std::vector<double> g_last[kListCount];  // sorted: what both sides have, as far as this side knows
+bool g_seen[kListCount] = {};
 unsigned g_steps = 0;
 
 // The museum takes two of an item instead of one (QUESTIONS.md) - the donation is shared, so the price doubles.
@@ -60,13 +67,37 @@ bool Exists(yyc::CInstance* self, double id) {
     return exists;
 }
 
-std::string Write(yyc::CInstance* self, double id) {
-    yyc::RValue arg = yyc::Real(id);
+double ListCall(yyc::CInstance* self, const char* builtin, std::initializer_list<double> values) {
+    yyc::RValue args[3] = {};
+    int argc = 0;
+    for (const double v : values) args[argc++] = yyc::Real(v);
     yyc::RValue result{};
-    yyc::CallBuiltin("ds_list_write", self, 1, &arg, &result);
-    std::string text = yyc::ToString(result);
+    yyc::CallBuiltin(builtin, self, argc, args, &result);
+    const double value = yyc::IsNumber(result) ? yyc::ToReal(result) : NAN;
     yyc::Free(&result);
-    return text;
+    return value;
+}
+
+// The list's values; false if one is not a number (then it is not shared: a union of numbers would not do).
+bool Read(yyc::CInstance* self, double id, std::vector<double>* values) {
+    const int size = static_cast<int>(ListCall(self, "ds_list_size", {id}));
+    values->clear();
+    for (int i = 0; i < size && values->size() < kMaxValues; ++i) {
+        const double v = ListCall(self, "ds_list_find_value", {id, double(i)});
+        if (!std::isfinite(v)) return false;
+        values->push_back(v);
+    }
+    return true;
+}
+
+// Lists are compared as sets of entries: the union adds the peer's entries at the end, in another order.
+std::vector<double> Sorted(std::vector<double> values) {
+    std::sort(values.begin(), values.end());
+    return values;
+}
+
+bool Has(const std::vector<double>& values, double v) {
+    return std::find(values.begin(), values.end(), v) != values.end();
 }
 
 // Testing aid: COOP_DEBUG_MUSEUM=<item> adds that item to the museum's list ~5 s in, as a donation would.
@@ -171,41 +202,63 @@ void Tick(yyc::CInstance* localPlayer) {
     for (size_t i = 0; i < kListCount; ++i) {
         const double id = ListId(i);
         if (!Exists(localPlayer, id)) continue;
-        std::string text = Write(localPlayer, id);
-        if (g_last[i].empty()) {  // the first look: both sides start from the same save
-            g_last[i] = std::move(text);
+        std::vector<double> values;
+        if (!Read(localPlayer, id, &values)) {
+            static bool reported = false;
+            if (!reported) Log("progress: %s holds something other than numbers - not shared", kLists[i].name);
+            reported = true;
             continue;
         }
-        if (text == g_last[i]) continue;
-        std::vector<uint8_t> payload(1 + text.size());
+        if (!g_seen[i]) {  // the first look: both sides start from the same save
+            g_last[i] = Sorted(values);
+            g_seen[i] = true;
+            continue;
+        }
+        if (Sorted(values) == g_last[i]) continue;
+        std::vector<uint8_t> payload(1 + values.size() * sizeof(double));
         payload[0] = static_cast<uint8_t>(i);
-        memcpy(payload.data() + 1, text.data(), text.size());
+        if (!values.empty()) memcpy(payload.data() + 1, values.data(), values.size() * sizeof(double));
         if (net::Send(kProgressList, payload.data(), payload.size())) {
-            Log("progress: %s changed here, sent", kLists[i].name);
-            g_last[i] = std::move(text);
+            Log("progress: %s changed here (%zu entries), sent", kLists[i].name, values.size());
+            g_last[i] = Sorted(values);
         }
     }
 }
 
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     if (message.type != kProgressList) return false;
-    if (message.payload.empty() || message.payload[0] >= kListCount) return true;
-    const size_t i = message.payload[0];
-    const std::string text(message.payload.begin() + 1, message.payload.end());
+    const auto& p = message.payload;
+    if (p.empty() || p[0] >= kListCount || (p.size() - 1) % sizeof(double) != 0) return true;
+    const size_t i = p[0];
+    const size_t count = (p.size() - 1) / sizeof(double);
     const double id = ListId(i);
-    if (!Exists(localPlayer, id)) return true;
-    yyc::RValue args[2] = {yyc::Real(id), yyc::String(text.c_str())};
-    yyc::RValue result{};
-    yyc::CallBuiltin("ds_list_read", localPlayer, 2, args, &result);
-    yyc::Free(&result);
-    yyc::Free(&args[1]);
-    g_last[i] = Write(localPlayer, id);
-    Log("progress: %s updated from the peer", kLists[i].name);
+    std::vector<double> here;
+    if (count > kMaxValues || !Exists(localPlayer, id) || !Read(localPlayer, id, &here)) return true;
+    size_t added = 0;
+    std::vector<double> theirs;
+    for (size_t k = 0; k < count; ++k) {
+        double v = 0;
+        memcpy(&v, p.data() + 1 + k * sizeof(double), sizeof(v));
+        if (!std::isfinite(v)) continue;
+        theirs.push_back(v);
+        if (Has(here, v)) continue;
+        ListCall(localPlayer, "ds_list_add", {id, v});
+        here.push_back(v);
+        ++added;
+    }
+    // What both have is the peer's list: anything only we have (a donation of ours it has not heard of yet) differs
+    // from it, so our next look sends it.
+    g_last[i] = Sorted(theirs);
+    g_seen[i] = true;
+    Log("progress: %s from the peer: %zu new of %zu", kLists[i].name, added, count);
     return true;
 }
 
 void Reset() {
-    for (std::string& last : g_last) last.clear();
+    for (size_t i = 0; i < kListCount; ++i) {
+        g_last[i].clear();
+        g_seen[i] = false;
+    }
 }
 
 }  // namespace coop::progress
