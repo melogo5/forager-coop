@@ -10,8 +10,7 @@ $checks = [ordered]@{
   savefix    = @{ Script = 'savefix.ps1';     Mutant = 'savefix' }
   vaultlock  = @{ Script = 'vaults.ps1';      Mutant = 'storagelock' }
   vaultcells = @{ Script = 'vaults.ps1';      Mutant = 'vaultslots' }
-  wake       = @{ Script = 'sleeplists.ps1';  Mutant = 'wake' }
-  modes      = @{ Script = 'modes.ps1';       Mutant = 'modes' }
+  wake       = @{ Script = 'sleeplists.ps1';  Mutant = 'wake' }  modes      = @{ Script = 'modes.ps1';       Mutant = 'modes' }
   worlddiff  = @{ Script = 'worlddiff-selfcheck.ps1'; Mutant = '' }
 }
 $rows = @()

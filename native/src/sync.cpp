@@ -1062,7 +1062,7 @@ void QueueAfterWake(std::function<void()> action) {
 // and died, ProcessCulls later met it in the old cell - "Unable to find any instance" (a GML error: the host's
 // crash after a guest killed a woken boar) - and SaveGame met sleepers it did not know of (playtest 4, bug 10).
 void WakeWhere(yyc::CInstance* self, const std::function<bool(yyc::CInstance*)>& pick) {
-    constexpr int kSlotDeactivated = 0x16C, kSlotStashList = 0x824;  // decompiled/code/var_slots.tsv
+    constexpr int kSlotDeactivated = 0x16C;  // decompiled/code/var_slots.tsv
     const yyc::RValue* listValue = yyc::GlobalVar(kSlotDeactivated);
     if (listValue == nullptr || !yyc::IsNumber(*listValue)) return;
     const double list = yyc::ToReal(*listValue);
@@ -1077,14 +1077,8 @@ void WakeWhere(yyc::CInstance* self, const std::function<bool(yyc::CInstance*)>&
         if (std::find(woken.begin(), woken.end(), id) == woken.end()) woken.push_back(id);
     }
     for (const int id : woken) {
-        yyc::RValue stash{};
-        if (!bare && yyc::GetVar(id, kSlotStashList, &stash) && yyc::IsNumber(stash)) {
-            const double cell = yyc::ToReal(stash);
-            for (int at; (at = static_cast<int>(CallReal(self, "ds_list_find_index", {cell, double(id)}))) >= 0;) {
-                CallReal(self, "ds_list_delete", {cell, double(at)});
-            }
-        }
-        yyc::Free(&stash);
+        // The cell lists hold [id, box] arrays: looking the id up there as a number (until 2026-10-25) found nothing.
+        if (!bare) mobs::ForgetInstance(self, id);
         CallReal(self, "instance_activate_object", {double(id)});
     }
 }

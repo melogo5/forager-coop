@@ -18,12 +18,19 @@ foreach ($game in $p.Host, $p.Guest) {
   $ids = @()
   if ($n -gt 0) {
     $reads = @(0..($n - 1) | ForEach-Object { "call ds_list_find_value $list $_" })
-    $ids = @(& $Query -GamePid $game @reads | ForEach-Object { ($_ -split ' => ')[1] })
+    # 'undefined': the list got shorter while it was being read (the games run on)
+    $ids = @(& $Query -GamePid $game @reads | ForEach-Object { ($_ -split ' => ')[1] } | Where-Object { $_ -ne 'undefined' })
+    $n = $ids.Count
   }
   $vars = @($ids | ForEach-Object { "var $_ 0x4F" })
-  $gone = if ($vars.Count -gt 0) { @(& $Query -GamePid $game @vars | Where-Object { $_ -match 'no such instance' }).Count } else { 0 }
+  $answers = if ($vars.Count -gt 0) { @(& $Query -GamePid $game @vars) } else { @() }
+  $deadIds = @(for ($i = 0; $i -lt $answers.Count; $i++) { if ($answers[$i] -match 'no such instance') { $ids[$i] } })
+  $gone = $deadIds.Count
+  if ($gone -gt 0) { "game ${game}: dead ids on the sleep list: $($deadIds -join ', ')" }
   $doubles = $n - @($ids | Sort-Object -Unique).Count
   Check "game ${game}: the sleep list ($n) has no dead ids ($gone) and no doubles ($doubles)" ($gone -eq 0 -and $doubles -eq 0)
+  $cells = Ask $game 'cellcheck'  # the cell lists hold [id, box] arrays: what ProcessCulls crashed on (2026-10-25)
+  Check "game ${game}: no dead entries on the cell lists, none of awake ones ($cells)" ($cells -match '^0:.* awake 0$')
 }
 Check "no GML error in either game" (-not (Select-String -Path "$GameDir\coop_native_$($p.Host).log", "$GameDir\coop_native_$($p.Guest).log" -Pattern 'crash: the game reported' -Quiet))
 Done

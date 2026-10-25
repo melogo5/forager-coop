@@ -128,7 +128,8 @@ bool g_cullBuiltinsTried = false;
 size_t g_sparedLastStep = 0;  // instances kept awake for guests since the last LogCulling
 bool g_inCull = false;            // inside CullObject (both sides)
 std::set<double> g_cellLists;     // the per-cell lists CullObject files sleepers in (culledInstances)
-std::unordered_set<int> g_filed;  // ids CullObject filed as asleep and no destroy has taken off the lists yet
+// id -> the cell lists CullObject filed it in, until a destroy takes it off them
+std::unordered_map<int, std::set<double>> g_filed;
 constexpr int kSlotDeactivatedInstances = 0x16C;  // global.deactivatedInstances (var_slots.tsv)
 
 bool SeenByGuest(int id) {
@@ -157,21 +158,44 @@ void __cdecl DeactivateHook(yyc::RValue* result, yyc::CInstance* self, yyc::CIns
     g_origDeactivate(result, self, other, argc, args);
 }
 
+// What CullObject files: the id in global.deactivatedInstances, its stashID [id, left, right, top, bottom] in the
+// cell's list (ProcessCulls compares the box with the camera).
+int EntryId(yyc::RValue* entry) {
+    const bool array = (entry->kind & yyc::kKindMask) == yyc::kArray;
+    return static_cast<int>(yyc::ToReal(array ? yyc::ArrayElement(entry, 0) : *entry));
+}
+
 void __cdecl ListAddHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstance* other, int argc,
                          yyc::RValue* args) {
-    if (g_inCull && argc == 2) {
-        const yyc::RValue* asleep = yyc::GlobalVar(kSlotDeactivatedInstances);
-        const double list = yyc::ToReal(args[0]);
-        if (asleep == nullptr || yyc::ToReal(*asleep) != list) g_cellLists.insert(list);
+    if (!g_inCull || argc != 2) {
+        g_origListAdd(result, self, other, argc, args);
+        return;
     }
-    if (g_culling && argc == 2 && !g_spared.empty() && static_cast<int>(yyc::ToReal(args[1])) == g_spared.back()) {
-        return;  // a spared instance is not filed as asleep
-    }
-    constexpr int kFirstInstanceId = 100000;  // what else CullObject adds to lists is no instance
-    if (g_inCull && argc == 2 && yyc::ToReal(args[1]) >= kFirstInstanceId) {
-        g_filed.insert(static_cast<int>(yyc::ToReal(args[1])));
+    const yyc::RValue* asleep = yyc::GlobalVar(kSlotDeactivatedInstances);
+    const double list = yyc::ToReal(args[0]);
+    const bool cellList = asleep == nullptr || yyc::ToReal(*asleep) != list;
+    const int id = EntryId(&args[1]);
+    // A spared instance is filed nowhere. Its stashID went into the cell's list each step it was spared until
+    // 2026-10-25 (compared as a number, an array is 0): spared in the margin outside a guest's frame, nothing woke
+    // it off that list, and once it died ProcessCulls stopped the host on it.
+    if (g_culling && !g_spared.empty() && id == g_spared.back()) return;
+    if (cellList) {
+        g_cellLists.insert(list);
+        g_filed[id].insert(list);
     }
     g_origListAdd(result, self, other, argc, args);
+}
+
+// Deletes the entries of `id` from a list (an id or a stashID array).
+void Unlist(yyc::CInstance* self, double list, int id) {
+    for (double i = CallReal(self, "ds_list_size", {list}) - 1; i >= 0; --i) {
+        yyc::RValue args[2] = {yyc::Real(list), yyc::Real(i)};
+        yyc::RValue entry{};
+        yyc::CallBuiltin("ds_list_find_value", self, 2, args, &entry);
+        const bool match = EntryId(&entry) == id;
+        yyc::Free(&entry);
+        if (match) CallReal(self, "ds_list_delete", {list, i});
+    }
 }
 
 bool HookBuiltin(const char* name, void* detour, yyc::BuiltinFn* original) {
@@ -226,24 +250,55 @@ yyc::RValue* __cdecl CullObjectHook(yyc::CInstance* self, yyc::CInstance* other,
 // The game takes a dying instance off its sleep lists only by its `stashList` (TrueInstanceCleanup): the cell it was
 // last filed in. Filed in another cell too - woken there by anything but ProcessCulls, then moved on and culled
 // again - it stays in that one, and ProcessCulls stops the game on it later ("Unable to find any instance", the
-// host's and the guest's crashes in playtest 5). So every instance_destroy takes the id off every list.
+// host's and the guest's crashes in playtest 5). So every instance_destroy takes the id off every list it was filed
+// in: global.deactivatedInstances holds ids, the cell lists hold stashID arrays (EntryId).
 void ForgetInstance(yyc::CInstance* self, int id) {
     if (Mutant("forget")) return;
-    g_filed.erase(id);
     constexpr double kDsTypeList = yyc::kDsTypeList;
-    std::vector<double> lists(g_cellLists.begin(), g_cellLists.end());
-    if (const yyc::RValue* asleep = yyc::GlobalVar(kSlotDeactivatedInstances); asleep != nullptr && yyc::IsNumber(*asleep)) {
-        lists.push_back(yyc::ToReal(*asleep));
+    constexpr int kSlotStashList = 0x824;  // the cell it was last filed in (var_slots.tsv)
+    std::set<double> lists;
+    if (const auto filed = g_filed.find(id); filed != g_filed.end()) {
+        lists = std::move(filed->second);
+        g_filed.erase(filed);
     }
+    yyc::RValue stash{};
+    if (yyc::FindInstance(id) != nullptr && yyc::GetVar(id, kSlotStashList, &stash) && yyc::IsNumber(stash)) {
+        lists.insert(yyc::ToReal(stash));
+    }
+    yyc::Free(&stash);
     for (const double list : lists) {
         if (CallReal(self, "ds_exists", {list, kDsTypeList}) == 0) {
             g_cellLists.erase(list);  // the room's lists were made again
             continue;
         }
+        Unlist(self, list, id);
+    }
+    if (const yyc::RValue* asleep = yyc::GlobalVar(kSlotDeactivatedInstances); asleep != nullptr && yyc::IsNumber(*asleep)) {
+        const double list = yyc::ToReal(*asleep);
         for (double at; (at = CallReal(self, "ds_list_find_index", {list, double(id)})) >= 0;) {
             CallReal(self, "ds_list_delete", {list, at});
         }
     }
+}
+
+std::string DeadCellEntries(yyc::CInstance* self) {
+    std::string text;
+    int count = 0, awake = 0;
+    for (const double list : g_cellLists) {
+        if (CallReal(self, "ds_exists", {list, yyc::kDsTypeList}) == 0) continue;
+        const int n = static_cast<int>(CallReal(self, "ds_list_size", {list}));
+        for (int i = 0; i < n; ++i) {
+            yyc::RValue args[2] = {yyc::Real(list), yyc::Real(i)};
+            yyc::RValue entry{};
+            yyc::CallBuiltin("ds_list_find_value", self, 2, args, &entry);
+            const int id = EntryId(&entry);
+            yyc::Free(&entry);
+            const yyc::CInstance* instance = yyc::FindInstance(id);
+            if (instance != nullptr && !yyc::IsDeactivated(instance)) ++awake;
+            if (instance == nullptr && count++ < 20) text += " " + std::to_string(id) + ";";
+        }
+    }
+    return std::to_string(count) + ":" + text + " awake " + std::to_string(awake);
 }
 
 namespace {
@@ -261,11 +316,11 @@ void LogCulling(yyc::CInstance* self, unsigned steps) {
 }
 
 // A filed id gone without passing ForgetInstance (some destroy no hook sees) would stop the game in ProcessCulls
-// ("Unable to find any instance": the guest's crash right after a skill purchase, 2026-10-25). Such ids go off the
-// lists before ProcessCulls reads them; the log names their count so the way they went can be found.
+// ("Unable to find any instance"). Such ids go off the lists before ProcessCulls reads them; the log names their
+// count so the way they went can be found.
 void ForgetDead(yyc::CInstance* self) {
     std::vector<int> dead;
-    for (const int id : g_filed) {
+    for (const auto& [id, lists] : g_filed) {
         if (yyc::FindInstance(id) == nullptr) dead.push_back(id);
     }
     for (const int id : dead) ForgetInstance(self, id);

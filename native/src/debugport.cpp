@@ -20,6 +20,7 @@
 
 #include "gui.h"
 #include "log.h"
+#include "mobs.h"
 #include "reconcile.h"
 #include "sync.h"
 
@@ -234,6 +235,7 @@ std::string Answer(yyc::CInstance* self, const std::string& line) {
         }
         return std::to_string(count) + ":" + out.str();
     }
+    if (c == "cellcheck") return mobs::DeadCellEntries(self);
     if (c == "obj" && w.size() == 2) {  // what an instance id is: object, name, place, asleep or not
         yyc::CInstance* instance = yyc::FindInstance(Slot(w[1]));
         if (instance == nullptr) return "no such instance";
