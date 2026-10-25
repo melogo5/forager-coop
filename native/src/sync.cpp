@@ -51,7 +51,7 @@ struct ObjectMsg {
     int32_t object;
     float x, y;
     float depth;    // kSpawn: the depth; kHit: the guest's `dmg` (its tool's damage)
-    int32_t item;   // kSpawn of a drop: its `item`; otherwise kNoItem
+    int32_t item;   // kSpawn of a drop: its `item`; kGuestSpawn of a scroll spawner: its `type`; else kNoItem
     int32_t owner;  // kSpawn of a drop: who may collect it (kOwnerAnyone/Host/Guest - the receiving guest)
     float sprite;   // kSpawn: the look it rolled after creation (ore vs plain rock...); -1 = keep
     float image;
@@ -330,6 +330,27 @@ bool IsScrollSpawner(int object) {
     return object == kObjBigResSpawner || object == kObjStarfallSpawner;
 }
 
+// UseScroll sets the spawner's `type` (what it grows: trees, rocks...) after creating it: the guest's are sent a
+// step later, with it. Sent at once, the host's spawner kept its Create_0 default - the miner's scroll grew trees.
+constexpr int kSlotType = 0x8C0;  // var_slots.tsv
+std::vector<int> g_scrollSpawners;  // guest
+
+void SendScrollSpawners() {
+    for (const int id : g_scrollSpawners) {
+        yyc::CInstance* spawner = yyc::FindInstance(id);
+        if (spawner == nullptr) continue;
+        yyc::RValue type{};
+        const bool known = yyc::GetVar(id, kSlotType, &type) && yyc::IsNumber(type);
+        const int32_t kind = known ? static_cast<int32_t>(yyc::ToReal(type)) : kNoItem;
+        yyc::Free(&type);
+        const InstanceInfo info = Describe(spawner);
+        Send(kGuestSpawn, info, info.id, kind);
+        Log("sync: scroll spawner %d (type %d) at (%.0f, %.0f), sent to the host", info.object, kind, info.x,
+            info.y);
+    }
+    g_scrollSpawners.clear();
+}
+
 bool CreatedByScroll() {
     const StackFrame* top = yyc::TopFrame();
     return top != nullptr && top->name != nullptr && strcmp(top->name, "gml_Script_UseScroll") == 0;
@@ -372,9 +393,7 @@ void __cdecl CreateHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstanc
     const int object = static_cast<int>(yyc::GetBuiltinReal(created, yyc::va::YYVar_object_index));
     if (IsGuest() && IsScrollSpawner(object) && CreatedByScroll()) {
         // Its spawns would be the guest's own (skipped here): the host runs the spawner (playtest 4, bug 4).
-        const InstanceInfo info = Describe(created);
-        Send(kGuestSpawn, info, info.id);
-        Log("sync: scroll spawner %d at (%.0f, %.0f), sent to the host", info.object, info.x, info.y);
+        g_scrollSpawners.push_back(id);
         return;
     }
     if (!IsSynced(self, object)) return;
@@ -905,6 +924,10 @@ void ApplyGuestSpawn(yyc::CInstance* self, net::PeerId from, const ObjectMsg& ms
     puppet::EndActing();
     yyc::CInstance* built = yyc::FindInstance(id);
     if (built == nullptr) return;
+    if (IsScrollSpawner(msg.object) && msg.item != kNoItem) {
+        yyc::RValue type = yyc::Real(msg.item);
+        yyc::SetVar(id, kSlotType, &type);
+    }
     const ObjectMsg ack{id, msg.object, msg.x, msg.y, msg.depth, msg.id};
     net::SendTo(from, kGuestSpawnAck, &ack, sizeof(ack));
     SendToOtherGuests(from, kSpawn, Describe(built), id);
@@ -1030,6 +1053,7 @@ void Tick(yyc::CInstance* localPlayer) {
     if (IsHost()) SendProgress(localPlayer);
     if (IsGuest()) RetryDestroys(localPlayer, true);
     if (IsGuest()) CollectCrafted(localPlayer);
+    if (IsGuest()) SendScrollSpawners();
     if (++g_steps % kStatsEverySteps == 0) {
         Log("sync: sent spawn %u destroy %u hit %u gone %u | applied spawn %u destroy %u hit %u gone %u",
             g_sent[kSpawn], g_sent[kDestroy], g_sent[kHit], g_sent[kGuestDestroyed], g_applied[kSpawn],
@@ -1057,10 +1081,38 @@ void QueueAfterWake(std::function<void()> action) {
     g_afterWake.push_back({GetTickCount(), std::move(action)});
 }
 
+// What ProcessCulls sets on an instance it wakes. `active` = 1 above all: the game's IsDeactivated reads that
+// variable, not the runtime's flag. Left 0, the next TrueInstanceExists/Find on the kind took the awake instance for
+// a sleeper - TemporaryActivate, then ClearTemporaryInstances put it to sleep on no list: no camera woke it again
+// (playtest 6: trees, fish traps, the bank and vaults vanishing at the guest, reconcile adding an empty vault in the
+// hidden one's place). And off the queue ClearTemporaryInstances puts back to sleep: one TemporaryActivate woke for
+// a moment (still on the sleep lists) went back to sleep after we took it off them (the fairy queen in
+// sleeplists.ps1).
+void MarkAwake(yyc::CInstance* self, int id) {
+    constexpr int kSlotActive = 0x4F, kSlotStashId = 0x823, kSlotStashList = 0x824, kSlotTempActive = 0x860;
+    constexpr int kSlotTemporaryActivations = 0x863;  // global.temporaryInstanceActivations
+    yyc::RValue active = yyc::Real(1);
+    yyc::SetVar(id, kSlotActive, &active);
+    yyc::RValue notTemporary = yyc::Real(0);
+    yyc::SetVar(id, kSlotTempActive, &notTemporary);
+    for (const int slot : {kSlotStashId, kSlotStashList}) {
+        yyc::RValue none{};
+        none.kind = yyc::kUndefined;
+        yyc::SetVar(id, slot, &none);
+    }
+    const yyc::RValue* temporary = yyc::GlobalVar(kSlotTemporaryActivations);
+    if (temporary == nullptr || !yyc::IsNumber(*temporary)) return;
+    const double list = yyc::ToReal(*temporary);
+    for (double at; (at = CallReal(self, "ds_list_find_index", {list, double(id)})) >= 0;) {
+        CallReal(self, "ds_list_delete", {list, at});
+    }
+}
+
 // Waking as ProcessCulls does: off global.deactivatedInstances and off the cell's list it was culled into
-// (`stashList`), then activated. A bare instance_activate_* left the id in those lists: when the instance moved on
-// and died, ProcessCulls later met it in the old cell - "Unable to find any instance" (a GML error: the host's
-// crash after a guest killed a woken boar) - and SaveGame met sleepers it did not know of (playtest 4, bug 10).
+// (`stashList`), then activated and marked awake. A bare instance_activate_* left the id in those lists: when the
+// instance moved on and died, ProcessCulls later met it in the old cell - "Unable to find any instance" (a GML
+// error: the host's crash after a guest killed a woken boar) - and SaveGame met sleepers it did not know of
+// (playtest 4, bug 10).
 void WakeWhere(yyc::CInstance* self, const std::function<bool(yyc::CInstance*)>& pick) {
     constexpr int kSlotDeactivated = 0x16C;  // decompiled/code/var_slots.tsv
     const yyc::RValue* listValue = yyc::GlobalVar(kSlotDeactivated);
@@ -1080,6 +1132,7 @@ void WakeWhere(yyc::CInstance* self, const std::function<bool(yyc::CInstance*)>&
         // The cell lists hold [id, box] arrays: looking the id up there as a number (until 2026-10-25) found nothing.
         if (!bare) mobs::ForgetInstance(self, id);
         CallReal(self, "instance_activate_object", {double(id)});
+        if (!bare && !Mutant("active")) MarkAwake(self, id);  // the mutant: `active` left 0, as until playtest 6
     }
 }
 
@@ -1264,6 +1317,7 @@ void Reset() {
     g_pendingDestroys.clear();
     g_craftedDrops.clear();
     g_localDrops.clear();
+    g_scrollSpawners.clear();
     g_afterWake.clear();
 }
 

@@ -23,6 +23,7 @@
 #include "lan.h"
 #include "log.h"
 #include "net.h"
+#include "banks.h"
 #include "character.h"
 #include "chests.h"
 #include "clock.h"
@@ -277,6 +278,7 @@ constexpr uint8_t kHostOnlyTypes[] = {
     95,                  // stations: denied
     96,                  // traps: what a trap holds (a guest asks with 101)
     97, 99, 100,         // chests: moved, keys so far, reward
+    102,                 // banks: what a bank holds (a guest asks with 103)
 };
 
 bool FromGuestButHostOnly(const net::Message& message) {
@@ -331,7 +333,7 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             unlocks::Handle(message, localPlayer) || coins::Handle(message, localPlayer) ||
             progress::Handle(message, localPlayer) || quests::Handle(message, localPlayer) ||
             stations::Handle(message, localPlayer) || skills::Handle(message, localPlayer) || traps::Handle(message, localPlayer) ||
-            reconcile::Handle(message, localPlayer) || chests::Handle(message, localPlayer)) {
+            banks::Handle(message, localPlayer) || reconcile::Handle(message, localPlayer) || chests::Handle(message, localPlayer)) {
             continue;
         }
         bool guestIntroduced = false;
@@ -774,7 +776,7 @@ bool SessionInstall() {
     if (!sync::InstallHooks(isHost, isGuest) || !mobs::InstallHooks(isHost, isGuest) ||
         !character::InstallHooks(isGuest) || !storage::InstallHooks() || !land::InstallHooks(isHost, isGuest) ||
         !progress::InstallHooks() || !stations::InstallHooks() || !chests::InstallHooks(isHost) ||
-        !traps::InstallHooks(isHost, isGuest) || !skills::InstallHooks()) {
+        !traps::InstallHooks(isHost, isGuest) || !banks::InstallHooks(isHost, isGuest) || !skills::InstallHooks()) {
         return false;
     }
     Role role = Role::kNone;

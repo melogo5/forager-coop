@@ -239,6 +239,11 @@ void SetBuiltinReal(CInstance* self, uint32_t yyvarAddress, double value) {
     SetBuiltinVar(self, yyvarAddress, &v);
 }
 
+void SetBuiltinRealAt(CInstance* self, uint32_t yyvarAddress, int arrayIndex, double value) {
+    RValue v = Real(value);
+    At<SetBuiltinVarFn>(va::Variable_SetBuiltinDirect)(self, At<YYVar*>(yyvarAddress)->id, arrayIndex, &v);
+}
+
 bool GetVar(int instanceId, int slotId, RValue* out) { return GetVarAt(instanceId, slotId, kNoArrayIndex, out); }
 
 void SetVar(int instanceId, int slotId, RValue* value) { SetVarAt(instanceId, slotId, kNoArrayIndex, value); }

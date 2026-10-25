@@ -1,6 +1,6 @@
 # The game's sleep list (global.deactivatedInstances) stays clean while a guest fights: no dead ids (ProcessCulls
 # stops the game with "Unable to find any instance" on one) and no doubles. Mutant twin: -Mutant wake (waking leaves
-# ids on the lists) should FAIL.
+# ids on the lists) should FAIL, and so should -Mutant active (woken with `active` 0: asleep again on no list).
 # Both games run -Speed times as fast (COOP_DEBUG_SPEED): -Seconds of fighting are worth Speed x Seconds of play.
 # Usage: sleeplists.ps1 [-Mutant wake] [-Seconds 25] [-Speed 4]
 param([string]$Mutant = '', [int]$Seconds = 25, [int]$Speed = 4)
@@ -31,6 +31,11 @@ foreach ($game in $p.Host, $p.Guest) {
   Check "game ${game}: the sleep list ($n) has no dead ids ($gone) and no doubles ($doubles)" ($gone -eq 0 -and $doubles -eq 0)
   $cells = Ask $game 'cellcheck'  # the cell lists hold [id, box] arrays: what ProcessCulls crashed on (2026-10-25)
   Check "game ${game}: no dead entries on the cell lists, none of awake ones ($cells)" ($cells -match '^0:.* awake 0$')
+  # Asleep on no list: no camera wakes it (playtest 6: woken with `active` 0, put back to sleep by
+  # ClearTemporaryInstances). The save lists such sleepers and logs them; between saves sleepcheck sees them.
+  $unlisted = Ask $game 'sleepcheck'
+  $logged = @(Select-String -Path "$GameDir\coop_native_$game.log" -Pattern 'sleeps unlisted').Count
+  Check "game ${game}: nothing asleep on no list ($unlisted; $logged at the saves)" ($unlisted -match '^0:' -and $logged -eq 0)
 }
 Check "no GML error in either game" (-not (Select-String -Path "$GameDir\coop_native_$($p.Host).log", "$GameDir\coop_native_$($p.Guest).log" -Pattern 'crash: the game reported' -Quiet))
 Done
