@@ -184,6 +184,20 @@ bool CallBuiltin(const char* name, CInstance* self, int argc, RValue* args, RVal
     return true;
 }
 
+double CallReal(CInstance* self, const char* name, std::initializer_list<double> args) {
+    RValue values[16] = {};
+    int argc = 0;
+    for (const double v : args) {
+        if (argc == 16) break;
+        values[argc++] = Real(v);
+    }
+    RValue result{};
+    CallBuiltin(name, self, argc, values, &result);
+    const double value = ToReal(result);
+    Free(&result);
+    return value;
+}
+
 BuiltinFn BuiltinAddress(const char* name) {
     const int index = FindBuiltin(name);
     return index < 0 ? nullptr : reinterpret_cast<BuiltinFn>(Table()[index].fn);

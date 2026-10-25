@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstdint>
+#include <initializer_list>
 #include <string>
 
 namespace yyc {
@@ -95,10 +96,35 @@ constexpr uint32_t Script_SaveGame = 0x004FAE80;  // SaveGame() — async, write
 constexpr uint32_t Object_objPlayer_Step_0 = 0x009A0430;
 }  // namespace va
 
-namespace slot {
-constexpr int players = 0x6FE;  // decompiled/code/var_slots.tsv
-constexpr int saveFile = 0x76F;  // current save slot number (real)
-}
+namespace slot {  // decompiled/code/var_slots.tsv
+constexpr int players = 0x6FE;
+constexpr int saveFile = 0x76F;       // current save slot number (real)
+constexpr int hp = 0x573;             // a world object's health
+constexpr int owner = 0x6CA;          // a menu's owner (the structure it belongs to)
+constexpr int learnedSkills = 0x601;  // global.learnedSkills
+constexpr int skillUnlocked = 0x7BF;  // global.skillUnlocked
+constexpr int cameraBottom = 0xE0;    // WorldControl's camera edges (culling)
+constexpr int cameraLeft = 0xE1;
+constexpr int cameraRight = 0xE2;
+constexpr int cameraTop = 0xE3;
+}  // namespace slot
+
+// The game's objects and rooms several modules need (decompiled/data/objects.tsv, rooms.tsv).
+namespace obj {
+constexpr int player = 22;
+constexpr int parEnemy = 23;
+constexpr int parStructure = 108;
+}  // namespace obj
+constexpr int kRoomGame = 8;   // rmGame, the world
+constexpr int kNoOne = -4;     // GML noone
+constexpr double kDsTypeList = 2;  // ds_type_list
+
+// GML scripts several modules hook or call (decompiled/code/index.tsv).
+namespace script {
+constexpr uint32_t StructureEdit = 0x0070CA50;
+constexpr uint32_t RemoveItem = 0x006B6FC0;
+constexpr uint32_t WaterCollision = 0x004EF950;
+}  // namespace script
 
 // GML script:  RValue* gml_Script_X(self, other, result, argc, args)
 using ScriptFn = RValue*(__cdecl*)(CInstance* self, CInstance* other, RValue* result, int argc, RValue** args);
@@ -112,6 +138,16 @@ template <typename T>
 T At(uint32_t address) {
     return reinterpret_cast<T>(address + g_imageDelta);
 }
+
+// A GML call frame as the runtime keeps them: the script or event being run, and the one that called it.
+struct StackFrame {
+    StackFrame* prev;
+    const char* name;
+    int line;
+};
+
+// The innermost GML frame now (nullptr outside GML).
+inline const StackFrame* TopFrame() { return *At<StackFrame**>(va::StackTraceTop); }
 
 void InitImageDelta();
 bool IsSupportedBuild();
@@ -138,6 +174,9 @@ void PerformEvent(CInstance* self, CInstance* other, int type, int number);
 
 // Calls a builtin GML function by name; false if the name is unknown.
 bool CallBuiltin(const char* name, CInstance* self, int argc, RValue* args, RValue* result);
+// A builtin called as `self` with number arguments (up to 16); its result as a number (0 when it gives none,
+// or the builtin is unknown).
+double CallReal(CInstance* self, const char* name, std::initializer_list<double> args = {});
 // Native implementation of a builtin (to hook it); nullptr if unknown. The table is filled at game start.
 using BuiltinFn = void(__cdecl*)(RValue* result, CInstance* self, CInstance* other, int argc, RValue* args);
 BuiltinFn BuiltinAddress(const char* name);

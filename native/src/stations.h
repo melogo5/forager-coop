@@ -29,6 +29,10 @@ bool IsOwnCraft(yyc::CInstance* station);
 // The local player says (speech bubble) that the other player is using what it tried to open - at most every
 // few seconds, so clicking again and again does not stack bubbles.
 void SayBusy(yyc::CInstance* player);
+
+// Testing aid: COOP_DEBUG_IGNORE_BUSY=1 opens chests and stations other players have open, as a player who
+// clicked at the same moment as another would (the host then refuses).
+bool IgnoreBusy();
 // A speech bubble over `player` (the game's Dialogue).
 void Say(yyc::CInstance* player, const char* text);
 

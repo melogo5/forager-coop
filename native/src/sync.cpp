@@ -1,11 +1,10 @@
 #include "sync.h"
+#include "sync_internal.h"
 
 #include <windows.h>
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <unordered_map>
@@ -39,9 +38,8 @@ enum MessageType : uint8_t {
     kGuestSpawnAck = 16,   // host -> guest: id = the host's instance, item = the guest's instance
     kObjectHp = 17,        // host -> guest: health of a world object after a hit (HpMsg)
     kProgress = 19,        // host -> guest: the shared level/XP/skill points (ProgressMsg)
-    kCensus = 18,          // host -> guest (testing aid): write down your world objects now, as I just did
 };
-constexpr int kSlotHp = 0x573;
+constexpr int kSlotHp = yyc::slot::hp;
 constexpr int kSlotHpAlpha = 0x574;
 constexpr int kSlotHpLast = 0x575;
 constexpr int kSlotHpWhite = 0x577;
@@ -74,7 +72,7 @@ struct XpMsg {
 };
 
 struct ProgressMsg {
-    float level, xp, xpCap, xpToGain, skillPoints;
+    float level, xp, xpCap, xpToGain;
 };
 #pragma pack(pop)
 
@@ -87,15 +85,12 @@ constexpr int kSyncedParents[] = {
     115,  // objBridge: no parent (PLAYTEST.md #10)
     64,   // parCritter: fireflies, butterflies, cows... (streamed by mobs like enemies; PLAYTEST.md #15)
 };
-constexpr int kParResource = 281;  // drops; `item` says what they give
-constexpr int kSlotItem = 0x5B8;   // decompiled/code/var_slots.tsv
 constexpr int kSlotKilledByPlayer = 0x5DF;
 constexpr uint32_t kYYVarRoomSpeed = 0x01AD8750;
 constexpr int32_t kNoItem = -1;
 constexpr uint32_t kResourceCollect = 0x00FF5580;  // parResource Other_10: collected by `other`
 constexpr int kMaxObjects = 512;
 constexpr double kMatchDistance = 4;  // pixels; objects loaded from the same save sit on the same spot
-constexpr int kNoOne = -4;
 
 constexpr uint32_t kScriptResourceSpawn = 0x00749E80;
 constexpr uint32_t kScriptResourceSpawnSingle = 0x00750710;
@@ -139,25 +134,13 @@ constexpr uint32_t kInstanceDestroy = 0x016E6BA0;
 DestroyFn g_origDestroy = nullptr;
 
 // The YYC call stack: one frame per running GML function.
-struct StackFrame {
-    StackFrame* prev;
-    const char* name;
-    int line;
-};
+using yyc::StackFrame;
 
 bool IsHost() { return g_isHost != nullptr && g_isHost(); }
 bool IsGuest() { return g_isGuest != nullptr && g_isGuest(); }
 bool Connected() { return net::IsConnected(); }
 
-double Builtin(yyc::CInstance* self, const char* name, std::initializer_list<double> args) {
-    std::vector<yyc::RValue> values;
-    for (const double a : args) values.push_back(yyc::Real(a));
-    yyc::RValue result{};
-    yyc::CallBuiltin(name, self, static_cast<int>(values.size()), values.data(), &result);
-    const double value = yyc::ToReal(result);
-    yyc::Free(&result);
-    return value;
-}
+using yyc::CallReal;
 
 bool IsSynced(yyc::CInstance* self, int object) {
     if (object < 0 || object >= kMaxObjects) return false;
@@ -165,7 +148,7 @@ bool IsSynced(yyc::CInstance* self, int object) {
     if (cached == 0) {
         cached = -1;
         for (const int parent : kSyncedParents) {
-            if (object == parent || Builtin(self, "object_is_ancestor", {double(object), double(parent)}) != 0) {
+            if (object == parent || CallReal(self, "object_is_ancestor", {double(object), double(parent)}) != 0) {
                 cached = 1;
                 break;
             }
@@ -173,12 +156,6 @@ bool IsSynced(yyc::CInstance* self, int object) {
     }
     return cached == 1;
 }
-
-struct InstanceInfo {
-    int id;
-    int object;
-    double x, y, depth;
-};
 
 InstanceInfo Describe(yyc::CInstance* instance) {
     return {static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_id)),
@@ -240,12 +217,12 @@ void SendToOtherGuests(net::PeerId from, MessageType type, const InstanceInfo& i
 // `instance` is an `object` or one of its children.
 bool IsKind(yyc::CInstance* self, yyc::CInstance* instance, int object) {
     const int own = static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_object_index));
-    return own == object || (object >= 0 && Builtin(self, "object_is_ancestor", {double(own), double(object)}) != 0);
+    return own == object || (object >= 0 && CallReal(self, "object_is_ancestor", {double(own), double(object)}) != 0);
 }
 
 bool IsDrop(yyc::CInstance* self, int object) {
     return object == kParResource ||
-           (object >= 0 && Builtin(self, "object_is_ancestor", {double(object), double(kParResource)}) != 0);
+           (object >= 0 && CallReal(self, "object_is_ancestor", {double(object), double(kParResource)}) != 0);
 }
 
 yyc::EventFn g_origCollect = nullptr;  // parResource Other_10: `other` collects the drop
@@ -320,7 +297,7 @@ void FlushSpawns(yyc::CInstance* self) {
 // The active instance of `object` standing at (x, y), or nullptr. Off-screen objects are deactivated
 // (CullObject) and not found here.
 yyc::CInstance* FindAt(yyc::CInstance* self, int object, double x, double y) {
-    const int id = static_cast<int>(Builtin(self, "instance_nearest", {x, y, double(object)}));
+    const int id = static_cast<int>(CallReal(self, "instance_nearest", {x, y, double(object)}));
     if (id == kNoOne) return nullptr;
     yyc::CInstance* instance = yyc::FindInstance(id);
     if (instance == nullptr) return nullptr;
@@ -331,7 +308,7 @@ yyc::CInstance* FindAt(yyc::CInstance* self, int object, double x, double y) {
 
 void DestroySilently(yyc::CInstance* self, int id) {
     ++g_applyingRemote;
-    Builtin(self, "instance_destroy", {double(id), 0});  // execute_event = false: no drops, no XP
+    CallReal(self, "instance_destroy", {double(id), 0});  // execute_event = false: no drops, no XP
     --g_applyingRemote;
 }
 
@@ -339,7 +316,7 @@ void DestroySilently(yyc::CInstance* self, int id) {
 
 // Guest: what the player builds or places (build menu, placeable items, seeds) must exist on the host too.
 bool CreatedByGuestAction() {
-    const StackFrame* top = *yyc::At<StackFrame**>(yyc::va::StackTraceTop);
+    const StackFrame* top = yyc::TopFrame();
     if (top == nullptr || top->name == nullptr) return false;
     // A seed is planted by the placement cursor UseSeed creates (objNewSeed), not by UseSeed itself.
     return strcmp(top->name, "gml_Object_objNewBuilding_Step_0") == 0 ||
@@ -354,7 +331,7 @@ bool IsScrollSpawner(int object) {
 }
 
 bool CreatedByScroll() {
-    const StackFrame* top = *yyc::At<StackFrame**>(yyc::va::StackTraceTop);
+    const StackFrame* top = yyc::TopFrame();
     return top != nullptr && top->name != nullptr && strcmp(top->name, "gml_Script_UseScroll") == 0;
 }
 
@@ -362,7 +339,7 @@ bool CreatedByScroll() {
 // save. What that creates is in every player's world already; sent as new, it would be doubled at the guests
 // (PLAYTEST3.md #1-#3).
 bool CreatedByLoading() {
-    for (const StackFrame* frame = *yyc::At<StackFrame**>(yyc::va::StackTraceTop); frame != nullptr;
+    for (const StackFrame* frame = yyc::TopFrame(); frame != nullptr;
          frame = frame->prev) {
         if (frame->name == nullptr) continue;
         if (strcmp(frame->name, "gml_Script_LoadZone") == 0 || strncmp(frame->name, "gml_Script_Deserialize", 22) == 0) {
@@ -469,7 +446,6 @@ void __cdecl DestroyHook(yyc::CInstance* self, yyc::CInstance* other, int id, in
 
 // Dungeons are not part of coop (yet): rooms other than the world are not synced, so while connected nobody
 // enters one (QUESTIONS.md). The entrance's transition just plays and the player stays in the world.
-constexpr int kFirstDungeonRoom = 14;  // rmAncientTomb ... (decompiled/data/rooms.tsv)
 constexpr int kLastDungeonRoom = 21;   // ... rmVolcanoSpaceTower; 22-24 are interiors (wizard tower, druid tree, museum)
 yyc::BuiltinFn g_origRoomGoto = nullptr;
 
@@ -552,11 +528,11 @@ yyc::RValue* __cdecl HandleCraftingHook(yyc::CInstance* self, yyc::CInstance* ot
 yyc::RValue* __cdecl RepairKitHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                    yyc::RValue** args) {
     if (!IsGuest() || !Connected()) return g_origRepairKit(self, other, result, argc, args);
-    constexpr int kParStructure = 108;
+    constexpr int kParStructure = yyc::obj::parStructure;
     std::vector<std::pair<int, float>> before;
-    const int count = static_cast<int>(Builtin(self, "instance_number", {double(kParStructure)}));
+    const int count = static_cast<int>(CallReal(self, "instance_number", {double(kParStructure)}));
     for (int i = 0; i < count; ++i) {
-        const int id = static_cast<int>(Builtin(self, "instance_find", {double(kParStructure), double(i)}));
+        const int id = static_cast<int>(CallReal(self, "instance_find", {double(kParStructure), double(i)}));
         if (yyc::FindInstance(id) != nullptr) before.emplace_back(id, ReadVar(id, kSlotHp));
     }
     yyc::RValue* r = g_origRepairKit(self, other, result, argc, args);
@@ -620,7 +596,7 @@ yyc::RValue* __cdecl UnlockAchievementHook(yyc::CInstance* self, yyc::CInstance*
 
 // event_user(0) with the player as `other` is also how drops get collected, so only tool use counts as a hit.
 bool CalledFromToolUse() {
-    const StackFrame* top = *yyc::At<StackFrame**>(yyc::va::StackTraceTop);
+    const StackFrame* top = yyc::TopFrame();
     if (top == nullptr || top->name == nullptr) return false;
     return strcmp(top->name, "gml_Script_UsePickaxe") == 0 || strcmp(top->name, "gml_Script_UseSword") == 0;
 }
@@ -670,8 +646,8 @@ void SendHit(const InstanceInfo& info) {
 }
 
 bool IsEnemy(yyc::CInstance* self, int object) {
-    constexpr int kParEnemy = 23;
-    return object == kParEnemy || Builtin(self, "object_is_ancestor", {double(object), double(kParEnemy)}) != 0;
+    constexpr int kParEnemy = yyc::obj::parEnemy;
+    return object == kParEnemy || CallReal(self, "object_is_ancestor", {double(object), double(kParEnemy)}) != 0;
 }
 
 // Guest: the hit is also shown here - shake, flash, sound, particles - by running the object's own hit event
@@ -764,7 +740,7 @@ ObjectMsg ReadObject(const net::Message& message) {
 
 int CreateReplica(yyc::CInstance* self, int hostId, int object, double x, double y, double depth) {
     ++g_applyingRemote;
-    const int id = static_cast<int>(Builtin(self, "instance_create_depth", {x, y, depth, double(object)}));
+    const int id = static_cast<int>(CallReal(self, "instance_create_depth", {x, y, depth, double(object)}));
     --g_applyingRemote;
     if (yyc::FindInstance(id) == nullptr) return 0;
     g_hostToLocal[hostId] = id;
@@ -815,7 +791,7 @@ bool TryDestroy(yyc::CInstance* self, const ObjectMsg& msg, int local) {
         local = static_cast<int>(yyc::GetBuiltinReal(found, yyc::va::YYVar_id));
     } else if (yyc::FindInstance(local) == nullptr) {
         return true;  // already gone
-    } else if (Builtin(self, "instance_exists", {double(local)}) == 0) {  // false for deactivated instances
+    } else if (CallReal(self, "instance_exists", {double(local)}) == 0) {  // false for deactivated instances
         return false;
     }
     DestroySilently(self, local);
@@ -924,7 +900,7 @@ void ApplyGuestSpawn(yyc::CInstance* self, net::PeerId from, const ObjectMsg& ms
     puppet::BeginActing(from);
     ++g_applyingRemote;
     const int id = static_cast<int>(
-        Builtin(self, "instance_create_depth", {msg.x, msg.y, msg.depth, double(msg.object)}));
+        CallReal(self, "instance_create_depth", {msg.x, msg.y, msg.depth, double(msg.object)}));
     --g_applyingRemote;
     puppet::EndActing();
     yyc::CInstance* built = yyc::FindInstance(id);
@@ -946,19 +922,45 @@ void ApplyGuestDestroyed(yyc::CInstance* self, net::PeerId from, const ObjectMsg
     SendToOtherGuests(from, kDestroy, info, info.id);
 }
 
-// Host: XP the guest earned, added to the shared progress.
-void ApplyXp(yyc::CInstance* localPlayer, const XpMsg& msg) {
-    constexpr float kMaxXpAtOnce = 1e6f;
-    if (!(msg.amount >= 0 && msg.amount <= kMaxXpAtOnce)) return;  // NaN fails both
-    Log("sync: +%.1f XP from the guest", msg.amount);
-    yyc::RValue amount = yyc::Real(msg.amount);
-    yyc::RValue* args[1] = {&amount};
+void GiveXp(yyc::CInstance* localPlayer, double amount) {
+    yyc::RValue value = yyc::Real(amount);
+    yyc::RValue* args[1] = {&value};
     yyc::RValue result{};
     g_origGainXp(localPlayer, localPlayer, &result, 1, args);
     yyc::Free(&result);
 }
 
+// Host: XP the guest earned, added to the shared progress.
+void ApplyXp(yyc::CInstance* localPlayer, const XpMsg& msg) {
+    constexpr float kMaxXpAtOnce = 1e6f;
+    if (!(msg.amount >= 0 && msg.amount <= kMaxXpAtOnce)) return;  // NaN fails both
+    Log("sync: +%.1f XP from the guest", msg.amount);
+    GiveXp(localPlayer, msg.amount);
+}
+
 }  // namespace
+
+// What sync_debug.cpp may use (sync_internal.h).
+namespace internal {
+
+bool IsHost() { return sync::IsHost(); }
+bool IsGuest() { return sync::IsGuest(); }
+bool Connected() { return sync::Connected(); }
+InstanceInfo Describe(yyc::CInstance* instance) { return sync::Describe(instance); }
+bool IsEnemy(yyc::CInstance* self, int object) { return sync::IsEnemy(self, object); }
+
+void Hit(yyc::CInstance* localPlayer, yyc::CInstance* target) {
+    const InstanceInfo info = sync::Describe(target);
+    SendHit(info);
+    if (!sync::IsEnemy(localPlayer, info.object)) DryHit(target, localPlayer);  // as a real tool hit shows it
+}
+
+void ReportBuild(const InstanceInfo& info) { Send(kGuestSpawn, info, info.id); }
+void GiveXp(yyc::CInstance* localPlayer, double amount) { sync::GiveXp(localPlayer, amount); }
+CraftingScope::CraftingScope() { ++g_crafting; }
+CraftingScope::~CraftingScope() { --g_crafting; }
+
+}  // namespace internal
 
 bool InstallHooks(bool (*isHost)(), bool (*isGuest)()) {
     g_isHost = isHost;
@@ -978,142 +980,24 @@ bool InstallHooks(bool (*isHost)(), bool (*isGuest)()) {
     return ok;
 }
 
-// Testing aid: COOP_DEBUG_AUTOHIT=1 makes the guest hit the nearest enemy every 2 s, exactly as a tool
-// hit would be reported.
-// COOP_DEBUG_AUTOHIT=<object index> hits the nearest instance of that object instead (e.g. 84 = rocks).
-void DebugAutoHit(yyc::CInstance* localPlayer) {
-    static int target = [] {
-        char value[16] = {};
-        if (GetEnvironmentVariableA("COOP_DEBUG_AUTOHIT", value, sizeof(value)) == 0) return 0;
-        const int object = atoi(value);
-        return object > 1 ? object : 23;  // "1": enemies (parEnemy)
-    }();
-    constexpr unsigned kEverySteps = 120;
-    if (target == 0 || !IsGuest() || g_steps % kEverySteps != 0) return;
-    const double x = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_x);
-    const double y = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_y);
-    const int id = static_cast<int>(Builtin(localPlayer, "instance_nearest", {x, y, double(target)}));
-    yyc::CInstance* enemy = id == kNoOne ? nullptr : yyc::FindInstance(id);
-    if (enemy == nullptr) return;
-    SendHit(Describe(enemy));
-    if (!IsEnemy(localPlayer, target)) DryHit(enemy, localPlayer);  // as a real tool hit shows it
-    Log("sync: debug auto-hit on object %d", static_cast<int>(yyc::GetBuiltinReal(enemy, yyc::va::YYVar_object_index)));
-}
-
-// Testing aid: COOP_DEBUG_BUILD=<object index> makes the guest build that object next to itself ~5 s
-// after entering the world, reported like a real build.
-void DebugBuild(yyc::CInstance* localPlayer) {
-    constexpr unsigned kAtStep = 300;
-    char value[16] = {};
-    if (!IsGuest() || g_steps != kAtStep ||
-        GetEnvironmentVariableA("COOP_DEBUG_BUILD", value, sizeof(value)) == 0) {
-        return;
-    }
-    const double x = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_x) + 32;
-    const double y = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_y);
-    const int id = static_cast<int>(Builtin(localPlayer, "instance_create_depth", {x, y, -y, double(atoi(value))}));
-    if (yyc::CInstance* built = yyc::FindInstance(id)) {
-        const InstanceInfo info = Describe(built);
-        Send(kGuestSpawn, info, info.id);
-        Log("sync: debug build of object %d as %d", info.object, id);
-    }
-}
-
-// Testing aid: COOP_DEBUG_CULLTEST=1 (on both sides) checks destroys of objects the guest has culled, on rocks;
-// COOP_DEBUG_CULLTEST=<object index> on another object (85 = trees). Both sides list those objects at the
-// start; the guest deactivates the ones away from itself, as CullObject does (usually the game already has);
-// the host destroys the ones away from both players; both sides list them again - the lists must match.
-// `localPlayer` and every puppet.
-std::vector<yyc::CInstance*> WithPuppets(yyc::CInstance* localPlayer) {
-    std::vector<yyc::CInstance*> players = puppet::Instances();
-    players.insert(players.begin(), localPlayer);
-    return players;
-}
-
-std::vector<int> FarInstances(yyc::CInstance* self, int object, const std::vector<yyc::CInstance*>& players) {
-    constexpr double kNear = 150;
-    std::vector<int> distant;
-    const int count = static_cast<int>(Builtin(self, "instance_number", {double(object)}));
-    for (int i = 0; i < count; ++i) {
-        const int id = static_cast<int>(Builtin(self, "instance_find", {double(object), double(i)}));
-        yyc::CInstance* instance = yyc::FindInstance(id);
-        if (instance == nullptr) continue;
-        const InstanceInfo info = Describe(instance);
-        const bool nearby = std::any_of(players.begin(), players.end(), [&](yyc::CInstance* player) {
-            return player != nullptr && std::hypot(info.x - yyc::GetBuiltinReal(player, yyc::va::YYVar_x),
-                                                   info.y - yyc::GetBuiltinReal(player, yyc::va::YYVar_y)) <= kNear;
-        });
-        if (!nearby) distant.push_back(id);
-    }
-    return distant;
-}
-
-// Listings and the host's destroys run right before the game culls (BeforeCull): objects woken up a step
-// earlier are active only there.
-const char* g_cullTestListing = nullptr;
-bool g_cullTestDestroy = false;
-
-int CullTestObject() {
-    static const int object = [] {
-        char value[16] = {};
-        if (GetEnvironmentVariableA("COOP_DEBUG_CULLTEST", value, sizeof(value)) == 0) return 0;
-        const int index = atoi(value);
-        return index > 1 ? index : 84;  // "1": rocks
-    }();
-    return object;
-}
-
-void LogCullTestObjects(yyc::CInstance* self, const char* when) {
-    const int object = CullTestObject();
-    const int count = static_cast<int>(Builtin(self, "instance_number", {double(object)}));
-    Log("sync: cull test: %d objects at the %s", count, when);
-    for (int i = 0; i < count; ++i) {
-        const int id = static_cast<int>(Builtin(self, "instance_find", {double(object), double(i)}));
-        if (yyc::CInstance* instance = yyc::FindInstance(id)) {
-            const InstanceInfo info = Describe(instance);
-            Log("sync: cull test: object at (%.0f, %.0f), host id %d", info.x, info.y, HostIdOf(info.id));
-        }
-    }
-}
-
-void DebugCullTest(yyc::CInstance* localPlayer) {
-    constexpr unsigned kStartAt = 200, kCullAt = 300, kDestroyAt = 900, kEndAt = 1500;  // steps since connecting
-    const int object = CullTestObject();
-    static unsigned steps = 0;
-    if (object == 0 || !Connected()) return;
-    ++steps;
-    if (steps == kStartAt || steps == kEndAt) {
-        Builtin(localPlayer, "instance_activate_object", {double(object)});
-        g_cullTestListing = steps == kStartAt ? "start" : "end";
-    } else if (steps == kDestroyAt && IsHost()) {
-        Builtin(localPlayer, "instance_activate_object", {double(object)});
-        g_cullTestDestroy = true;
-    } else if (steps == kCullAt && IsGuest()) {
-        const std::vector<int> distant = FarInstances(localPlayer, object, {localPlayer});
-        for (const int id : distant) Builtin(localPlayer, "instance_deactivate_object", {double(id)});
-        Log("sync: cull test: deactivated %zu distant objects", distant.size());
-    }
-}
-
 // The shared progress lives in the host's player: level, xp, xpCap (XP for the next level), xpToGain (XP still
-// being counted up), and (unused) a slot that is not the player's: skill points live on WorldControl and each
-// player has its own (skills.h). The host sends it twice a second; the guest's player shows it.
-constexpr int kProgressSlots[] = {0x603, 0x90E, 0x910, 0x912, 0x8F};  // decompiled/code/var_slots.tsv
+// being counted up). Skill points are each player's own (skills.h). The host sends it twice a second; the guest's
+// player shows it.
+constexpr int kProgressSlots[] = {0x603, 0x90E, 0x910, 0x912};  // decompiled/code/var_slots.tsv
 constexpr unsigned kProgressEverySteps = 30;
 
 void SendProgress(yyc::CInstance* localPlayer) {
     if (g_steps % kProgressEverySteps != 0) return;
     const int id = static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_id));
-    float values[5] = {};
-    for (int i = 0; i < 5; ++i) values[i] = ReadVar(id, kProgressSlots[i]);
-    const ProgressMsg msg{values[0], values[1], values[2], values[3], values[4]};
+    float values[4] = {};
+    for (int i = 0; i < 4; ++i) values[i] = ReadVar(id, kProgressSlots[i]);
+    const ProgressMsg msg{values[0], values[1], values[2], values[3]};
     net::Send(kProgress, &msg, sizeof(msg));
 }
 
 void ApplyProgress(yyc::CInstance* localPlayer, const ProgressMsg& msg) {
     static float shownLevel = -1;
     const int id = static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_id));
-    // The fifth value (skill points) is the host's own: each player has its own points (skills.h).
     const float values[4] = {msg.level, msg.xp, msg.xpCap, msg.xpToGain};
     // A loaded character may keep these as integers: any number is overwritten; anything else (not set up yet)
     // is left alone.
@@ -1138,114 +1022,14 @@ void ApplyProgress(yyc::CInstance* localPlayer, const ProgressMsg& msg) {
     }
 }
 
-// Testing aid: COOP_DEBUG_XP=<amount> gives the host that much XP every ~10 s (level-ups on both sides).
-void DebugXp(yyc::CInstance* localPlayer) {
-    static const double amount = [] {
-        char text[16] = {};
-        return GetEnvironmentVariableA("COOP_DEBUG_XP", text, sizeof(text)) > 0 ? atof(text) : 0.0;
-    }();
-    if (amount <= 0 || !IsHost() || !Connected() || g_steps == 0 || g_steps % 600 != 0) return;
-    Log("sync: debug gives the host %.0f XP", amount);
-    yyc::RValue value = yyc::Real(amount);
-    yyc::RValue* args[1] = {&value};
-    yyc::RValue result{};
-    g_origGainXp(localPlayer, localPlayer, &result, 1, args);
-    yyc::Free(&result);
-}
-
-// Testing aid: COOP_DEBUG_DUNGEON=1 tries to enter the first dungeon room ~5 s in (it must be refused).
-void DebugDungeon(yyc::CInstance* localPlayer) {
-    static const bool enabled = GetEnvironmentVariableA("COOP_DEBUG_DUNGEON", nullptr, 0) > 0;
-    static unsigned steps = 0;
-    if (!enabled || ++steps != 300) return;
-    Log("sync: debug tries to enter room %d", kFirstDungeonRoom);
-    Builtin(localPlayer, "room_goto", {double(kFirstDungeonRoom)});
-}
-
-// Testing aid: COOP_DEBUG_CRAFTDROP=<item> on the guest makes a drop of that item next to it ~5 s in, the way
-// a finished craft does (inside the crafting flag), to check that it lands in the inventory.
-void DebugCraftDrop(yyc::CInstance* localPlayer) {
-    static int item = [] {
-        char value[16] = {};
-        return GetEnvironmentVariableA("COOP_DEBUG_CRAFTDROP", value, sizeof(value)) > 0 ? atoi(value) : 0;
-    }();
-    static unsigned steps = 0;
-    if (item <= 0 || !IsGuest() || ++steps != 300) return;
-    const double x = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_x) + 24;
-    const double y = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_y);
-    ++g_crafting;
-    const int id = static_cast<int>(Builtin(localPlayer, "instance_create_depth", {x, y, -y, double(kParResource)}));
-    --g_crafting;
-    yyc::RValue value = yyc::Real(item);
-    yyc::SetVar(id, kSlotItem, &value);
-    Log("sync: debug crafted drop of item %d as %d", item, id);
-}
-
-// Testing aid: COOP_DEBUG_CENSUS=1 on the host makes both sides write their world objects (rocks, trees,
-// structures, bushes; not drops) to coop_census_<pid>_<n>.txt every 30 s, so the lists can be diffed.
-// Only objects near the host's player count: off-screen ones are deactivated, differently on each side.
-struct CensusMsg {
-    int32_t number;
-    float x, y;  // the host player's position: the centre of the area both sides list
-};
-constexpr double kCensusRadius = 90;  // inside both cameras (half a view is ~120 px high)
-
-bool CensusEnabled() {
-    static const bool enabled = GetEnvironmentVariableA("COOP_DEBUG_CENSUS", nullptr, 0) > 0;
-    return enabled;
-}
-
-void WriteCensus(yyc::CInstance* self, const CensusMsg& census) {
-    const int number = census.number;
-    char path[MAX_PATH] = {};
-    GetModuleFileNameA(nullptr, path, MAX_PATH);
-    char* slash = strrchr(path, '\\');
-    if (slash == nullptr) return;
-    snprintf(slash + 1, MAX_PATH - (slash + 1 - path), "coop_census_%lu_%d.txt", GetCurrentProcessId(), number);
-    FILE* file = fopen(path, "w");
-    if (file == nullptr) return;
-    size_t written = 0;
-    for (const int parent : {80, 81}) {  // parObject, parHerb
-        const int count = static_cast<int>(Builtin(self, "instance_number", {double(parent)}));
-        for (int i = 0; i < count; ++i) {
-            const int id = static_cast<int>(Builtin(self, "instance_find", {double(parent), double(i)}));
-            yyc::CInstance* instance = yyc::FindInstance(id);
-            if (instance == nullptr) continue;
-            const InstanceInfo info = Describe(instance);
-            if (std::hypot(info.x - census.x, info.y - census.y) > kCensusRadius) continue;
-            fprintf(file,"%d %.0f %.0f %d\n", info.object, info.x, info.y, HostIdOf(info.id));
-            ++written;
-        }
-    }
-    fclose(file);
-    Log("sync: census #%d: %zu objects", number, written);
-}
-
-void DebugCensus(yyc::CInstance* localPlayer) {
-    constexpr unsigned kEverySteps = 1800;
-    static int number = 0;
-    if (!IsHost() || !CensusEnabled() || !Connected() || g_steps % kEverySteps != 0) return;
-    ++number;
-    const CensusMsg census{number, static_cast<float>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_x)),
-                           static_cast<float>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_y))};
-    WriteCensus(localPlayer, census);
-    net::Send(kCensus, &census, sizeof(census));
-}
-
 void Tick(yyc::CInstance* localPlayer) {
     g_localPlayer = localPlayer;
-    DebugAutoHit(localPlayer);
-    DebugBuild(localPlayer);
-    DebugCensus(localPlayer);
-    DebugCullTest(localPlayer);
+    internal::DebugTick(localPlayer, g_steps);
     if (!g_builtinsHooked) HookBuiltins();
     if (IsHost()) FlushSpawns(localPlayer);
     if (IsHost()) SendProgress(localPlayer);
     if (IsGuest()) RetryDestroys(localPlayer, true);
     if (IsGuest()) CollectCrafted(localPlayer);
-    DebugCraftDrop(localPlayer);
-    DebugDungeon(localPlayer);
-    DebugXp(localPlayer);
     if (++g_steps % kStatsEverySteps == 0) {
         Log("sync: sent spawn %u destroy %u hit %u gone %u | applied spawn %u destroy %u hit %u gone %u",
             g_sent[kSpawn], g_sent[kDestroy], g_sent[kHit], g_sent[kGuestDestroyed], g_applied[kSpawn],
@@ -1284,11 +1068,11 @@ void WakeWhere(yyc::CInstance* self, const std::function<bool(yyc::CInstance*)>&
     const double list = yyc::ToReal(*listValue);
     std::vector<int> woken;
     const bool bare = Mutant("wake");  // the old way: activated, left on the lists
-    for (int i = static_cast<int>(Builtin(self, "ds_list_size", {list})) - 1; i >= 0; --i) {
-        const int id = static_cast<int>(Builtin(self, "ds_list_find_value", {list, double(i)}));
+    for (int i = static_cast<int>(CallReal(self, "ds_list_size", {list})) - 1; i >= 0; --i) {
+        const int id = static_cast<int>(CallReal(self, "ds_list_find_value", {list, double(i)}));
         yyc::CInstance* instance = yyc::FindInstance(id);
         if (instance != nullptr && !pick(instance)) continue;
-        if (!bare) Builtin(self, "ds_list_delete", {list, double(i)});  // gone ones go too: nothing can wake them
+        if (!bare) CallReal(self, "ds_list_delete", {list, double(i)});  // gone ones go too: nothing can wake them
         if (instance == nullptr) continue;
         if (std::find(woken.begin(), woken.end(), id) == woken.end()) woken.push_back(id);
     }
@@ -1296,19 +1080,19 @@ void WakeWhere(yyc::CInstance* self, const std::function<bool(yyc::CInstance*)>&
         yyc::RValue stash{};
         if (!bare && yyc::GetVar(id, kSlotStashList, &stash) && yyc::IsNumber(stash)) {
             const double cell = yyc::ToReal(stash);
-            for (int at; (at = static_cast<int>(Builtin(self, "ds_list_find_index", {cell, double(id)}))) >= 0;) {
-                Builtin(self, "ds_list_delete", {cell, double(at)});
+            for (int at; (at = static_cast<int>(CallReal(self, "ds_list_find_index", {cell, double(id)}))) >= 0;) {
+                CallReal(self, "ds_list_delete", {cell, double(at)});
             }
         }
         yyc::Free(&stash);
-        Builtin(self, "instance_activate_object", {double(id)});
+        CallReal(self, "instance_activate_object", {double(id)});
     }
 }
 
 void WakeKind(yyc::CInstance* self, int object) {
     WakeWhere(self, [self, object](yyc::CInstance* instance) {
         const int kind = static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_object_index));
-        return kind == object || Builtin(self, "object_is_ancestor", {double(kind), double(object)}) != 0;
+        return kind == object || CallReal(self, "object_is_ancestor", {double(kind), double(object)}) != 0;
     });
 }
 
@@ -1349,16 +1133,7 @@ void BeforeCull(yyc::CInstance* self) {
         }
         if (stale > 0) Log("sync: %zu actions waited too long for a cull (away from the world?) - dropped", stale);
     }
-    if (g_cullTestListing != nullptr) {
-        LogCullTestObjects(self, g_cullTestListing);
-        g_cullTestListing = nullptr;
-    }
-    if (g_cullTestDestroy && g_localPlayer != nullptr) {
-        g_cullTestDestroy = false;
-        const std::vector<int> distant = FarInstances(self, CullTestObject(), WithPuppets(g_localPlayer));
-        for (const int id : distant) Builtin(self, "instance_destroy", {double(id)});
-        Log("sync: cull test: destroyed %zu distant objects", distant.size());
-    }
+    internal::DebugBeforeCull(self, g_localPlayer);
 }
 
 int ReplicaOf(int hostId) {
@@ -1418,6 +1193,7 @@ int Resolve(yyc::CInstance* self, int hostId, int object, double x, double y) {
 }
 
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
+    if (internal::DebugHandle(message, localPlayer)) return true;
     const size_t size = message.payload.size();
     if (message.type >= kSpawn && message.type <= kGuestDestroyed) ++g_applied[message.type & 15];
     switch (message.type) {
@@ -1452,13 +1228,6 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
             if (size == sizeof(ObjectMsg) && IsGuest()) {
                 const ObjectMsg ack = ReadObject(message);
                 if (yyc::FindInstance(ack.item) != nullptr) AdoptReplica(ack.id, ack.item);
-            }
-            return true;
-        case kCensus:
-            if (size == sizeof(CensusMsg) && IsGuest()) {
-                CensusMsg census{};
-                memcpy(&census, message.payload.data(), sizeof(census));
-                WriteCensus(localPlayer, census);
             }
             return true;
         case kProgress:

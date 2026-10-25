@@ -19,22 +19,13 @@ constexpr int kSlotStructures = 0x83E;  // Data.structures[]: one entry per stru
 constexpr int kFieldUnlocked = 11;      // StructureGet(s, 11): unlocked (StructureEdit(s, 11, true) in objSkill)
 constexpr int kMaxStructures = 1024;
 constexpr uint32_t kScriptStructureGet = 0x0070DD60;
-constexpr uint32_t kScriptStructureEdit = 0x0070CA50;
-constexpr int kNoOne = -4;
+constexpr uint32_t kScriptStructureEdit = yyc::script::StructureEdit;
+constexpr int kNoOne = yyc::kNoOne;
 
 std::vector<uint16_t> g_lastSent;
 unsigned g_steps = 0;
 
-double CallReal(yyc::CInstance* self, const char* builtin, std::initializer_list<double> values) {
-    yyc::RValue args[4] = {};
-    int argc = 0;
-    for (const double v : values) args[argc++] = yyc::Real(v);
-    yyc::RValue result{};
-    yyc::CallBuiltin(builtin, self, argc, args, &result);
-    const double value = yyc::ToReal(result);
-    yyc::Free(&result);
-    return value;
-}
+using yyc::CallReal;
 
 int StructureCount(yyc::CInstance* self) {
     const int data = static_cast<int>(CallReal(self, "instance_find", {kObjData, 0}));
@@ -104,6 +95,9 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     return true;
 }
 
-void Reset() { g_lastSent.clear(); }
+void Reset() {
+    g_lastSent.clear();
+    g_steps = 0;
+}
 
 }  // namespace coop::unlocks

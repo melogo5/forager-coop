@@ -32,7 +32,7 @@ enum MessageType : uint8_t {
 constexpr uint32_t kScriptDeserializeCharacterChunk = 0x005BC8F0;
 constexpr uint32_t kScriptCinderLoad = 0x005CE0D0;    // CinderLoad(buffer) -> cinder (chunk map)
 constexpr uint32_t kScriptCinderDelete = 0x005C9BD0;  // CinderDelete(cinder)
-constexpr int kSlotSaveFile = 0x76F;
+constexpr int kSlotSaveFile = yyc::slot::saveFile;
 constexpr unsigned kUploadEverySteps = 900;    // 15 s (a save is small: a few KB)
 constexpr unsigned kSaveSettleSteps = 120;     // SaveGame is async
 constexpr size_t kMaxName = 32;

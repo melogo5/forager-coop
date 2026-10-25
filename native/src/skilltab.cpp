@@ -17,12 +17,12 @@ namespace coop::skilltab {
 
 namespace {
 
-constexpr int kRoomGame = 8;               // rmGame (decompiled/data/rooms.tsv)
+constexpr int kRoomGame = yyc::kRoomGame;
 constexpr int kRoomSkillGrid = 9;          // rmSkillGrid: 1280x720, what the tree is laid out for
 constexpr double kGridWidth = 1280, kGridHeight = 720;
 constexpr int kObjSkillGridControl = 231;  // decompiled/data/objects.tsv
 constexpr int kObjSkill = 232;
-constexpr int kObjPlayer = 22;
+constexpr int kObjPlayer = yyc::obj::player;
 constexpr uint32_t kYYVarVisible = 0x01AD8C80;
 constexpr double kDepth = -15000;
 // The tree's room shows it through a 493.7x277.7 camera that pans after the mouse (measured in rmSkillGrid); the
@@ -55,10 +55,10 @@ constexpr uint32_t ControlStep = 0x00E310C0;
 constexpr uint32_t WorldGuiEnd = 0x00934370;  // WorldControl Draw_75 (Draw GUI End)
 }  // namespace ev
 constexpr int kSlotSkillSelected = 0x7BE;   // the control's skillSelected
-constexpr int kSlotLearnedSkills = 0x601;   // global.learnedSkills
+constexpr int kSlotLearnedSkills = yyc::slot::learnedSkills;
 constexpr int kSlotPoints = 0x7BD;          // objPlayer.skills: skill points to spend
 constexpr int kSlotSkill = 0x7B6;           // objSkill.skill: its index in global.skillUnlocked
-constexpr int kSlotSkillUnlocked = 0x7BF;   // global.skillUnlocked[skill]: -1 locked, 1 available, 2 learned
+constexpr int kSlotSkillUnlocked = yyc::slot::skillUnlocked;
 
 using GetBuiltinFn = int(__cdecl*)(yyc::CInstance* self, int varId, int arrayIndex, yyc::RValue* out);
 

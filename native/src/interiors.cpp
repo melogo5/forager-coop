@@ -50,14 +50,14 @@ struct Plan {
 
 #include "interior_plans.inc"
 
-constexpr int kRoomGame = 8;
+constexpr int kRoomGame = yyc::kRoomGame;
 // Where an interior is built: past the world room's right edge (rmGame is 1344 wide), so the camera inside shows
 // nothing of the world.
 constexpr double kOriginX = 1700, kOriginY = 300;
 constexpr int kSlotSpawnPlayerX = 0x7E6, kSlotSpawnPlayerY = 0x7E7;  // globals: where the world puts the player
 // Globals with the camera's bounds, as mobs.cpp reads them (decompiled/code/var_slots.tsv).
 constexpr int kSlotCameraBottom = 0xE0, kSlotCameraLeft = 0xE1, kSlotCameraRight = 0xE2, kSlotCameraTop = 0xE3;
-constexpr uint32_t kScriptWaterCollision = 0x004EF950;  // WaterCollision(x, y)
+constexpr uint32_t kScriptWaterCollision = yyc::script::WaterCollision;
 
 bool (*g_inSession)() = nullptr;
 const Plan* g_inside = nullptr;  // the interior the local player is in, or nullptr

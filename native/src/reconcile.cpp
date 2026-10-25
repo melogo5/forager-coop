@@ -35,12 +35,12 @@ constexpr int kMoving[] = {158, 201};  // objLocomotive, objMinecart: their posi
 constexpr double kMargin = 32;         // the area keeps this far inside the guest's view
 constexpr double kSlack = 16;          // the host lists this much more: objects on the area's edge
 constexpr double kMatchDistance = 4;   // pixels, as sync matches objects
-constexpr int kNoOne = -4;
+constexpr int kNoOne = yyc::kNoOne;
 // Globals with the camera's bounds (decompiled/code/var_slots.tsv), as mobs.cpp reads them.
-constexpr int kSlotCameraBottom = 0xE0;
-constexpr int kSlotCameraLeft = 0xE1;
-constexpr int kSlotCameraRight = 0xE2;
-constexpr int kSlotCameraTop = 0xE3;
+constexpr int kSlotCameraBottom = yyc::slot::cameraBottom;
+constexpr int kSlotCameraLeft = yyc::slot::cameraLeft;
+constexpr int kSlotCameraRight = yyc::slot::cameraRight;
+constexpr int kSlotCameraTop = yyc::slot::cameraTop;
 
 #pragma pack(push, 1)
 struct Area {
@@ -72,15 +72,7 @@ std::set<Spot> g_lastHostOnly, g_lastHereOnly;  // guest: the last world check's
 std::set<int> g_lastExtra;    // guest: local ids the host did not have at the last check
 std::set<int> g_lastMissing;  // guest: host ids missing here at the last check
 
-double Builtin(yyc::CInstance* self, const char* name, std::initializer_list<double> args) {
-    std::vector<yyc::RValue> values;
-    for (const double a : args) values.push_back(yyc::Real(a));
-    yyc::RValue result{};
-    yyc::CallBuiltin(name, self, static_cast<int>(values.size()), values.data(), &result);
-    const double value = yyc::ToReal(result);
-    yyc::Free(&result);
-    return value;
-}
+using yyc::CallReal;
 
 double GlobalReal(int slot) {
     const yyc::RValue* value = yyc::GlobalVar(slot);
@@ -102,9 +94,9 @@ bool Moving(int object) {
 template <typename Visit>
 void ForEachObject(yyc::CInstance* self, const Area& area, double grow, Visit visit) {
     for (const int kind : kKinds) {
-        const int count = static_cast<int>(Builtin(self, "instance_number", {double(kind)}));
+        const int count = static_cast<int>(CallReal(self, "instance_number", {double(kind)}));
         for (int i = 0; i < count; ++i) {
-            const int id = static_cast<int>(Builtin(self, "instance_find", {double(kind), double(i)}));
+            const int id = static_cast<int>(CallReal(self, "instance_find", {double(kind), double(i)}));
             yyc::CInstance* instance = id == kNoOne ? nullptr : yyc::FindInstance(id);
             if (instance == nullptr || interiors::IsInterior(id)) continue;  // only here, past the world's edge
             const int object = static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_object_index));
@@ -289,7 +281,7 @@ std::vector<WorldObject> WorldObjects(yyc::CInstance* self) {
             bool isKind = false;
             for (const int kind : kKinds) {
                 isKind = isKind || object == kind ||
-                         Builtin(self, "object_is_ancestor", {double(object), double(kind)}) != 0;
+                         CallReal(self, "object_is_ancestor", {double(object), double(kind)}) != 0;
             }
             kept[object] = isKind && !Moving(object) && !chests::IsTreasureChest(object) ? 1 : -1;
         }

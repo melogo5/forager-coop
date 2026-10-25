@@ -30,8 +30,6 @@ bool SendP2P(uint64_t peer, const void* data, uint32_t size);
 // The next packet that has arrived from anyone: false if none.
 bool ReadP2P(std::vector<uint8_t>* data, uint64_t* from);
 void CloseP2P(uint64_t peer);
-// The P2P session with `peer` is up or still being set up.
-bool P2PAlive(uint64_t peer);
 // Host: Steam accounts whose P2P requests were accepted (members of our lobby). Guest: the host.
 bool IsAccepted(uint64_t peer);
 

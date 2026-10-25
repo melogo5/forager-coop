@@ -27,11 +27,7 @@ constexpr int kSlotMiss = 0x646;
 constexpr unsigned kHeartbeatSteps = 180;  // ~3 s: timers of every bobber, changed or not
 constexpr unsigned kTickEverySteps = 10;
 
-struct StackFrame {
-    StackFrame* prev;
-    const char* name;
-    int line;
-};
+using yyc::StackFrame;
 
 struct Seen {
     int castState, water, caught, miss;  // what a change is noticed by
@@ -48,7 +44,7 @@ unsigned g_steps = 0;
 bool On() { return g_inSession != nullptr && g_inSession(); }
 
 const char* Caller() {
-    const StackFrame* top = *yyc::At<StackFrame**>(yyc::va::StackTraceTop);
+    const StackFrame* top = yyc::TopFrame();
     return top != nullptr && top->name != nullptr ? top->name : "?";
 }
 

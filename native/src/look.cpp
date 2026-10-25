@@ -18,7 +18,7 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr int kSlotCosmetic = 0x135;  // objPlayer.cosmetic (decompiled/code/var_slots.tsv)
-constexpr int kRoomGame = 8;          // rmGame
+constexpr int kRoomGame = yyc::kRoomGame;
 constexpr unsigned kCheckEverySteps = 60;
 constexpr wchar_t kFile[] = L"coop_look.txt";
 

@@ -14,7 +14,7 @@ namespace {
 constexpr uint8_t kClock = 60;  // host -> guest
 constexpr unsigned kEverySteps = 60;
 constexpr unsigned kLogEverySteps = 600;
-constexpr int kNoOne = -4;
+constexpr int kNoOne = yyc::kNoOne;
 
 constexpr int kObjTimeControl = 14;  // decompiled/data/objects.tsv
 constexpr int kObjWeatherControl = 15;

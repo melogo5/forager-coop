@@ -42,19 +42,6 @@ using ReadP2PFn = bool(__cdecl*)(intptr_t networking, void* data, uint32_t capac
                                  int channel);
 using PeerFn = bool(__cdecl*)(intptr_t networking, uint64_t peer);
 using AllowRelayFn = bool(__cdecl*)(intptr_t networking, bool allow);
-#pragma pack(push, 8)  // Steam's structs on Windows
-struct P2PSessionState {
-    uint8_t connectionActive;
-    uint8_t connecting;
-    uint8_t sessionError;
-    uint8_t usingRelay;
-    int32_t bytesQueuedForSend;
-    int32_t packetsQueuedForSend;
-    uint32_t remoteIp;
-    uint16_t remotePort;
-};
-#pragma pack(pop)
-using SessionStateFn = bool(__cdecl*)(intptr_t networking, uint64_t peer, P2PSessionState* state);
 using RegisterCallbackFn = void(__cdecl*)(void* callback, int id);
 using RegisterCallResultFn = void(__cdecl*)(void* callback, uint64_t call);
 
@@ -123,7 +110,6 @@ struct Api {
     ReadP2PFn readP2P = nullptr;
     PeerFn acceptP2P = nullptr;
     PeerFn closeP2P = nullptr;
-    SessionStateFn sessionState = nullptr;
     AllowRelayFn allowRelay = nullptr;
     RegisterCallbackFn registerCallback = nullptr;
     RegisterCallResultFn registerCallResult = nullptr;
@@ -306,7 +292,6 @@ bool Connect() {
     a.readP2P = Export<ReadP2PFn>(module, "SteamAPI_ISteamNetworking_ReadP2PPacket", &ok);
     a.acceptP2P = Export<PeerFn>(module, "SteamAPI_ISteamNetworking_AcceptP2PSessionWithUser", &ok);
     a.closeP2P = Export<PeerFn>(module, "SteamAPI_ISteamNetworking_CloseP2PSessionWithUser", &ok);
-    a.sessionState = Export<SessionStateFn>(module, "SteamAPI_ISteamNetworking_GetP2PSessionState", &ok);
     a.allowRelay = Export<AllowRelayFn>(module, "SteamAPI_ISteamNetworking_AllowP2PPacketRelay", &ok);
     a.registerCallback = Export<RegisterCallbackFn>(module, "SteamAPI_RegisterCallback", &ok);
     a.registerCallResult = Export<RegisterCallResultFn>(module, "SteamAPI_RegisterCallResult", &ok);
@@ -407,12 +392,6 @@ bool ReadP2P(std::vector<uint8_t>* data, uint64_t* from) {
 
 void CloseP2P(uint64_t peer) {
     if (g_ready) g_api.closeP2P(g_api.networking, peer);
-}
-
-bool P2PAlive(uint64_t peer) {
-    P2PSessionState state{};
-    if (!g_ready || !g_api.sessionState(g_api.networking, peer, &state)) return false;
-    return state.connectionActive != 0 || state.connecting != 0;
 }
 
 bool IsAccepted(uint64_t peer) {

@@ -37,7 +37,7 @@ constexpr int kObjKeyChest = 150;
 constexpr int kObjItemGet = 289;      // the reward the key chest makes: its `item` is what the player gets
 constexpr double kKeyItem = 110;      // what objTreasureChest Other_11 counts and removes (ItemCount/RemoveItem)
 constexpr uint32_t kScriptItemCount = 0x006AB090;
-constexpr uint32_t kScriptRemoveItem = 0x006B6FC0;
+constexpr uint32_t kScriptRemoveItem = yyc::script::RemoveItem;
 constexpr uint32_t kScriptGainItem = 0x006AC690;
 constexpr int kSlotUsable = 0x8CA;    // decompiled/code/var_slots.tsv: false once the chest has opened
 constexpr int kSlotGrounded = 0x54D;  // true once the chest has stopped sliding off what it landed on
@@ -90,15 +90,7 @@ double ReadNumber(int id, int slot) {
     return number;
 }
 
-double CallReal(yyc::CInstance* self, const char* name, std::vector<double> values) {
-    std::vector<yyc::RValue> args;
-    for (const double v : values) args.push_back(yyc::Real(v));
-    yyc::RValue result{};
-    yyc::CallBuiltin(name, self, static_cast<int>(args.size()), args.data(), &result);
-    const double number = yyc::ToReal(result);
-    yyc::Free(&result);
-    return number;
-}
+using yyc::CallReal;
 
 double CallScript(uint32_t va, yyc::CInstance* player, double arg) {
     yyc::RValue value = yyc::Real(arg);

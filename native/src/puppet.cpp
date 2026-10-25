@@ -16,7 +16,7 @@ namespace coop::puppet {
 
 namespace {
 
-constexpr int kObjPlayer = 22;
+constexpr int kObjPlayer = yyc::obj::player;
 constexpr double kFollow = 0.35;       // fraction of the remaining distance covered per step
 constexpr double kSnapDistance = 256;  // teleport instead of gliding across the map
 
@@ -44,11 +44,7 @@ constexpr int kCollisionSlot = 3;  // kSkippedEvents[3]: the collision with parE
 constexpr uint32_t kScriptDmgPlayer = 0x00727030;
 constexpr char kCreateFrame[] = "gml_Object_objPlayer_Create_0";
 
-struct StackFrame {
-    StackFrame* prev;
-    const char* name;
-    int line;
-};
+using yyc::StackFrame;
 
 struct Puppet {
     net::PeerId player = net::kHostPeer;
@@ -72,7 +68,7 @@ int g_actorId = 0;           // PlayerFind() -> this instance id, when non-zero
 int g_actingDepth = 0;       // BeginActing nesting
 bool g_enemiesSeeAll = false;       // host with guests: enemies go for the nearest player (PLAYTEST.md #8)
 bool g_familiarsFollowHost = false;  // guest: familiars are the host's (PLAYTEST.md #14)
-constexpr int kParEnemy = 23;        // decompiled/data/objects.tsv
+constexpr int kParEnemy = yyc::obj::parEnemy;
 constexpr int kParFamiliar = 74;     // lantern, halo, droids...
 constexpr int kMaxObjects = 1024;
 int8_t g_kinds[kMaxObjects] = {};  // object index -> 0 unknown, else kEnemy/kFamiliar/kOther
@@ -110,7 +106,7 @@ bool IsPuppetInstance(const yyc::CInstance* instance) {
 }
 
 const char* CallerName() {
-    const StackFrame* top = *yyc::At<StackFrame**>(yyc::va::StackTraceTop);
+    const StackFrame* top = yyc::TopFrame();
     return top != nullptr ? top->name : nullptr;
 }
 
@@ -321,19 +317,10 @@ void Approach(yyc::CInstance* instance, uint32_t yyvar, double target) {
 // The puppet draws the tool in its own toolbar (Draw_0 -> ToolSelected() with PlayerFind() = the puppet). It
 // gets a list of its own holding just its player's tool, so the local player's toolbar is never touched.
 constexpr int kSlotToolbar = 0x897;  // decompiled/code/var_slots.tsv
-constexpr double kDsTypeList = 2;    // ds_type_list
+constexpr double kDsTypeList = yyc::kDsTypeList;
 constexpr int kSlotToolSelected = 0x89C;
 
-double CallReal(yyc::CInstance* self, const char* builtin, std::initializer_list<double> values) {
-    yyc::RValue args[4] = {};
-    int argc = 0;
-    for (const double v : values) args[argc++] = yyc::Real(v);
-    yyc::RValue result{};
-    yyc::CallBuiltin(builtin, self, argc, args, &result);
-    const double value = yyc::ToReal(result);
-    yyc::Free(&result);
-    return value;
-}
+using yyc::CallReal;
 
 void ShowTool(yyc::CInstance* localPlayer, Puppet& puppet, int tool) {
     if (puppet.toolbarList < 0) {

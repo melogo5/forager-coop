@@ -40,10 +40,10 @@ unsigned g_steps = 0;
 // In the socket menu (objSocketMenu, owner = the museum) an item with fewer than two copies cannot be put in
 // (the selection is dropped for that step); with two or more, RemoveItem takes two.
 constexpr uint32_t kSocketMenuStep = 0x00E787F0;   // objSocketMenu Step_0: putting the selected item in
-constexpr uint32_t kScriptRemoveItem = 0x006B6FC0;  // RemoveItem(item)
+constexpr uint32_t kScriptRemoveItem = yyc::script::RemoveItem;
 constexpr int kObjMuseum = 171;                     // decompiled/data/objects.tsv
 constexpr int kObjMuseumBundle = 172;
-constexpr int kSlotOwner = 0x6CA;  // decompiled/code/var_slots.tsv
+constexpr int kSlotOwner = yyc::slot::owner;
 constexpr int kSlotSelected = 0x7C7;
 constexpr int kSlotInventory = 0x5A4;
 constexpr int kMuseumCopies = 2;

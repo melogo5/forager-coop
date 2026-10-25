@@ -22,14 +22,10 @@ constexpr uint8_t kLandfill = 52;  // either way: LandfillMsg
 constexpr uint8_t kDirt = 53;      // either way: x, y (f64), then CreateDirt's third argument (see SendDirt)
 constexpr uint32_t kScriptSpawnLand = 0x00763750;  // SpawnLand(x, y, biome): x, y of the sale sign
 constexpr int kObjPurchaseLand = 229;              // the sign standing on an island for sale
-constexpr int kNoOne = -4;
+constexpr int kNoOne = yyc::kNoOne;
 constexpr char kPurchaseFrame[] = "gml_Object_objPurchaseLand_Step_0";
 
-struct StackFrame {
-    StackFrame* prev;
-    const char* name;
-    int line;
-};
+using yyc::StackFrame;
 
 #pragma pack(push, 1)
 struct LandMsg {
@@ -47,7 +43,7 @@ yyc::ScriptFn g_origSpawnLand = nullptr;
 // PlayerFind()) is not taken from the peer's own player.
 constexpr uint32_t kScriptPlaceLandfill = 0x007758C0;   // PlaceLandfill(x, y)
 constexpr uint32_t kScriptRemoveLandfill = 0x00777B00;  // RemoveLandfill(x, y)
-constexpr uint32_t kScriptWaterCollision = 0x004EF950;  // WaterCollision(x, y): water there
+constexpr uint32_t kScriptWaterCollision = yyc::script::WaterCollision;
 yyc::ScriptFn g_origPlaceLandfill = nullptr;
 yyc::ScriptFn g_origRemoveLandfill = nullptr;
 
@@ -66,11 +62,9 @@ bool (*g_isGuest)() = nullptr;
 int g_applying = 0;
 
 bool CalledFromPurchase() {
-    const StackFrame* top = *yyc::At<StackFrame**>(yyc::va::StackTraceTop);
+    const StackFrame* top = yyc::TopFrame();
     return top != nullptr && top->name != nullptr && strcmp(top->name, kPurchaseFrame) == 0;
 }
-
-double CallReal(yyc::CInstance* self, const char* builtin, std::initializer_list<double> values);
 
 // Host: a purchase is generated from a fresh seed that the guest then reuses.
 yyc::RValue* __cdecl SpawnLandHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
@@ -88,16 +82,7 @@ yyc::RValue* __cdecl SpawnLandHook(yyc::CInstance* self, yyc::CInstance* other, 
     return r;
 }
 
-double CallReal(yyc::CInstance* self, const char* builtin, std::initializer_list<double> values) {
-    yyc::RValue args[4] = {};
-    int argc = 0;
-    for (const double v : values) args[argc++] = yyc::Real(v);
-    yyc::RValue result{};
-    yyc::CallBuiltin(builtin, self, argc, args, &result);
-    const double value = yyc::ToReal(result);
-    yyc::Free(&result);
-    return value;
-}
+using yyc::CallReal;
 
 // The sale sign standing exactly at (x, y), or nullptr (the buyer's own sign removes itself).
 yyc::CInstance* SignAt(yyc::CInstance* localPlayer, double x, double y, int* id) {
@@ -174,7 +159,7 @@ yyc::RValue* __cdecl RemoveLandfillHook(yyc::CInstance* self, yyc::CInstance* ot
 }
 
 bool DugByPlayer() {
-    const StackFrame* top = *yyc::At<StackFrame**>(yyc::va::StackTraceTop);
+    const StackFrame* top = yyc::TopFrame();
     if (top == nullptr || top->name == nullptr) return false;
     for (const char* caller : kDirtCallers) {
         if (strcmp(top->name, caller) == 0) return true;

@@ -20,7 +20,7 @@ namespace {
 constexpr uint8_t kQuest = 91;  // either way: object, quest, state, hasSpoken
 constexpr unsigned kEverySteps = 60;
 constexpr int kParNPC = 47;  // decompiled/data/objects.tsv
-constexpr int kNoOne = -4;
+constexpr int kNoOne = yyc::kNoOne;
 constexpr int kSlotQuest = 0x739;  // decompiled/code/var_slots.tsv
 constexpr int kSlotState = 0x825;
 constexpr int kSlotHasSpoken = 0x55A;
@@ -49,16 +49,7 @@ std::unordered_map<int, Quest> g_seen;  // NPC object index -> what it looked li
 std::unordered_map<int, Quest> g_pending;
 unsigned g_steps = 0;
 
-double CallReal(yyc::CInstance* self, const char* builtin, std::initializer_list<double> values) {
-    yyc::RValue args[4] = {};
-    int argc = 0;
-    for (const double v : values) args[argc++] = yyc::Real(v);
-    yyc::RValue result{};
-    yyc::CallBuiltin(builtin, self, argc, args, &result);
-    const double value = yyc::ToReal(result);
-    yyc::Free(&result);
-    return value;
-}
+using yyc::CallReal;
 
 std::string ReadString(int id, int slot) {
     yyc::RValue value{};
@@ -282,6 +273,7 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
 }
 
 void Reset() {
+    g_steps = 0;  // its testing aid counts from the start of a session
     g_seen.clear();
     g_pending.clear();
 }

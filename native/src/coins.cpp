@@ -92,6 +92,7 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
 }
 
 void Reset() {
+    g_steps = 0;
     g_known = false;
     g_lastSeen = 0;
 }

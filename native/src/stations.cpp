@@ -32,11 +32,11 @@ constexpr int kSlotCraftingTimerVisual = 0x14F;
 constexpr int kMaxCells = 8;
 constexpr int kIdle = -4;
 constexpr unsigned kEverySteps = 30;
-constexpr int kParStructure = 108;  // decompiled/data/objects.tsv
+constexpr int kParStructure = yyc::obj::parStructure;
 constexpr int kUiCrafting = 215;    // the crafting menu
 constexpr int kSlotCrafting = 0x146;  // a station's `crafting`: [item, count], item -4 when idle (var_slots.tsv).
                                       // Read [0] only: reading past the end grows the array and breaks the game.
-constexpr int kNoOne = -4;
+constexpr int kNoOne = yyc::kNoOne;
 constexpr uint32_t kScriptCreateCraftingMenu = 0x00828AB0;  // a station's Other_11 opens its menu with it
 
 struct StationMsg {
@@ -59,16 +59,7 @@ constexpr DWORD kSayEveryMs = 3000;
 yyc::ScriptFn g_origCreateMenu = nullptr;
 int g_opened = kNoOne;  // the station whose menu this side opened last (open while a crafting menu exists)
 
-double CallReal(yyc::CInstance* self, const char* builtin, std::initializer_list<double> values) {
-    yyc::RValue args[4] = {};
-    int argc = 0;
-    for (const double v : values) args[argc++] = yyc::Real(v);
-    yyc::RValue result{};
-    yyc::CallBuiltin(builtin, self, argc, args, &result);
-    const double value = yyc::ToReal(result);
-    yyc::Free(&result);
-    return value;
-}
+using yyc::CallReal;
 
 Key KeyOf(yyc::CInstance* station) {
     return {static_cast<int>(yyc::GetBuiltinReal(station, yyc::va::YYVar_object_index)),
@@ -204,12 +195,6 @@ int OpenMenuStation(yyc::CInstance* self) {
 void Send(const Key& key, bool inUse) {
     const StationMsg msg{std::get<0>(key), std::get<1>(key), std::get<2>(key), inUse ? 1 : 0};
     net::Send(kStation, &msg, sizeof(msg));
-}
-
-// Testing aid: COOP_DEBUG_IGNORE_BUSY=1 (see storage.cpp).
-bool IgnoreBusy() {
-    static const bool ignore = GetEnvironmentVariableA("COOP_DEBUG_IGNORE_BUSY", nullptr, 0) > 0;
-    return ignore;
 }
 
 yyc::RValue* __cdecl CreateMenuHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
@@ -473,6 +458,11 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     return true;
 }
 
+bool IgnoreBusy() {
+    static const bool ignore = GetEnvironmentVariableA("COOP_DEBUG_IGNORE_BUSY", nullptr, 0) > 0;
+    return ignore;
+}
+
 void OnPeerJoined(net::PeerId peer) {
     std::set<Key> inUse = g_mine;
     inUse.insert(g_peer.begin(), g_peer.end());
@@ -499,6 +489,7 @@ void OnPeerLeft(net::PeerId peer) {
 }
 
 void Reset() {
+    g_steps = 0;  // DebugOpen/DebugCraft count from the start of a session
     g_localPlayer = nullptr;
     g_peerOwners.clear();
     g_opened = kNoOne;

@@ -22,7 +22,7 @@ namespace coop::mobs {
 namespace {
 
 constexpr uint8_t kMobs = 20;  // host -> guest
-constexpr int kParEnemy = 23;
+constexpr int kParEnemy = yyc::obj::parEnemy;
 // Streamed like enemies: parEnemy, and parCritter (fireflies, butterflies, cows...; PLAYTEST.md #15).
 constexpr int kStreamedKinds[] = {kParEnemy, 64};
 constexpr unsigned kSendEverySteps = 6;  // 10 updates/s
@@ -30,13 +30,13 @@ constexpr size_t kMaxMobs = 2000;        // the count is a u16; more than this m
 constexpr double kFollow = 0.5;          // replica moves this fraction of the way per step
 constexpr double kSnapDistance = 64;
 constexpr double kAdoptDistance = 48;  // a guest enemy this close to an unknown host enemy is the same one
-constexpr int kNoOne = -4;
+constexpr int kNoOne = yyc::kNoOne;
 
 // Globals with the host camera's bounds, used by CullObject/ProcessCulls (decompiled/code/var_slots.tsv).
-constexpr int kSlotCameraBottom = 0xE0;
-constexpr int kSlotCameraLeft = 0xE1;
-constexpr int kSlotCameraRight = 0xE2;
-constexpr int kSlotCameraTop = 0xE3;
+constexpr int kSlotCameraBottom = yyc::slot::cameraBottom;
+constexpr int kSlotCameraLeft = yyc::slot::cameraLeft;
+constexpr int kSlotCameraRight = yyc::slot::cameraRight;
+constexpr int kSlotCameraTop = yyc::slot::cameraTop;
 
 constexpr uint32_t kScriptCullObject = 0x004D0DC0;
 constexpr uint32_t kScriptProcessCulls = 0x004D21D0;
@@ -54,7 +54,7 @@ struct MobState {
     float hp;  // so the replica's health bar shows the guest's hits (which land on the host)
 };
 #pragma pack(pop)
-constexpr int kSlotHp = 0x573;
+constexpr int kSlotHp = yyc::slot::hp;
 
 bool (*g_isHost)() = nullptr;
 bool (*g_isGuest)() = nullptr;
@@ -69,15 +69,7 @@ yyc::ScriptFn g_origCullObject = nullptr;
 yyc::ScriptFn g_origProcessCulls = nullptr;
 yyc::EventFn g_origEndStep = nullptr;
 
-double Builtin(yyc::CInstance* self, const char* name, std::initializer_list<double> args) {
-    std::vector<yyc::RValue> values;
-    for (const double a : args) values.push_back(yyc::Real(a));
-    yyc::RValue result{};
-    yyc::CallBuiltin(name, self, static_cast<int>(values.size()), values.data(), &result);
-    const double value = yyc::ToReal(result);
-    yyc::Free(&result);
-    return value;
-}
+using yyc::CallReal;
 
 // ---- host: keep the guest's surroundings simulated ----
 
@@ -231,18 +223,18 @@ yyc::RValue* __cdecl CullObjectHook(yyc::CInstance* self, yyc::CInstance* other,
 // host's and the guest's crashes in playtest 5). So every instance_destroy takes the id off every list.
 void ForgetInstance(yyc::CInstance* self, int id) {
     if (Mutant("forget")) return;
-    constexpr double kDsTypeList = 2;
+    constexpr double kDsTypeList = yyc::kDsTypeList;
     std::vector<double> lists(g_cellLists.begin(), g_cellLists.end());
     if (const yyc::RValue* asleep = yyc::GlobalVar(kSlotDeactivatedInstances); asleep != nullptr && yyc::IsNumber(*asleep)) {
         lists.push_back(yyc::ToReal(*asleep));
     }
     for (const double list : lists) {
-        if (Builtin(self, "ds_exists", {list, kDsTypeList}) == 0) {
+        if (CallReal(self, "ds_exists", {list, kDsTypeList}) == 0) {
             g_cellLists.erase(list);  // the room's lists were made again
             continue;
         }
-        for (double at; (at = Builtin(self, "ds_list_find_index", {list, double(id)})) >= 0;) {
-            Builtin(self, "ds_list_delete", {list, at});
+        for (double at; (at = CallReal(self, "ds_list_find_index", {list, double(id)})) >= 0;) {
+            CallReal(self, "ds_list_delete", {list, at});
         }
     }
 }
@@ -255,7 +247,7 @@ void LogCulling(yyc::CInstance* self, unsigned steps) {
     constexpr unsigned kEvery = 600;
     if (steps % kEvery != 0) return;
     const yyc::RValue* list = yyc::GlobalVar(kSlotDeactivatedInstances);
-    const double asleep = list != nullptr ? Builtin(self, "ds_list_size", {yyc::ToReal(*list)}) : -1;
+    const double asleep = list != nullptr ? CallReal(self, "ds_list_size", {yyc::ToReal(*list)}) : -1;
     Log("mobs: culling: %zu kept awake for guests in the last %u steps, %.0f asleep, %zu cell lists",
         g_sparedLastStep, kEvery, asleep, g_cellLists.size());
     g_sparedLastStep = 0;
@@ -298,7 +290,7 @@ MobState Capture(yyc::CInstance* mob, int id) {
 // ---- guest: follow the host ----
 
 int AdoptOrSpawn(yyc::CInstance* self, const MobState& s) {
-    const int nearest = static_cast<int>(Builtin(self, "instance_nearest", {s.x, s.y, double(s.object)}));
+    const int nearest = static_cast<int>(CallReal(self, "instance_nearest", {s.x, s.y, double(s.object)}));
     if (nearest != kNoOne && !sync::IsReplica(nearest)) {
         if (yyc::CInstance* mob = yyc::FindInstance(nearest)) {
             const double dx = yyc::GetBuiltinReal(mob, yyc::va::YYVar_x) - s.x;
@@ -333,9 +325,9 @@ void Follow(yyc::CInstance* mob, const MobState& s) {
 void PurgeGhosts(yyc::CInstance* self, const std::vector<int>& followed) {
     std::vector<int> ghosts;
     for (const int kind : kStreamedKinds) {
-        const int count = static_cast<int>(Builtin(self, "instance_number", {double(kind)}));
+        const int count = static_cast<int>(CallReal(self, "instance_number", {double(kind)}));
         for (int i = 0; i < count; ++i) {
-            const int id = static_cast<int>(Builtin(self, "instance_find", {double(kind), double(i)}));
+            const int id = static_cast<int>(CallReal(self, "instance_find", {double(kind), double(i)}));
             if (id != kNoOne && std::find(followed.begin(), followed.end(), id) == followed.end()) ghosts.push_back(id);
         }
     }
@@ -410,7 +402,7 @@ void DebugSpawnEnemy(yyc::CInstance* localPlayer) {
     yyc::CInstance* guest = guests.front();
     const double x = yyc::GetBuiltinReal(guest, yyc::va::YYVar_x) + 64;
     const double y = yyc::GetBuiltinReal(guest, yyc::va::YYVar_y);
-    const int id = static_cast<int>(Builtin(localPlayer, "instance_create_depth", {x, y, -y, double(atoi(value))}));
+    const int id = static_cast<int>(CallReal(localPlayer, "instance_create_depth", {x, y, -y, double(atoi(value))}));
     Log("mobs: debug enemy %s spawned as %d at (%.0f, %.0f)", value, id, x, y);
 }
 
@@ -422,9 +414,9 @@ void HostTick(yyc::CInstance* localPlayer) {
     std::vector<uint8_t> payload(2);
     uint16_t sent = 0;
     for (const int kind : kStreamedKinds) {
-        const int count = static_cast<int>(Builtin(localPlayer, "instance_number", {double(kind)}));
+        const int count = static_cast<int>(CallReal(localPlayer, "instance_number", {double(kind)}));
         for (int i = 0; i < count && sent < kMaxMobs; ++i) {
-            const int id = static_cast<int>(Builtin(localPlayer, "instance_find", {double(kind), double(i)}));
+            const int id = static_cast<int>(CallReal(localPlayer, "instance_find", {double(kind), double(i)}));
             yyc::CInstance* mob = yyc::FindInstance(id);
             if (mob == nullptr) continue;
             const MobState s = Capture(mob, id);

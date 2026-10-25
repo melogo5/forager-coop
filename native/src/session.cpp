@@ -59,7 +59,7 @@ constexpr uint32_t kProtocolVersion = 15;  // 15: a guest greets first (net.cpp)
 constexpr unsigned kSendEverySteps = 3;       // 60 fps game step -> 20 updates/s
 constexpr unsigned kAnnounceEverySteps = 30;  // refresh the LAN announcement twice a second
 constexpr int kSlotGodMode = 0x54C;           // global.godMode (decompiled/code/var_slots.tsv)
-constexpr int kSlotHp = 0x573;
+constexpr int kSlotHp = yyc::slot::hp;
 constexpr int kSlotHpMax = 0x576;
 constexpr int kSlotInvulFrames = 0x5A7;
 constexpr double kRespawnX = 672;  // the starting island: where a new world puts the player (rmGame centre)
@@ -70,7 +70,7 @@ constexpr uint32_t kScriptRestartGame = 0x004A5620;  // RestartGame(): what game
 constexpr int kSlotGameMode = 0x527;  // global.gameMode: 0 classic, 1 single island, 2 speedrun, 3 hard
 constexpr unsigned kGuestGiveUpSteps = 300;          // ~5 s without the host: the guest goes back to the menu
 constexpr uint32_t kScriptIsMenuOpen = 0x00835040;
-constexpr int kObjPlayer = 22;
+constexpr int kObjPlayer = yyc::obj::player;
 constexpr int kParMenu = 238;
 constexpr int kLuiBaseClass = 227;
 constexpr int kMaxObjects = 512;
@@ -619,7 +619,7 @@ void Tick(yyc::CInstance* localPlayer) {
     // Inside a building (museum, wizard tower, druid tree) the world room sleeps: nothing here is the shared
     // world, so nothing is synced; the peer's news waits in the inbox until we are back. (A census taken in
     // there would make the guest remove its whole surroundings.)
-    constexpr int kRoomGame = 8;  // rmGame (decompiled/data/rooms.tsv)
+    constexpr int kRoomGame = yyc::kRoomGame;
     const bool inWorld = static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_room)) == kRoomGame;
     if (inWorld != g_wasInWorld) Log("session: %s the world room", inWorld ? "back in" : "left");
     DebugVisitRoom(localPlayer, inWorld);

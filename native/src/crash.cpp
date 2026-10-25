@@ -60,15 +60,11 @@ DWORD WINAPI WatchErrorLog(LPVOID) {
     }
 }
 
-struct StackFrame {
-    StackFrame* prev;
-    const char* name;
-    int line;
-};
+using yyc::StackFrame;
 
 void LogGmlStack() {
     __try {
-        const StackFrame* frame = *yyc::At<StackFrame**>(yyc::va::StackTraceTop);
+        const StackFrame* frame = yyc::TopFrame();
         for (int i = 0; frame != nullptr && i < kMaxFrames; ++i, frame = frame->prev) {
             Log("crash:   #%d %s:%d", i, frame->name != nullptr ? frame->name : "?", frame->line);
         }

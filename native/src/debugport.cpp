@@ -33,7 +33,7 @@ constexpr auto kAnswerTimeout = std::chrono::seconds(5);  // a loading screen or
 constexpr size_t kMaxLine = 1024;
 constexpr size_t kMaxListed = 100;
 constexpr double kSameSpot = 4;  // pixels, as sync and reconcile match objects
-constexpr int kNoOne = -4;
+constexpr int kNoOne = yyc::kNoOne;
 
 struct Request {
     std::string line;

@@ -28,7 +28,7 @@ constexpr uint8_t kStorageDenied = 42;  // host -> guest: someone else had that 
 constexpr uint8_t kVaultSlots = 43;     // u8: guest -> host its own vault cells, host -> guest everyone's most
 constexpr uint32_t kVaultInteract = 0x00BC88D0;  // objVault Other_11: opens the storage menu
 constexpr uint32_t kStorageMenuDestroy = 0x00E51ED0;  // objStorageInventory Destroy_0
-constexpr int kSlotOwner = 0x6CA;                     // the menu's chest
+constexpr int kSlotOwner = yyc::slot::owner;
 constexpr int kSlotContents = 0x7C4;                  // the chest's `slot` (2D array)
 constexpr int kObjVault = 114;
 constexpr int kObjStorageMenu = 234;
@@ -71,13 +71,6 @@ Header Describe(int chestId, yyc::CInstance* chest, uint16_t rows) {
             static_cast<float>(yyc::GetBuiltinReal(chest, yyc::va::YYVar_y)), rows};
 }
 
-// Testing aid: COOP_DEBUG_IGNORE_BUSY=1 opens chests and stations other players have open, as a player who
-// clicked at the same moment as another would (the host then refuses).
-bool IgnoreBusy() {
-    static const bool ignore = GetEnvironmentVariableA("COOP_DEBUG_IGNORE_BUSY", nullptr, 0) > 0;
-    return ignore;
-}
-
 double CallReal(yyc::CInstance* self, const char* builtin, std::vector<yyc::RValue> args) {
     yyc::RValue result{};
     yyc::CallBuiltin(builtin, self, static_cast<int>(args.size()), args.data(), &result);
@@ -90,7 +83,7 @@ double CallReal(yyc::CInstance* self, const char* builtin, std::vector<yyc::RVal
 // decides (Handle) and the later one closes it again.
 void __cdecl VaultInteractHook(yyc::CInstance* self, yyc::CInstance* other) {
     const int chestId = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
-    if (net::IsConnected() && LockedByPeer(chestId) && !IgnoreBusy()) {
+    if (net::IsConnected() && LockedByPeer(chestId) && !stations::IgnoreBusy()) {
         Log("storage: chest %d is open by the other player", chestId);
         stations::SayBusy(other);
         return;
@@ -172,7 +165,7 @@ void SendContents(yyc::CInstance* self, int chestId) {
 // its own skills are applied). Vaults are shared, so they have 9 cells for everyone once any player has the skill:
 // with each player's own count, the host did not see what the guest put in cells 7-9 (playtests 4 and 5).
 constexpr int kSlotMaxSlots = 0x639;
-constexpr int kSlotSkillUnlocked = 0x7BF;  // global.skillUnlocked
+constexpr int kSlotSkillUnlocked = yyc::slot::skillUnlocked;
 constexpr int kSkillMoreVaultSlots = 23;
 
 double OwnVaultSlots() {

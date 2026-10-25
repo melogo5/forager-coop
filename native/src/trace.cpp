@@ -23,11 +23,7 @@ constexpr int kNameLen = 96;
 constexpr wchar_t kTraceFile[] = L"coop_trace.txt";
 
 // YYC pushes one of these per GML function: {previous frame, function name, current line}.
-struct StackFrame {
-    StackFrame* prev;
-    const char* name;
-    int line;
-};
+using yyc::StackFrame;
 
 char g_names[kMaxTraced][kNameLen] = {};
 unsigned g_calls[kMaxTraced] = {};
@@ -50,7 +46,7 @@ bool MarkSeen(uint32_t hash) {
 
 void BuildChain(char* out, size_t size) {
     out[0] = '\0';
-    const StackFrame* frame = *yyc::At<StackFrame**>(yyc::va::StackTraceTop);
+    const StackFrame* frame = yyc::TopFrame();
     for (int depth = 0; frame != nullptr && depth < kMaxChainDepth; ++depth, frame = frame->prev) {
         const size_t used = strlen(out);
         if (frame->name == nullptr || used + 8 >= size) break;
