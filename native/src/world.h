@@ -20,6 +20,9 @@ bool HandleMessage(const net::Message& message);
 // Guest: the slot the host world is written to, and whether a complete world has arrived.
 constexpr int kGuestSlot = 99;
 bool GuestWorldReady();
+
+// Game thread: an instance was destroyed - the herb list may hold a gone id now (cleaned before the next HerbProcess).
+void OnInstanceDestroyed();
 // Guest: saves the game into its working slot (99) to capture its character; async like SaveGame.
 // Then read GuestSlotPath()/Data.cin. The slot stays while in the world (rooms reload from it) and is
 // removed with RemoveGuestSaveSlot back in the main menu.

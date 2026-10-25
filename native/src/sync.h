@@ -46,6 +46,8 @@ void RemoveLocal(yyc::CInstance* self, int localId);
 bool IsReplica(int localId);
 // Guest: the host destroyed this instance (so a late update must not bring it back).
 bool WasDestroyed(int hostId);
+// The highest instance id created through instance_create_* so far (while connected), 0 if none.
+int HighestCreatedId();
 
 // Guest: world objects created between Begin and End (e.g. by SpawnLand) are removed at End — the host
 // sends its own.

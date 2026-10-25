@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <iterator>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -35,6 +36,17 @@ struct Entry {
 
 std::mutex g_lock;
 std::map<std::string, Entry> g_servers;  // key: address:port
+
+constexpr size_t kMaxServers = 64;
+
+// Under g_lock: forgets hosts not heard for a while.
+void PruneStale() {
+    const auto now = Clock::now();
+    for (auto it = g_servers.begin(); it != g_servers.end();) {
+        it = now - it->second.lastSeen > kServerTimeout ? g_servers.erase(it) : std::next(it);
+    }
+}
+
 bool g_announceActive = false;
 std::string g_worldName;
 int g_players = 1;
@@ -175,6 +187,12 @@ void ListenThread() {
         // The same host is heard on several adapters (and loopback); keep one entry per host+port.
         const std::string key = server.hostName + "|" + std::to_string(server.port) + "|" + std::to_string(nonce);
         std::lock_guard<std::mutex> guard(g_lock);
+        // Only Servers() pruned the list, and only while the COOP screen is open: a flood of announcements (each
+        // a new nonce) grew it meanwhile. Stale entries go here too, and past kMaxServers new hosts wait.
+        if (g_servers.count(key) == 0 && g_servers.size() >= kMaxServers) {
+            PruneStale();
+            if (g_servers.size() >= kMaxServers) continue;
+        }
         auto& entry = g_servers[key];
         const bool keepAddress = !entry.server.address.empty() && entry.server.address != "127.0.0.1";
         const std::string previous = entry.server.address;
@@ -211,15 +229,8 @@ void StartListening() {
 std::vector<Server> Servers() {
     std::vector<Server> result;
     std::lock_guard<std::mutex> guard(g_lock);
-    const auto now = Clock::now();
-    for (auto it = g_servers.begin(); it != g_servers.end();) {
-        if (now - it->second.lastSeen > kServerTimeout) {
-            it = g_servers.erase(it);
-        } else {
-            result.push_back(it->second.server);
-            ++it;
-        }
-    }
+    PruneStale();
+    for (const auto& [key, entry] : g_servers) result.push_back(entry.server);
     std::sort(result.begin(), result.end(),
               [](const Server& a, const Server& b) { return a.hostName < b.hostName; });
     return result;

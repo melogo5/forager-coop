@@ -3,7 +3,10 @@
 #include <windows.h>
 
 #include <cstring>
+#include <string>
+#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace yyc {
 
@@ -56,13 +59,22 @@ int ScanBuiltin(const char* name) {
     return -1;
 }
 
-// Game thread only. The menu draws with dozens of builtin calls per frame, so lookups are cached.
+// Game thread only. Builtins are called thousands of times a frame (the menu, every world sweep), so lookups are
+// cached - without building a std::string per call: the keys are views of the names in the game's own table (or,
+// for names it lacks, kept in `missing`, so a miss is not a scan of the whole table every time).
 int FindBuiltin(const char* name) {
-    static std::unordered_map<std::string, int> cache;
-    const auto found = cache.find(name);
+    static std::unordered_map<std::string_view, int> cache;
+    static std::unordered_set<std::string> missing;
+    const std::string_view key(name, strnlen(name, kNameSize));
+    const auto found = cache.find(key);
     if (found != cache.end()) return found->second;
     const int index = ScanBuiltin(name);
-    if (index >= 0) cache.emplace(name, index);
+    if (index >= 0) {
+        const char* own = Table()[index].name;
+        cache.emplace(std::string_view(own, strnlen(own, kNameSize)), index);
+    } else {
+        cache.emplace(std::string_view(*missing.insert(std::string(key)).first), -1);
+    }
     return index;
 }
 

@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <filesystem>
@@ -77,13 +78,30 @@ std::string SafeName(const std::string& name) {
     return safe.empty() ? std::string("guest") : safe;
 }
 
+// The file a name is kept under. Windows file names ignore case, so Bob and bob are one file: lower case, and
+// names compare without case (FreeName). Device names (CON, NUL, COM1...) are no files at all: a guest called so
+// was written into the device and came back new every time - they get a prefix.
+std::string FileKey(const std::string& name) {
+    std::string key = name;
+    std::transform(key.begin(), key.end(), key.begin(), [](char c) { return static_cast<char>(tolower(c)); });
+    static const char* const kDevices[] = {"con",  "prn",  "aux",  "nul",  "com1", "com2", "com3", "com4",
+                                           "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3",
+                                           "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"};
+    for (const char* device : kDevices) {
+        if (key == device) return "_" + key;
+    }
+    return key;
+}
+
 // Host: `name`, or name_2, name_3... if a guest linked now goes by it: two guests never share a character.
 std::string FreeName(const std::string& name, net::PeerId peer) {
     const std::vector<net::PeerId> linked = net::Peers();
     const auto taken = [&](const std::string& candidate) {
         for (const net::PeerId other : linked) {
             const auto found = g_guestNames.find(other);
-            if (other != peer && found != g_guestNames.end() && found->second == candidate) return true;
+            if (other != peer && found != g_guestNames.end() && FileKey(found->second) == FileKey(candidate)) {
+                return true;
+            }
         }
         return false;
     };
@@ -98,7 +116,7 @@ fs::path GuestFile(const std::string& name) {
     const fs::path area = SaveArea();
     if (area.empty() || slot == nullptr) return {};
     const int slotNumber = static_cast<int>(yyc::ToReal(*slot));
-    return area / (L"saveData" + std::to_wstring(slotNumber)) / kGuestsDir / fs::u8path(SafeName(name) + ".cin");
+    return area / (L"saveData" + std::to_wstring(slotNumber)) / kGuestsDir / fs::u8path(FileKey(SafeName(name)) + ".cin");
 }
 
 std::vector<uint8_t> ReadFile(const fs::path& path) {

@@ -9,6 +9,7 @@
 #include <set>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -184,18 +185,39 @@ std::string Describe(const std::set<Spot>& spots) {
 // Guest: the host's whole world against ours. Only logged - reconcile repairs around the guest; this shows when and
 // where the worlds part anywhere (a playtest's log is read afterwards). Differences seen in two checks in a row are
 // the real ones: a spawn or destroy may be on its way.
+// Objects bucketed by kind and a grid cell at least kMatchDistance wide: a match is in the same or a next cell. (Each
+// host object against every one here was ~50 million comparisons on a big world, in one frame.)
+int64_t BucketKey(int object, int cx, int cy) {
+    return (static_cast<int64_t>(object) << 40) ^ (static_cast<int64_t>(cx & 0xFFFFF) << 20) ^ (cy & 0xFFFFF);
+}
+constexpr double kCell = 2 * kMatchDistance;
+
 void CompareWorld(yyc::CInstance* self, const std::vector<CheckEntry>& host) {
     const std::vector<WorldObject> here = WorldObjects(self);
     std::vector<bool> used(here.size(), false);
+    std::unordered_map<int64_t, std::vector<size_t>> buckets;
+    for (size_t i = 0; i < here.size(); ++i) {
+        buckets[BucketKey(here[i].object, static_cast<int>(std::floor(here[i].x / kCell)),
+                          static_cast<int>(std::floor(here[i].y / kCell)))]
+            .push_back(i);
+    }
     std::set<Spot> hostOnly, hereOnly;
     for (const CheckEntry& e : host) {
         bool found = false;
-        for (size_t i = 0; i < here.size() && !found; ++i) {
-            if (used[i] || here[i].object != e.object || std::abs(here[i].x - e.x) > kMatchDistance ||
-                std::abs(here[i].y - e.y) > kMatchDistance) {
-                continue;
+        const int cx = static_cast<int>(std::floor(e.x / kCell)), cy = static_cast<int>(std::floor(e.y / kCell));
+        for (int dx = -1; dx <= 1 && !found; ++dx) {
+            for (int dy = -1; dy <= 1 && !found; ++dy) {
+                const auto bucket = buckets.find(BucketKey(e.object, cx + dx, cy + dy));
+                if (bucket == buckets.end()) continue;
+                for (const size_t i : bucket->second) {
+                    if (used[i] || std::abs(here[i].x - e.x) > kMatchDistance ||
+                        std::abs(here[i].y - e.y) > kMatchDistance) {
+                        continue;
+                    }
+                    used[i] = found = true;
+                    break;
+                }
             }
-            used[i] = found = true;
         }
         if (!found) hostOnly.insert({e.object, e.x, e.y});
     }
@@ -250,11 +272,14 @@ void DebugTick(yyc::CInstance* localPlayer) {
 
 std::vector<WorldObject> WorldObjects(yyc::CInstance* self) {
     // Every instance by id - FindInstance finds asleep ones too, whatever the cull lists say (an instance being woken
-    // is on none of them and not active yet for a step). Ids count up from 100000; a long run of none is the end.
+    // is on none of them and not active yet for a step). Ids count up from 100000; a long run of none is the end -
+    // but never before the highest id created while we watched (a long session's burst of short-lived instances
+    // was such a run, and the walk stopped short of the newest objects).
     constexpr int kFirstId = 100000, kEndGap = 20000;
+    const int highest = sync::HighestCreatedId();
     std::vector<int8_t> kept(1024, 0);  // object index -> 0 unknown, 1 listed kind, -1 not
     std::vector<WorldObject> objects;
-    for (int id = kFirstId, gap = 0; gap < kEndGap; ++id) {
+    for (int id = kFirstId, gap = 0; gap < kEndGap || id <= highest; ++id) {
         yyc::CInstance* instance = yyc::FindInstance(id);
         gap = instance == nullptr ? gap + 1 : 0;
         if (instance == nullptr || interiors::IsInterior(id)) continue;

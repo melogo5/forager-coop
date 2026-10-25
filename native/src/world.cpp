@@ -3,14 +3,15 @@
 #include <windows.h>
 
 #include <atomic>
-#include <mutex>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <set>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "MinHook.h"
@@ -103,6 +104,29 @@ bool SendFile(net::PeerId peer, const fs::path& root, const fs::path& file) {
     return true;
 }
 
+// Sizes and write times of the slot's files: the same twice in a row means the save is done writing.
+std::vector<std::pair<uintmax_t, fs::file_time_type>> Stamps(const std::vector<fs::path>& files) {
+    std::vector<std::pair<uintmax_t, fs::file_time_type>> stamps;
+    std::error_code error;
+    for (const auto& file : files) stamps.emplace_back(fs::file_size(file, error), fs::last_write_time(file, error));
+    return stamps;
+}
+
+// SaveGame writes as the game sees fit; the snapshot starts a fixed while after it. A file still being written then
+// went out cut short: wait (up to ~5 s) until the files stop changing.
+void WaitUntilWritten(const std::vector<fs::path>& files) {
+    constexpr DWORD kCheckMs = 250;
+    constexpr int kMaxChecks = 20;
+    auto last = Stamps(files);
+    for (int i = 0; i < kMaxChecks; ++i) {
+        Sleep(kCheckMs);
+        auto now = Stamps(files);
+        if (now == last) return;
+        last = std::move(now);
+    }
+    Log("world: the save was still changing after %d ms - sending it as it is", kCheckMs * kMaxChecks);
+}
+
 void SendSnapshot(int slotNumber, std::vector<net::PeerId> peers) {
     const std::string slot = "saveData" + std::to_string(slotNumber);
     const fs::path root = SaveRoot() / fs::u8path(slot);
@@ -118,6 +142,7 @@ void SendSnapshot(int slotNumber, std::vector<net::PeerId> peers) {
         Log("world: cannot read slot %s", slot.c_str());
         return;
     }
+    WaitUntilWritten(files);
     std::vector<uint8_t> begin;
     Put32(begin, static_cast<uint32_t>(files.size()));
     for (const net::PeerId peer : peers) {
@@ -246,12 +271,18 @@ void PrepareSaveLists(yyc::CInstance* self) {
 constexpr uint32_t kScriptHerbProcess = 0x004BD0A0;
 yyc::ScriptFn g_origHerbProcess = nullptr;
 int g_herbsLogged = 0;
+bool g_herbsDirty = true;  // something was destroyed since the last cleaning
+unsigned g_herbSteps = 0;
+constexpr unsigned kHerbCheckEverySteps = 60;  // and once a second anyway, for a way out we do not hook
 
 yyc::RValue* __cdecl HerbProcessHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                      yyc::RValue** args) {
     constexpr int kSlotHerbs = 0x55F;
     const double herbs = Mutant("herbs") ? -1 : GlobalNumber(kSlotHerbs);
-    if (herbs >= 0) {
+    // Walking the whole list every frame cost a builtin call per herb: only after a destroy (or once a second).
+    const bool check = g_herbsDirty || ++g_herbSteps % kHerbCheckEverySteps == 0;
+    g_herbsDirty = false;
+    if (herbs >= 0 && check) {
         const std::vector<int> ids = ListIds(self, herbs);
         for (int i = static_cast<int>(ids.size()) - 1; i >= 0; --i) {
             if (yyc::FindInstance(ids[i]) != nullptr) continue;
@@ -365,6 +396,8 @@ void HostTick() {
 }
 
 bool GuestWorldReady() { return g_ready; }
+
+void OnInstanceDestroyed() { g_herbsDirty = true; }
 
 void GuestSaveCharacter(yyc::CInstance* localPlayer) {
     yyc::RValue result{};

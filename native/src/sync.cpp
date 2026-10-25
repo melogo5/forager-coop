@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -20,6 +21,7 @@
 #include "interiors.h"
 #include "skilltab.h"
 #include "stations.h"
+#include "world.h"
 
 namespace coop::sync {
 
@@ -117,7 +119,11 @@ int8_t g_syncedCache[kMaxObjects] = {};  // 0 unknown, 1 synced, -1 not
 std::unordered_map<int, int> g_hostToLocal;  // guest: host instance id -> replica id
 std::unordered_map<int, int> g_localToHost;
 std::unordered_map<int, net::PeerId> g_hitByGuest;  // host: instances a guest hit last, and which guest
-std::unordered_set<int> g_destroyedOnHost;  // guest: host ids reported destroyed (ids are never reused)
+// Guest: host ids reported destroyed (ids are never reused) - the latest kRememberDestroyed: what stops a late update
+// bringing one back is recent, and a whole session's worth only grew.
+std::unordered_set<int> g_destroyedOnHost;
+std::deque<int> g_destroyedOrder;
+constexpr size_t kRememberDestroyed = 20000;
 
 yyc::ScriptFn g_origResourceSpawn = nullptr;
 yyc::ScriptFn g_origResourceSpawnSingle = nullptr;
@@ -275,18 +281,23 @@ float ReadVar(int id, int slot);
 
 void FlushSpawns(yyc::CInstance* self) {
     for (const int id : g_pendingSpawns) {
+        // Whatever it turns out to be, its entry goes now: one kept for anything but a delivered drop (a guest's
+        // build, a drop gone within the step) stayed for the whole session.
+        const auto guestDrop = g_guestDrops.find(id);
+        const bool byGuest = guestDrop != g_guestDrops.end();
+        const net::PeerId guest = byGuest ? guestDrop->second : net::kHostPeer;
+        if (byGuest) g_guestDrops.erase(guestDrop);
         yyc::CInstance* instance = yyc::FindInstance(id);
         if (instance == nullptr) continue;
         const InstanceInfo info = Describe(instance);
         int32_t item = kNoItem;
         int32_t owner = kOwnerAnyone;
-        const auto guestDrop = g_guestDrops.find(id);
         if (IsDrop(self, info.object)) {
             yyc::RValue value{};
             yyc::GetVar(id, kSlotItem, &value);
             item = static_cast<int32_t>(yyc::ToReal(value));
             yyc::Free(&value);
-            owner = guestDrop != g_guestDrops.end() ? kOwnerGuest : kOwnerHost;
+            owner = byGuest ? kOwnerGuest : kOwnerHost;
         }
         if (owner == kOwnerHost) {
             CollectNow(instance, self);  // the host's loot goes straight into its inventory
@@ -299,10 +310,8 @@ void FlushSpawns(yyc::CInstance* self) {
         }
         // Only its guest hears of it: that guest collects its copy on arrival, ours goes - for the others it
         // never existed.
-        const net::PeerId guest = guestDrop->second;
         Send(kSpawn, info, id, item, owner, guest);
         Log("sync: drop of item %d goes to guest %u", item, guest);
-        g_guestDrops.erase(guestDrop);
         DestroySilently(self, id);
     }
     g_pendingSpawns.clear();
@@ -363,9 +372,12 @@ bool CreatedByLoading() {
     return false;
 }
 
+int g_highestCreated = 0;  // the highest instance id created through instance_create_* (seen in a session)
+
 void __cdecl CreateHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstance* other, int argc,
                         yyc::RValue* args) {
     g_origCreate(result, self, other, argc, args);
+    g_highestCreated = (std::max)(g_highestCreated, static_cast<int>(yyc::ToReal(*result)));
     if (g_applyingRemote > 0 || !Connected() || interiors::IsBuilding()) return;
     if (IsHost() && CreatedByLoading()) {
         static DWORD lastLog = 0;
@@ -428,7 +440,11 @@ void __cdecl DestroyHook(yyc::CInstance* self, yyc::CInstance* other, int id, in
     const int targetId = target != nullptr ? static_cast<int>(yyc::GetBuiltinReal(target, yyc::va::YYVar_id)) : 0;
     g_origDestroy(self, other, id, executeEvent);
     if (forGuest) puppet::EndActing();
-    if (targetId != 0 && yyc::FindInstance(targetId) == nullptr) mobs::ForgetInstance(self, targetId);
+    if (targetId != 0 && yyc::FindInstance(targetId) == nullptr) {
+        mobs::ForgetInstance(self, targetId);
+        world::OnInstanceDestroyed();
+        g_hostOwnedDrops.erase(targetId);  // destroyed quietly too (a host destroy): not only when reported
+    }
     if (!synced || chests::IsTreasureChest(info.object)) return;  // an opened chest is gone for its opener only
 
     if (IsHost()) {
@@ -436,6 +452,7 @@ void __cdecl DestroyHook(yyc::CInstance* self, yyc::CInstance* other, int id, in
         const auto pending = std::find(g_pendingSpawns.begin(), g_pendingSpawns.end(), info.id);
         if (pending != g_pendingSpawns.end()) {
             g_pendingSpawns.erase(pending);
+            g_guestDrops.erase(info.id);
         } else {
             Send(kDestroy, info, info.id);
         }
@@ -806,7 +823,13 @@ bool TryDestroy(yyc::CInstance* self, const ObjectMsg& msg, int local) {
 }
 
 void ApplyDestroy(yyc::CInstance* self, const ObjectMsg& msg) {
-    g_destroyedOnHost.insert(msg.id);
+    if (g_destroyedOnHost.insert(msg.id).second) {
+        g_destroyedOrder.push_back(msg.id);
+        if (g_destroyedOrder.size() > kRememberDestroyed) {
+            g_destroyedOnHost.erase(g_destroyedOrder.front());
+            g_destroyedOrder.pop_front();
+        }
+    }
     int local = 0;
     const auto known = g_hostToLocal.find(msg.id);
     if (known != g_hostToLocal.end()) {
@@ -1231,7 +1254,24 @@ void Tick(yyc::CInstance* localPlayer) {
     }
 }
 
-std::vector<std::function<void()>> g_afterWake;
+// Actions for the next CullObject (WakeThen, RunBeforeCull). They hold the player and other instances as they were:
+// one that waited long (the player was in another room, where nothing culls) may point at instances gone since, so
+// past kAfterWakeMs it is dropped; and the queue is capped.
+struct AfterWake {
+    DWORD at;
+    std::function<void()> action;
+};
+std::vector<AfterWake> g_afterWake;
+constexpr DWORD kAfterWakeMs = 2000;
+constexpr size_t kMaxAfterWake = 256;
+
+void QueueAfterWake(std::function<void()> action) {
+    if (g_afterWake.size() >= kMaxAfterWake) {
+        Log("sync: too many actions waiting for the next cull - the oldest dropped");
+        g_afterWake.erase(g_afterWake.begin());
+    }
+    g_afterWake.push_back({GetTickCount(), std::move(action)});
+}
 
 // Waking as ProcessCulls does: off global.deactivatedInstances and off the cell's list it was culled into
 // (`stashList`), then activated. A bare instance_activate_* left the id in those lists: when the instance moved on
@@ -1288,17 +1328,26 @@ void WakeInstance(yyc::CInstance* self, int id) {
 
 void WakeThen(yyc::CInstance* self, int object, std::function<void()> action) {
     WakeKind(self, object);
-    g_afterWake.push_back(std::move(action));
+    QueueAfterWake(std::move(action));
 }
 
-void RunBeforeCull(std::function<void()> action) { g_afterWake.push_back(std::move(action)); }
+void RunBeforeCull(std::function<void()> action) { QueueAfterWake(std::move(action)); }
 
 void BeforeCull(yyc::CInstance* self) {
     if (IsGuest()) RetryDestroys(self, false);
     if (!g_afterWake.empty()) {
-        std::vector<std::function<void()>> actions;
+        std::vector<AfterWake> actions;
         actions.swap(g_afterWake);
-        for (const auto& action : actions) action();
+        const DWORD now = GetTickCount();
+        size_t stale = 0;
+        for (const AfterWake& waiting : actions) {
+            if (now - waiting.at > kAfterWakeMs) {
+                ++stale;
+                continue;
+            }
+            waiting.action();
+        }
+        if (stale > 0) Log("sync: %zu actions waited too long for a cull (away from the world?) - dropped", stale);
     }
     if (g_cullTestListing != nullptr) {
         LogCullTestObjects(self, g_cullTestListing);
@@ -1336,6 +1385,8 @@ void AdoptReplica(int hostId, int localId) {
 }
 
 bool IsReplica(int localId) { return g_localToHost.count(localId) > 0; }
+
+int HighestCreatedId() { return g_highestCreated; }
 
 bool WasDestroyed(int hostId) { return g_destroyedOnHost.count(hostId) > 0; }
 
@@ -1441,6 +1492,7 @@ void Reset() {
     g_localToHost.clear();
     g_hitByGuest.clear();
     g_destroyedOnHost.clear();
+    g_destroyedOrder.clear();
     g_suppressing = 0;
     g_suppressed.clear();
     g_guestDrops.clear();

@@ -321,6 +321,7 @@ void Approach(yyc::CInstance* instance, uint32_t yyvar, double target) {
 // The puppet draws the tool in its own toolbar (Draw_0 -> ToolSelected() with PlayerFind() = the puppet). It
 // gets a list of its own holding just its player's tool, so the local player's toolbar is never touched.
 constexpr int kSlotToolbar = 0x897;  // decompiled/code/var_slots.tsv
+constexpr double kDsTypeList = 2;    // ds_type_list
 constexpr int kSlotToolSelected = 0x89C;
 
 double CallReal(yyc::CInstance* self, const char* builtin, std::initializer_list<double> values) {
@@ -336,9 +337,17 @@ double CallReal(yyc::CInstance* self, const char* builtin, std::initializer_list
 
 void ShowTool(yyc::CInstance* localPlayer, Puppet& puppet, int tool) {
     if (puppet.toolbarList < 0) {
-        puppet.toolbarList = CallReal(localPlayer, "ds_list_create", {});
-        yyc::RValue list = yyc::Real(puppet.toolbarList);
-        yyc::SetVar(puppet.id, kSlotToolbar, &list);
+        // The toolbar list objPlayer's Create made (its CleanUp destroys it); a new one only if there is none -
+        // put in its place, the old one leaked with every puppet.
+        yyc::RValue own{};
+        const bool has = yyc::GetVar(puppet.id, kSlotToolbar, &own) && yyc::IsNumber(own) &&
+                         CallReal(localPlayer, "ds_exists", {yyc::ToReal(own), kDsTypeList}) != 0;
+        puppet.toolbarList = has ? yyc::ToReal(own) : CallReal(localPlayer, "ds_list_create", {});
+        yyc::Free(&own);
+        if (!has) {
+            yyc::RValue list = yyc::Real(puppet.toolbarList);
+            yyc::SetVar(puppet.id, kSlotToolbar, &list);
+        }
     }
     if (tool == puppet.shownTool) return;
     puppet.shownTool = tool;
