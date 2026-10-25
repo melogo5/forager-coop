@@ -31,7 +31,8 @@ void DebugAutoHit(yyc::CInstance* localPlayer, unsigned steps) {
         return object > 1 ? object : 23;  // "1": enemies (parEnemy)
     }();
     constexpr unsigned kEverySteps = 120;
-    if (target == 0 || !IsGuest() || steps % kEverySteps != 0) return;
+    // Not at step 0: the first mobs update has not removed the enemies only the guest's copy of a save has yet.
+    if (target == 0 || !IsGuest() || steps == 0 || steps % kEverySteps != 0) return;
     const double x = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_x);
     const double y = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_y);
     const int id = static_cast<int>(CallReal(localPlayer, "instance_nearest", {x, y, double(target)}));

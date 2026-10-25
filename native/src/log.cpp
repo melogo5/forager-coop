@@ -32,17 +32,22 @@ void LogOpen() {
     g_file = _wfsopen(path, L"w", _SH_DENYNO);  // readable while the game runs
 }
 
+// The lock stays: detached threads (network, error-log watcher) may still log while the process ends.
 void LogClose() {
+    EnterCriticalSection(&g_lock);
     if (g_file != nullptr) {
         fclose(g_file);
         g_file = nullptr;
     }
-    DeleteCriticalSection(&g_lock);
+    LeaveCriticalSection(&g_lock);
 }
 
 void Log(const char* format, ...) {
-    if (g_file == nullptr) return;
     EnterCriticalSection(&g_lock);
+    if (g_file == nullptr) {
+        LeaveCriticalSection(&g_lock);
+        return;
+    }
     const double seconds = static_cast<double>(GetTickCount64() - g_startTicks) / 1000.0;
     fprintf(g_file, "[t=%.3fs] ", seconds);
     va_list args;

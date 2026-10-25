@@ -257,12 +257,29 @@ void __cdecl ControlDrawGuiHook(yyc::CInstance* self, yyc::CInstance* other) {
     if (!g_open) g_origControlDrawGui(self, other);
 }
 
+// What DrawTree changes for the tree and puts back at its end - put back here when a fault skipped that end (else
+// the world drew scaled and fogged until the next good frame).
+void RestoreDrawState(yyc::CInstance* control) {
+    g_gridRoom = false;
+    SetWorldMatrix(control, 1);
+    gui::Call("gpu_set_fog", {0, 0, 0, 1});
+}
+
+void RestoreAfterFault(yyc::CInstance* control) {
+    __try {
+        RestoreDrawState(control);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log("skilltab: putting the drawing state back failed too");
+    }
+}
+
 void DrawOpenTree(yyc::CInstance* control) {
     __try {
         DrawTree(control);
         g_origControlDrawGui(control, control);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         Log("skilltab: drawing the tree crashed (code 0x%08lX)", GetExceptionCode());
+        RestoreAfterFault(control);
     }
 }
 

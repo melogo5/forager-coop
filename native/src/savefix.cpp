@@ -62,7 +62,16 @@ public:
         p_ += 2;
         return *key < keys_.size();
     }
+    // Arrays and lists hold values in turn; a broken file could nest them until the stack runs out, which no __try
+    // survives. Real saves nest a few levels.
     bool SkipValue(uint8_t type) {
+        if (depth_ >= kMaxDepth) return false;
+        ++depth_;
+        const bool ok = SkipOne(type);
+        --depth_;
+        return ok;
+    }
+    bool SkipOne(uint8_t type) {
         if (const size_t n = FixedSize(type)) return Advance(n);
         if (type == 11 || type == 18) {
             while (p_ < raw_.size() && raw_[p_] != 0) ++p_;
@@ -110,9 +119,11 @@ private:
         p_ += n;
         return true;
     }
+    static constexpr int kMaxDepth = 16;
     const Bytes& raw_;
     const std::vector<Key>& keys_;
     size_t p_;
+    int depth_ = 0;
 };
 
 std::vector<Key> ParseKeys(const Bytes& raw) {
