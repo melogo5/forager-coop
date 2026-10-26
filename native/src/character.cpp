@@ -15,6 +15,7 @@
 #include "MinHook.h"
 #include "files.h"
 #include "log.h"
+#include "puppet.h"
 #include "world.h"
 
 namespace coop::character {
@@ -30,6 +31,11 @@ enum MessageType : uint8_t {
 };
 
 constexpr uint32_t kScriptDeserializeCharacterChunk = 0x005BC8F0;
+// GearEdit(category, field, value): field 2 is the gear a player owns in that category - PlayerFind().gearCurrent
+// (objItemGet when gear is picked up, DeserializeCharacterChunk on load); other fields are global.gear.
+constexpr uint32_t kScriptGearEdit = 0x006CAAC0;
+constexpr int kGearFieldOwned = 2;
+constexpr int kSlotGearCurrent = 0x535;
 constexpr uint32_t kScriptCinderLoad = 0x005CE0D0;    // CinderLoad(buffer) -> cinder (chunk map)
 constexpr uint32_t kScriptCinderDelete = 0x005C9BD0;  // CinderDelete(cinder)
 constexpr int kSlotSaveFile = yyc::slot::saveFile;
@@ -41,6 +47,7 @@ constexpr wchar_t kLocalCharacterFile[] = L"coop_guest_character.cin";  // guest
 
 bool (*g_isGuest)() = nullptr;
 yyc::ScriptFn g_origDeserialize = nullptr;
+yyc::ScriptFn g_origGearEdit = nullptr;
 
 // Guest state.
 std::atomic<bool> g_answered{false};
@@ -177,13 +184,52 @@ yyc::RValue* __cdecl DeserializeHook(yyc::CInstance* self, yyc::CInstance* other
     return result;
 }
 
+double OwnedGear(int playerId, int category) {
+    yyc::RValue value{};
+    const bool ok = yyc::GetVarAt(playerId, kSlotGearCurrent, category, &value);
+    const double gear = ok && yyc::IsNumber(value) ? yyc::ToReal(value) : -4;
+    yyc::Free(&value);
+    return gear;
+}
+
+// Playtest 6: crafted gear went missing (host and guest, over a rejoin or in play) and nothing in the logs said
+// when. In a session every change of a player's owned gear is logged with who got it and what changed it.
+yyc::RValue* __cdecl GearEditHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
+                                  yyc::RValue** args) {
+    const bool traced = net::IsConnected() && argc >= 3 && yyc::IsNumber(*args[0]) && yyc::IsNumber(*args[1]) &&
+                        static_cast<int>(yyc::ToReal(*args[1])) == kGearFieldOwned;
+    if (!traced) return g_origGearEdit(self, other, result, argc, args);
+    const yyc::StackFrame* caller = yyc::TopFrame();
+    const std::string by = caller != nullptr && caller->name != nullptr ? caller->name : "?";
+    yyc::RValue zero = yyc::Real(0);
+    yyc::RValue* findArgs[1] = {&zero};
+    yyc::RValue found{};
+    yyc::At<yyc::ScriptFn>(yyc::va::Script_PlayerFind)(self, other, &found, 1, findArgs);  // as GearEdit will
+    const int target = static_cast<int>(yyc::ToReal(found));
+    yyc::Free(&found);
+    yyc::CInstance* instance = yyc::FindInstance(target);
+    const int category = static_cast<int>(yyc::ToReal(*args[0]));
+    const double before = instance != nullptr ? OwnedGear(target, category) : -4;
+    yyc::RValue* r = g_origGearEdit(self, other, result, argc, args);
+    const double after = instance != nullptr ? OwnedGear(target, category) : -4;
+    if (after != before) {
+        Log("gear: %s %d category %d: %.0f -> %.0f (by %s)", puppet::IsPuppet(instance) ? "puppet" : "player", target,
+            category, before, after, by.c_str());
+    }
+    return r;
+}
+
 }  // namespace
 
 bool InstallHooks(bool (*isGuest)()) {
     g_isGuest = isGuest;
-    const MH_STATUS status =
+    MH_STATUS status =
         MH_CreateHook(yyc::At<void*>(kScriptDeserializeCharacterChunk), reinterpret_cast<void*>(&DeserializeHook),
                       reinterpret_cast<void**>(&g_origDeserialize));
+    if (status == MH_OK) {
+        status = MH_CreateHook(yyc::At<void*>(kScriptGearEdit), reinterpret_cast<void*>(&GearEditHook),
+                               reinterpret_cast<void**>(&g_origGearEdit));
+    }
     if (status != MH_OK) Log("character: hook failed: %s", MH_StatusToString(status));
     return status == MH_OK;
 }
