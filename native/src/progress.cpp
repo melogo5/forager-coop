@@ -16,24 +16,36 @@ namespace coop::progress {
 
 namespace {
 
-// Either way: u8 list index, then the list's values (f64 each). The receiver adds the ones it lacks: donations are
-// never taken back, so the union is right, and two donations within a second both stay (each side used to replace
-// the whole list with the other's, and one of them was lost - with its items already taken).
-constexpr uint8_t kProgressList = 90;
+// Either way: u8 grid index, u16 width, u16 height, then the cells column by column (f64 each). The receiver keeps
+// the larger value of each cell: donations only ever add, so two donations within a second both stay (each side used
+// to replace the whole thing with the other's, and one of them was lost - with its items already taken).
+constexpr uint8_t kProgressGrid = 90;
 constexpr unsigned kEverySteps = 60;
-constexpr size_t kMaxValues = 4096;
+constexpr int kMaxCells = 4096;
+constexpr double kDsTypeGrid = 5;
 
-struct SharedList {
+struct SharedGrid {
     const char* name;
-    int slot;  // a global holding a ds_list id (decompiled/code/var_slots.tsv)
+    int slot;  // a global holding a ds_grid id (decompiled/code/var_slots.tsv)
 };
-constexpr SharedList kLists[] = {
-    {"museum", 0x68A},  // global.museumBundles: what was donated
+// global.museumBundles: a column per bundle (objMuseumBundle `number`): row i how many of its item i are in, row 10
+// set once it is complete (the save reads it with ds_grid_read). It was taken for a ds_list until playtest 6, so the
+// museum was never shared: ds_list calls on its id reached whatever list had the same number.
+constexpr SharedGrid kGrids[] = {
+    {"museum", 0x68A},
 };
-constexpr size_t kListCount = sizeof(kLists) / sizeof(kLists[0]);
+constexpr size_t kGridCount = sizeof(kGrids) / sizeof(kGrids[0]);
 
-std::vector<double> g_last[kListCount];  // sorted: what both sides have, as far as this side knows
-bool g_seen[kListCount] = {};
+struct Cells {
+    int width = 0, height = 0;
+    std::vector<double> values;  // column by column
+    bool operator==(const Cells& other) const {
+        return width == other.width && height == other.height && values == other.values;
+    }
+};
+
+Cells g_last[kGridCount];  // what both sides have, as far as this side knows
+bool g_seen[kGridCount] = {};
 unsigned g_steps = 0;
 
 // The museum takes two of an item instead of one (QUESTIONS.md) - the donation is shared, so the price doubles.
@@ -52,14 +64,14 @@ yyc::ScriptFn g_origRemoveItem = nullptr;
 yyc::CInstance* g_player = nullptr;  // the local player, from Tick
 int g_doubleRemove = 0;
 
-double ListId(size_t i) {
-    const yyc::RValue* id = yyc::GlobalVar(kLists[i].slot);
-    return id != nullptr && (id->kind & yyc::kKindMask) == yyc::kReal ? id->real : -1;
+double GridId(size_t i) {
+    const yyc::RValue* id = yyc::GlobalVar(kGrids[i].slot);
+    return id != nullptr && yyc::IsNumber(*id) ? yyc::ToReal(*id) : -1;
 }
 
 bool Exists(yyc::CInstance* self, double id) {
     if (id < 0) return false;
-    yyc::RValue args[2] = {yyc::Real(id), yyc::Real(2)};  // ds_type_list
+    yyc::RValue args[2] = {yyc::Real(id), yyc::Real(kDsTypeGrid)};
     yyc::RValue result{};
     yyc::CallBuiltin("ds_exists", self, 2, args, &result);
     const bool exists = yyc::ToReal(result) != 0;
@@ -67,8 +79,8 @@ bool Exists(yyc::CInstance* self, double id) {
     return exists;
 }
 
-double ListCall(yyc::CInstance* self, const char* builtin, std::initializer_list<double> values) {
-    yyc::RValue args[3] = {};
+double GridCall(yyc::CInstance* self, const char* builtin, std::initializer_list<double> values) {
+    yyc::RValue args[4] = {};
     int argc = 0;
     for (const double v : values) args[argc++] = yyc::Real(v);
     yyc::RValue result{};
@@ -78,42 +90,34 @@ double ListCall(yyc::CInstance* self, const char* builtin, std::initializer_list
     return value;
 }
 
-// The list's values; false if one is not a number (then it is not shared: a union of numbers would not do).
-bool Read(yyc::CInstance* self, double id, std::vector<double>* values) {
-    const int size = static_cast<int>(ListCall(self, "ds_list_size", {id}));
-    values->clear();
-    for (int i = 0; i < size && values->size() < kMaxValues; ++i) {
-        const double v = ListCall(self, "ds_list_find_value", {id, double(i)});
-        if (!std::isfinite(v)) return false;
-        values->push_back(v);
+// The grid's cells; false if one is not a number (then it is not shared: a maximum of numbers would not do).
+bool Read(yyc::CInstance* self, double id, Cells* cells) {
+    cells->width = static_cast<int>(GridCall(self, "ds_grid_width", {id}));
+    cells->height = static_cast<int>(GridCall(self, "ds_grid_height", {id}));
+    cells->values.clear();
+    if (cells->width <= 0 || cells->height <= 0 || cells->width * cells->height > kMaxCells) return false;
+    for (int x = 0; x < cells->width; ++x) {
+        for (int y = 0; y < cells->height; ++y) {
+            const double v = GridCall(self, "ds_grid_get", {id, double(x), double(y)});
+            if (!std::isfinite(v)) return false;
+            cells->values.push_back(v);
+        }
     }
     return true;
 }
 
-// Lists are compared as sets of entries: the union adds the peer's entries at the end, in another order.
-std::vector<double> Sorted(std::vector<double> values) {
-    std::sort(values.begin(), values.end());
-    return values;
-}
-
-bool Has(const std::vector<double>& values, double v) {
-    return std::find(values.begin(), values.end(), v) != values.end();
-}
-
-// Testing aid: COOP_DEBUG_MUSEUM=<item> adds that item to the museum's list ~5 s in, as a donation would.
+// Testing aid: COOP_DEBUG_MUSEUM=<bundle> puts one more of that bundle's first item in ~5 s in, as a donation would.
 void DebugDonate(yyc::CInstance* self) {
-    static const int item = [] {
+    static const int bundle = [] {
         char value[16] = {};
-        return GetEnvironmentVariableA("COOP_DEBUG_MUSEUM", value, sizeof(value)) > 0 ? atoi(value) : 0;
+        return GetEnvironmentVariableA("COOP_DEBUG_MUSEUM", value, sizeof(value)) > 0 ? atoi(value) : -1;
     }();
-    if (item <= 0 || g_steps != 300) return;
-    const double id = ListId(0);
+    if (bundle < 0 || g_steps != 300) return;
+    const double id = GridId(0);
     if (!Exists(self, id)) return;
-    yyc::RValue args[2] = {yyc::Real(id), yyc::Real(item)};
-    yyc::RValue result{};
-    yyc::CallBuiltin("ds_list_add", self, 2, args, &result);
-    yyc::Free(&result);
-    Log("progress: debug donated item %d to the museum", item);
+    const double count = GridCall(self, "ds_grid_get", {id, double(bundle), 0});
+    GridCall(self, "ds_grid_set", {id, double(bundle), 0, (std::isfinite(count) ? count : 0) + 1});
+    Log("progress: debug donated to museum bundle %d", bundle);
 }
 
 double ReadReal(int id, int slot, bool* ok) {
@@ -199,64 +203,72 @@ void Tick(yyc::CInstance* localPlayer) {
     ++g_steps;
     DebugDonate(localPlayer);
     if (g_steps % kEverySteps != 0) return;
-    for (size_t i = 0; i < kListCount; ++i) {
-        const double id = ListId(i);
+    for (size_t i = 0; i < kGridCount; ++i) {
+        const double id = GridId(i);
         if (!Exists(localPlayer, id)) continue;
-        std::vector<double> values;
-        if (!Read(localPlayer, id, &values)) {
+        Cells cells;
+        if (!Read(localPlayer, id, &cells)) {
             static bool reported = false;
-            if (!reported) Log("progress: %s holds something other than numbers - not shared", kLists[i].name);
+            if (!reported) Log("progress: %s holds something other than numbers - not shared", kGrids[i].name);
             reported = true;
             continue;
         }
         if (!g_seen[i]) {  // the first look: both sides start from the same save
-            g_last[i] = Sorted(values);
+            g_last[i] = cells;
             g_seen[i] = true;
             continue;
         }
-        if (Sorted(values) == g_last[i]) continue;
-        std::vector<uint8_t> payload(1 + values.size() * sizeof(double));
+        if (cells == g_last[i]) continue;
+        std::vector<uint8_t> payload(5 + cells.values.size() * sizeof(double));
         payload[0] = static_cast<uint8_t>(i);
-        if (!values.empty()) memcpy(payload.data() + 1, values.data(), values.size() * sizeof(double));
-        if (net::Send(kProgressList, payload.data(), payload.size())) {
-            Log("progress: %s changed here (%zu entries), sent", kLists[i].name, values.size());
-            g_last[i] = Sorted(values);
+        const uint16_t size[2] = {static_cast<uint16_t>(cells.width), static_cast<uint16_t>(cells.height)};
+        memcpy(payload.data() + 1, size, sizeof(size));
+        memcpy(payload.data() + 5, cells.values.data(), cells.values.size() * sizeof(double));
+        if (net::Send(kProgressGrid, payload.data(), payload.size())) {
+            Log("progress: %s changed here (%dx%d), sent", kGrids[i].name, cells.width, cells.height);
+            g_last[i] = cells;
         }
     }
 }
 
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
-    if (message.type != kProgressList) return false;
+    if (message.type != kProgressGrid) return false;
     const auto& p = message.payload;
-    if (p.empty() || p[0] >= kListCount || (p.size() - 1) % sizeof(double) != 0) return true;
+    if (p.size() < 5 || p[0] >= kGridCount) return true;
     const size_t i = p[0];
-    const size_t count = (p.size() - 1) / sizeof(double);
-    const double id = ListId(i);
-    std::vector<double> here;
-    if (count > kMaxValues || !Exists(localPlayer, id) || !Read(localPlayer, id, &here)) return true;
-    size_t added = 0;
-    std::vector<double> theirs;
-    for (size_t k = 0; k < count; ++k) {
-        double v = 0;
-        memcpy(&v, p.data() + 1 + k * sizeof(double), sizeof(v));
-        if (!std::isfinite(v)) continue;
-        theirs.push_back(v);
-        if (Has(here, v)) continue;
-        ListCall(localPlayer, "ds_list_add", {id, v});
-        here.push_back(v);
-        ++added;
+    uint16_t size[2] = {};
+    memcpy(size, p.data() + 1, sizeof(size));
+    Cells theirs{size[0], size[1], std::vector<double>(static_cast<size_t>(size[0]) * size[1])};
+    if (p.size() != 5 + theirs.values.size() * sizeof(double)) return true;
+    memcpy(theirs.values.data(), p.data() + 5, theirs.values.size() * sizeof(double));
+    const double id = GridId(i);
+    Cells here;
+    if (!Exists(localPlayer, id) || !Read(localPlayer, id, &here)) return true;
+    if (here.width != theirs.width || here.height != theirs.height) {
+        Log("progress: %s from the peer is %dx%d, here %dx%d - not taken", kGrids[i].name, theirs.width,
+            theirs.height, here.width, here.height);
+        return true;
     }
-    // What both have is the peer's list: anything only we have (a donation of ours it has not heard of yet) differs
+    int raised = 0;
+    for (int x = 0; x < here.width; ++x) {
+        for (int y = 0; y < here.height; ++y) {
+            const size_t k = static_cast<size_t>(x) * here.height + y;
+            if (!std::isfinite(theirs.values[k]) || theirs.values[k] <= here.values[k]) continue;
+            GridCall(localPlayer, "ds_grid_set", {id, double(x), double(y), theirs.values[k]});
+            ++raised;
+        }
+    }
+    // What both have is the peer's grid: a cell only we raised (a donation of ours it has not heard of yet) differs
     // from it, so our next look sends it.
-    g_last[i] = Sorted(theirs);
+    g_last[i] = theirs;
     g_seen[i] = true;
-    Log("progress: %s from the peer: %zu new of %zu", kLists[i].name, added, count);
+    Log("progress: %s from the peer: %d cells raised here", kGrids[i].name, raised);
     return true;
 }
 
 void Reset() {
-    for (size_t i = 0; i < kListCount; ++i) {
-        g_last[i].clear();
+    for (size_t i = 0; i < kGridCount; ++i) {
+        g_last[i] = Cells{};
         g_seen[i] = false;
     }
 }

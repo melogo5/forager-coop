@@ -34,7 +34,7 @@ foreach (int index in wanted) {
             foreach (var lt in layer.AssetsData.LegacyTiles ?? new()) o.AppendLine($"    legacy tile {lt.BackgroundDefinition?.Name?.Content} at ({lt.X}, {lt.Y}) src ({lt.SourceX}, {lt.SourceY}) {lt.Width}x{lt.Height}");
         }
         if (layer.InstancesData != null) {
-            foreach (var g in layer.InstancesData.Instances) o.AppendLine($"    instance {g.ObjectDefinition?.Name?.Content} at ({g.X}, {g.Y}) scale ({g.ScaleX}, {g.ScaleY}) rotation {g.Rotation} creation {g.CreationCode?.Name?.Content ?? "-"} pre {g.PreCreateCode?.Name?.Content ?? "-"}");
+            foreach (var g in layer.InstancesData.Instances) o.AppendLine($"    instance {g.ObjectDefinition?.Name?.Content} at ({g.X}, {g.Y}) scale ({g.ScaleX}, {g.ScaleY}) rotation {g.Rotation} creation {g.CreationCode?.Name?.Content ?? "-"} pre {g.PreCreateCode?.Name?.Content ?? "-"} id {g.InstanceID}");
         }
     }
 }

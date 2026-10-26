@@ -32,20 +32,20 @@ const Plan krmWizardTowerInterior{22, 400, 400, 192, 264,
     {},
     {{100, 37, 25, 25, krmWizardTowerInteriorTiles100}},
     {
-        {271, 184, 280, 11, 1},  // parSolid
-        {271, 280, 152, 1, 17},  // parSolid
-        {271, 168, 120, 9, 1},  // parSolid
-        {271, 104, 200, 1, 9},  // parSolid
-        {276, 192, 280, 2, 1},  // objDoorBackToGame
-        {271, 256, 160, 2, 2},  // parSolid
-        {186, 128, 136, 1, 1},  // objBookcase
-        {186, 168, 136, 1, 1},  // objBookcase
-        {186, 208, 136, 1, 1},  // objBookcase
-        {208, 256, 112, 1, 1},  // objBreakableWall
-        {151, 256, 48, 1, 1},  // objTreasureChestSmall
-        {271, 232, 64, 1, 6},  // parSolid
-        {271, 256, 24, 2, 1},  // parSolid
-        {273, 256, 62, 4, 6.25},  // objDungeonRoom
+        {271, 184, 280, 11, 1, 101613, 0},  // parSolid
+        {271, 280, 152, 1, 17, 101614, 0},  // parSolid
+        {271, 168, 120, 9, 1, 101615, 0},  // parSolid
+        {271, 104, 200, 1, 9, 101616, 0},  // parSolid
+        {276, 192, 280, 2, 1, 101617, 0},  // objDoorBackToGame
+        {271, 256, 160, 2, 2, 101619, 0},  // parSolid
+        {186, 128, 136, 1, 1, 101620, 0},  // objBookcase
+        {186, 168, 136, 1, 1, 101621, 0},  // objBookcase
+        {186, 208, 136, 1, 1, 101622, 0},  // objBookcase
+        {208, 256, 112, 1, 1, 101623, 0},  // objBreakableWall
+        {151, 256, 48, 1, 1, 101624, 0},  // objTreasureChestSmall
+        {271, 232, 64, 1, 6, 101625, 0},  // parSolid
+        {271, 256, 24, 2, 1, 101626, 0},  // parSolid
+        {273, 256, 62, 4, 6.25, 101627, 0},  // objDungeonRoom
     }};
 
 const Plan krmDruidTreeInterior{23, 400, 400, 184, 268,
@@ -53,16 +53,16 @@ const Plan krmDruidTreeInterior{23, 400, 400, 184, 268,
     {{100, 1208, 64, 128}, {100, 1207, 64, 128}},
     {},
     {
-        {276, 184, 280, 2, 1},  // objDoorBackToGame
-        {271, 176, 280, 10, 1},  // parSolid
-        {271, 248, 224, 1, 6},  // parSolid
-        {271, 104, 240, 1, 4},  // parSolid
-        {271, 184, 184, 7, 1},  // parSolid
-        {271, 112, 192, 2, 2},  // parSolid
-        {271, 128, 220, 2, 1.5},  // parSolid
-        {271, 122, 240, 1.25, 1},  // parSolid
-        {271, 230, 206, 1.25, 1.75},  // parSolid
-        {166, 168, 196, 1, 1},  // objWardrobe
+        {276, 184, 280, 2, 1, 101628, 0},  // objDoorBackToGame
+        {271, 176, 280, 10, 1, 101630, 0},  // parSolid
+        {271, 248, 224, 1, 6, 101631, 0},  // parSolid
+        {271, 104, 240, 1, 4, 101632, 0},  // parSolid
+        {271, 184, 184, 7, 1, 101633, 0},  // parSolid
+        {271, 112, 192, 2, 2, 101634, 0},  // parSolid
+        {271, 128, 220, 2, 1.5, 101635, 0},  // parSolid
+        {271, 122, 240, 1.25, 1, 101636, 0},  // parSolid
+        {271, 230, 206, 1.25, 1.75, 101637, 0},  // parSolid
+        {166, 168, 196, 1, 1, 101638, 0},  // objWardrobe
     }};
 
 const uint16_t krmMuseumTiles100[] = {
@@ -126,121 +126,121 @@ const Plan krmMuseum{24, 416, 416, 192, 360,
     {},
     {{100, 39, 26, 26, krmMuseumTiles100}, {200, 39, 26, 26, krmMuseumTiles200}},
     {
-        {276, 192, 376, 2, 1},  // objDoorBackToGame
-        {271, 200, 376, 11, 1},  // parSolid
-        {271, 128, 344, 2, 3},  // parSolid
-        {271, 104, 312, 1, 3},  // parSolid
-        {271, 280, 344, 1, 3},  // parSolid
-        {271, 296, 312, 1, 3},  // parSolid
-        {271, 360, 296, 7, 1},  // parSolid
-        {271, 408, 184, 1, 13},  // parSolid
-        {271, 200, 88, 25, 1},  // parSolid
-        {271, 8, 200, 1, 13},  // parSolid
-        {271, 56, 296, 5, 1},  // parSolid
-        {271, 64, 144, 2, 2},  // parSolid
-        {271, 64, 240, 2, 2},  // parSolid
-        {271, 256, 240, 2, 2},  // parSolid
-        {271, 280, 312, 1, 1},  // parSolid
-        {53, 224, 312, 1, 1},  // objArchaeologist
-        {172, 64, 144, 1, 1},  // objMuseumBundle
-        {172, 160, 144, 1, 1},  // objMuseumBundle
-        {172, 256, 144, 1, 1},  // objMuseumBundle
-        {172, 352, 144, 1, 1},  // objMuseumBundle
-        {172, 64, 240, 1, 1},  // objMuseumBundle
-        {172, 160, 240, 1, 1},  // objMuseumBundle
-        {172, 256, 240, 1, 1},  // objMuseumBundle
-        {172, 352, 240, 1, 1},  // objMuseumBundle
-        {271, 88, 232, 1, 3},  // parSolid
-        {271, 64, 264, 2, 1},  // parSolid
-        {271, 48, 232, 2, 3},  // parSolid
-        {271, 160, 240, 4, 2},  // parSolid
-        {271, 160, 240, 2, 4},  // parSolid
-        {271, 256, 216, 4, 1},  // parSolid
-        {271, 280, 232, 1, 1},  // parSolid
-        {271, 232, 248, 1, 1},  // parSolid
-        {271, 256, 264, 4, 1},  // parSolid
-        {271, 352, 240, 4, 2},  // parSolid
-        {271, 352, 240, 2, 4},  // parSolid
-        {271, 344, 152, 3, 3},  // parSolid
-        {271, 360, 136, 3, 3},  // parSolid
-        {271, 256, 152, 4, 3},  // parSolid
-        {271, 280, 120, 1, 1},  // parSolid
-        {271, 232, 120, 1, 1},  // parSolid
-        {271, 160, 136, 4, 3},  // parSolid
-        {271, 152, 168, 1, 1},  // parSolid
-        {271, 80, 168, 2, 1},  // parSolid
-        {271, 88, 120, 1, 1},  // parSolid
-        {271, 40, 120, 1, 1},  // parSolid
-        {271, 40, 168, 1, 1},  // parSolid
-        {173, 248, 216, 1, 1},  // objMuseumShowcase
-        {173, 232, 216, 1, 1},  // objMuseumShowcase
-        {173, 264, 216, 1, 1},  // objMuseumShowcase
-        {173, 280, 216, 1, 1},  // objMuseumShowcase
-        {173, 280, 232, 1, 1},  // objMuseumShowcase
-        {173, 232, 248, 1, 1},  // objMuseumShowcase
-        {173, 232, 264, 1, 1},  // objMuseumShowcase
-        {173, 248, 264, 1, 1},  // objMuseumShowcase
-        {173, 264, 264, 1, 1},  // objMuseumShowcase
-        {173, 280, 264, 1, 1},  // objMuseumShowcase
-        {173, 88, 216, 1, 1},  // objMuseumShowcase
-        {173, 56, 264, 1, 1},  // objMuseumShowcase
-        {173, 88, 248, 1, 1},  // objMuseumShowcase
-        {173, 72, 264, 1, 1},  // objMuseumShowcase
-        {173, 40, 248, 1, 1},  // objMuseumShowcase
-        {173, 40, 232, 1, 1},  // objMuseumShowcase
-        {173, 40, 216, 1, 1},  // objMuseumShowcase
-        {173, 56, 216, 1, 1},  // objMuseumShowcase
-        {173, 88, 232, 1, 1},  // objMuseumShowcase
-        {173, 136, 232, 1, 1},  // objMuseumShowcase
-        {173, 136, 248, 1, 1},  // objMuseumShowcase
-        {173, 152, 264, 1, 1},  // objMuseumShowcase
-        {173, 168, 264, 1, 1},  // objMuseumShowcase
-        {173, 152, 216, 1, 1},  // objMuseumShowcase
-        {173, 168, 216, 1, 1},  // objMuseumShowcase
-        {173, 184, 232, 1, 1},  // objMuseumShowcase
-        {173, 184, 248, 1, 1},  // objMuseumShowcase
-        {173, 344, 216, 1, 1},  // objMuseumShowcase
-        {173, 360, 216, 1, 1},  // objMuseumShowcase
-        {173, 376, 232, 1, 1},  // objMuseumShowcase
-        {173, 376, 248, 1, 1},  // objMuseumShowcase
-        {173, 328, 232, 1, 1},  // objMuseumShowcase
-        {173, 328, 248, 1, 1},  // objMuseumShowcase
-        {173, 344, 264, 1, 1},  // objMuseumShowcase
-        {173, 360, 264, 1, 1},  // objMuseumShowcase
-        {173, 72, 168, 1, 1},  // objMuseumShowcase
-        {173, 88, 168, 1, 1},  // objMuseumShowcase
-        {173, 88, 120, 1, 1},  // objMuseumShowcase
-        {173, 40, 168, 1, 1},  // objMuseumShowcase
-        {173, 40, 120, 1, 1},  // objMuseumShowcase
-        {173, 136, 120, 1, 1},  // objMuseumShowcase
-        {173, 152, 120, 1, 1},  // objMuseumShowcase
-        {173, 168, 120, 1, 1},  // objMuseumShowcase
-        {173, 184, 120, 1, 1},  // objMuseumShowcase
-        {173, 136, 136, 1, 1},  // objMuseumShowcase
-        {173, 184, 136, 1, 1},  // objMuseumShowcase
-        {173, 136, 152, 1, 1},  // objMuseumShowcase
-        {173, 184, 152, 1, 1},  // objMuseumShowcase
-        {173, 152, 168, 1, 1},  // objMuseumShowcase
-        {173, 232, 120, 1, 1},  // objMuseumShowcase
-        {173, 232, 136, 1, 1},  // objMuseumShowcase
-        {173, 232, 152, 1, 1},  // objMuseumShowcase
-        {173, 232, 168, 1, 1},  // objMuseumShowcase
-        {173, 248, 168, 1, 1},  // objMuseumShowcase
-        {173, 264, 168, 1, 1},  // objMuseumShowcase
-        {173, 280, 168, 1, 1},  // objMuseumShowcase
-        {173, 280, 152, 1, 1},  // objMuseumShowcase
-        {173, 280, 136, 1, 1},  // objMuseumShowcase
-        {173, 280, 120, 1, 1},  // objMuseumShowcase
-        {173, 344, 120, 1, 1},  // objMuseumShowcase
-        {173, 360, 120, 1, 1},  // objMuseumShowcase
-        {173, 376, 120, 1, 1},  // objMuseumShowcase
-        {173, 376, 136, 1, 1},  // objMuseumShowcase
-        {173, 376, 152, 1, 1},  // objMuseumShowcase
-        {173, 328, 136, 1, 1},  // objMuseumShowcase
-        {173, 328, 152, 1, 1},  // objMuseumShowcase
-        {173, 328, 168, 1, 1},  // objMuseumShowcase
-        {173, 344, 168, 1, 1},  // objMuseumShowcase
-        {173, 360, 168, 1, 1},  // objMuseumShowcase
+        {276, 192, 376, 2, 1, 101639, 0},  // objDoorBackToGame
+        {271, 200, 376, 11, 1, 101641, 0},  // parSolid
+        {271, 128, 344, 2, 3, 101642, 0},  // parSolid
+        {271, 104, 312, 1, 3, 101643, 0},  // parSolid
+        {271, 280, 344, 1, 3, 101644, 0},  // parSolid
+        {271, 296, 312, 1, 3, 101645, 0},  // parSolid
+        {271, 360, 296, 7, 1, 101646, 0},  // parSolid
+        {271, 408, 184, 1, 13, 101647, 0},  // parSolid
+        {271, 200, 88, 25, 1, 101648, 0},  // parSolid
+        {271, 8, 200, 1, 13, 101649, 0},  // parSolid
+        {271, 56, 296, 5, 1, 101650, 0},  // parSolid
+        {271, 64, 144, 2, 2, 101651, 0},  // parSolid
+        {271, 64, 240, 2, 2, 101652, 0},  // parSolid
+        {271, 256, 240, 2, 2, 101653, 0},  // parSolid
+        {271, 280, 312, 1, 1, 101654, 0},  // parSolid
+        {53, 224, 312, 1, 1, 101655, 0},  // objArchaeologist
+        {172, 64, 144, 1, 1, 101656, 0x010A9280},  // objMuseumBundle
+        {172, 160, 144, 1, 1, 101657, 0x010A99C0},  // objMuseumBundle
+        {172, 256, 144, 1, 1, 101658, 0x010AA420},  // objMuseumBundle
+        {172, 352, 144, 1, 1, 101659, 0x010AAF50},  // objMuseumBundle
+        {172, 64, 240, 1, 1, 101660, 0x010ABA80},  // objMuseumBundle
+        {172, 160, 240, 1, 1, 101661, 0x010AC4E0},  // objMuseumBundle
+        {172, 256, 240, 1, 1, 101662, 0x010AD010},  // objMuseumBundle
+        {172, 352, 240, 1, 1, 101663, 0x010AD9B0},  // objMuseumBundle
+        {271, 88, 232, 1, 3, 101664, 0},  // parSolid
+        {271, 64, 264, 2, 1, 101665, 0},  // parSolid
+        {271, 48, 232, 2, 3, 101666, 0},  // parSolid
+        {271, 160, 240, 4, 2, 101667, 0},  // parSolid
+        {271, 160, 240, 2, 4, 101668, 0},  // parSolid
+        {271, 256, 216, 4, 1, 101669, 0},  // parSolid
+        {271, 280, 232, 1, 1, 101670, 0},  // parSolid
+        {271, 232, 248, 1, 1, 101671, 0},  // parSolid
+        {271, 256, 264, 4, 1, 101672, 0},  // parSolid
+        {271, 352, 240, 4, 2, 101673, 0},  // parSolid
+        {271, 352, 240, 2, 4, 101674, 0},  // parSolid
+        {271, 344, 152, 3, 3, 101675, 0},  // parSolid
+        {271, 360, 136, 3, 3, 101676, 0},  // parSolid
+        {271, 256, 152, 4, 3, 101677, 0},  // parSolid
+        {271, 280, 120, 1, 1, 101678, 0},  // parSolid
+        {271, 232, 120, 1, 1, 101679, 0},  // parSolid
+        {271, 160, 136, 4, 3, 101680, 0},  // parSolid
+        {271, 152, 168, 1, 1, 101681, 0},  // parSolid
+        {271, 80, 168, 2, 1, 101682, 0},  // parSolid
+        {271, 88, 120, 1, 1, 101683, 0},  // parSolid
+        {271, 40, 120, 1, 1, 101684, 0},  // parSolid
+        {271, 40, 168, 1, 1, 101685, 0},  // parSolid
+        {173, 248, 216, 1, 1, 101686, 0x010AE350},  // objMuseumShowcase
+        {173, 232, 216, 1, 1, 101687, 0x010AE440},  // objMuseumShowcase
+        {173, 264, 216, 1, 1, 101688, 0x010AE530},  // objMuseumShowcase
+        {173, 280, 216, 1, 1, 101689, 0x010AE620},  // objMuseumShowcase
+        {173, 280, 232, 1, 1, 101690, 0x010AE710},  // objMuseumShowcase
+        {173, 232, 248, 1, 1, 101691, 0x010AE800},  // objMuseumShowcase
+        {173, 232, 264, 1, 1, 101692, 0x010AE8F0},  // objMuseumShowcase
+        {173, 248, 264, 1, 1, 101693, 0x010AE9E0},  // objMuseumShowcase
+        {173, 264, 264, 1, 1, 101694, 0x010AEAD0},  // objMuseumShowcase
+        {173, 280, 264, 1, 1, 101695, 0x010AEBC0},  // objMuseumShowcase
+        {173, 88, 216, 1, 1, 101696, 0x010AECB0},  // objMuseumShowcase
+        {173, 56, 264, 1, 1, 101697, 0x010AEDA0},  // objMuseumShowcase
+        {173, 88, 248, 1, 1, 101698, 0x010AEE90},  // objMuseumShowcase
+        {173, 72, 264, 1, 1, 101699, 0x010AEF80},  // objMuseumShowcase
+        {173, 40, 248, 1, 1, 101700, 0x010AF070},  // objMuseumShowcase
+        {173, 40, 232, 1, 1, 101701, 0x010AF160},  // objMuseumShowcase
+        {173, 40, 216, 1, 1, 101702, 0x010AF250},  // objMuseumShowcase
+        {173, 56, 216, 1, 1, 101703, 0x010AF340},  // objMuseumShowcase
+        {173, 88, 232, 1, 1, 101704, 0x010AF430},  // objMuseumShowcase
+        {173, 136, 232, 1, 1, 101705, 0x010AF520},  // objMuseumShowcase
+        {173, 136, 248, 1, 1, 101706, 0x010AF610},  // objMuseumShowcase
+        {173, 152, 264, 1, 1, 101707, 0x010AF700},  // objMuseumShowcase
+        {173, 168, 264, 1, 1, 101708, 0x010AF7F0},  // objMuseumShowcase
+        {173, 152, 216, 1, 1, 101709, 0x010AF8E0},  // objMuseumShowcase
+        {173, 168, 216, 1, 1, 101710, 0x010AF9D0},  // objMuseumShowcase
+        {173, 184, 232, 1, 1, 101711, 0x010AFAC0},  // objMuseumShowcase
+        {173, 184, 248, 1, 1, 101712, 0x010AFBB0},  // objMuseumShowcase
+        {173, 344, 216, 1, 1, 101713, 0x010AFCA0},  // objMuseumShowcase
+        {173, 360, 216, 1, 1, 101714, 0x010AFD90},  // objMuseumShowcase
+        {173, 376, 232, 1, 1, 101715, 0x010AFE80},  // objMuseumShowcase
+        {173, 376, 248, 1, 1, 101716, 0x010AFF70},  // objMuseumShowcase
+        {173, 328, 232, 1, 1, 101717, 0x010B0060},  // objMuseumShowcase
+        {173, 328, 248, 1, 1, 101718, 0x010B0150},  // objMuseumShowcase
+        {173, 344, 264, 1, 1, 101719, 0x010B0240},  // objMuseumShowcase
+        {173, 360, 264, 1, 1, 101720, 0x010B0330},  // objMuseumShowcase
+        {173, 72, 168, 1, 1, 101721, 0x010B0420},  // objMuseumShowcase
+        {173, 88, 168, 1, 1, 101722, 0x010B0510},  // objMuseumShowcase
+        {173, 88, 120, 1, 1, 101723, 0x010B0600},  // objMuseumShowcase
+        {173, 40, 168, 1, 1, 101724, 0x010B06F0},  // objMuseumShowcase
+        {173, 40, 120, 1, 1, 101725, 0x010B07E0},  // objMuseumShowcase
+        {173, 136, 120, 1, 1, 101726, 0x010B08D0},  // objMuseumShowcase
+        {173, 152, 120, 1, 1, 101727, 0x010B09C0},  // objMuseumShowcase
+        {173, 168, 120, 1, 1, 101728, 0x010B0AB0},  // objMuseumShowcase
+        {173, 184, 120, 1, 1, 101729, 0x010B0BA0},  // objMuseumShowcase
+        {173, 136, 136, 1, 1, 101730, 0x010B0C90},  // objMuseumShowcase
+        {173, 184, 136, 1, 1, 101731, 0x010B0D80},  // objMuseumShowcase
+        {173, 136, 152, 1, 1, 101732, 0x010B0E70},  // objMuseumShowcase
+        {173, 184, 152, 1, 1, 101733, 0x010B0F60},  // objMuseumShowcase
+        {173, 152, 168, 1, 1, 101734, 0x010B1050},  // objMuseumShowcase
+        {173, 232, 120, 1, 1, 101735, 0x010B1140},  // objMuseumShowcase
+        {173, 232, 136, 1, 1, 101736, 0x010B1230},  // objMuseumShowcase
+        {173, 232, 152, 1, 1, 101737, 0x010B1320},  // objMuseumShowcase
+        {173, 232, 168, 1, 1, 101738, 0x010B1410},  // objMuseumShowcase
+        {173, 248, 168, 1, 1, 101739, 0x010B1500},  // objMuseumShowcase
+        {173, 264, 168, 1, 1, 101740, 0x010B15F0},  // objMuseumShowcase
+        {173, 280, 168, 1, 1, 101741, 0x010B16E0},  // objMuseumShowcase
+        {173, 280, 152, 1, 1, 101742, 0x010B17D0},  // objMuseumShowcase
+        {173, 280, 136, 1, 1, 101743, 0x010B18C0},  // objMuseumShowcase
+        {173, 280, 120, 1, 1, 101744, 0x010B19B0},  // objMuseumShowcase
+        {173, 344, 120, 1, 1, 101745, 0x010B1AA0},  // objMuseumShowcase
+        {173, 360, 120, 1, 1, 101746, 0x010B1B90},  // objMuseumShowcase
+        {173, 376, 120, 1, 1, 101747, 0x010B1C80},  // objMuseumShowcase
+        {173, 376, 136, 1, 1, 101748, 0x010B1D70},  // objMuseumShowcase
+        {173, 376, 152, 1, 1, 101749, 0x010B1E60},  // objMuseumShowcase
+        {173, 328, 136, 1, 1, 101750, 0x010B1F50},  // objMuseumShowcase
+        {173, 328, 152, 1, 1, 101751, 0x010B2040},  // objMuseumShowcase
+        {173, 328, 168, 1, 1, 101752, 0x010B2130},  // objMuseumShowcase
+        {173, 344, 168, 1, 1, 101753, 0x010B2220},  // objMuseumShowcase
+        {173, 360, 168, 1, 1, 101754, 0x010B2310},  // objMuseumShowcase
     }};
 
 const Plan* const kPlans[] = {&krmWizardTowerInterior, &krmDruidTreeInterior, &krmMuseum};

@@ -1,5 +1,5 @@
-// World progress kept in global ds_lists is shared (SPEC: museum, global progress): each side writes the list
-// out (ds_list_write) once a second and sends it when it changed; the peer reads it in (ds_list_read).
+// World progress kept in global ds_grids is shared (SPEC: museum, global progress): each side reads the grid once a
+// second and sends it when it changed; the peer keeps the larger value of each cell.
 // The museum's donations (global.museumBundles) for now; donating there takes two of an item.
 #pragma once
 

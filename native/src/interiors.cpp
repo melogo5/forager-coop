@@ -37,6 +37,8 @@ struct Tiles {
 struct Placed {
     int object;
     double x, y, xscale, yscale;
+    int roomId;              // its id in the room (what other instances' creation code refers to it by)
+    uint32_t creationCode;   // its instance creation code (gml_RoomCC_*), 0 if none
 };
 struct Plan {
     int room;
@@ -55,6 +57,7 @@ constexpr int kRoomGame = yyc::kRoomGame;
 // nothing of the world.
 constexpr double kOriginX = 1700, kOriginY = 300;
 constexpr int kSlotSpawnPlayerX = 0x7E6, kSlotSpawnPlayerY = 0x7E7;  // globals: where the world puts the player
+constexpr int kSlotOwner = yyc::slot::owner;
 // Globals with the camera's bounds, as mobs.cpp reads them (decompiled/code/var_slots.tsv).
 constexpr int kSlotCameraBottom = 0xE0, kSlotCameraLeft = 0xE1, kSlotCameraRight = 0xE2, kSlotCameraTop = 0xE3;
 constexpr uint32_t kScriptWaterCollision = yyc::script::WaterCollision;
@@ -191,6 +194,27 @@ double GlobalReal(int slot) {
     return value != nullptr ? yyc::ToReal(*value) : 0;
 }
 
+// The room runs each instance's creation code right after its Create: the museum's bundles get their number, name
+// and items there, the showcases the item and bundle (`owner`) they show - without it every shelf stood empty
+// (playtest 6). An `owner` set there is the room's id of its bundle, so it is turned into the id the bundle has here.
+void RunCreationCode(const std::vector<std::pair<const Placed*, int>>& coded) {
+    for (const auto& [placed, id] : coded) {
+        yyc::CInstance* instance = yyc::FindInstance(id);
+        if (instance != nullptr) yyc::At<yyc::EventFn>(placed->creationCode)(instance, instance);
+    }
+    for (const auto& [placed, id] : coded) {
+        yyc::RValue owner{};
+        if (!yyc::GetVar(id, kSlotOwner, &owner) || !yyc::IsNumber(owner)) continue;
+        const int roomId = static_cast<int>(yyc::ToReal(owner));
+        for (const auto& [other, otherId] : coded) {
+            if (other->roomId != roomId) continue;
+            yyc::RValue here = yyc::Real(otherId);
+            yyc::SetVar(id, kSlotOwner, &here);
+            break;
+        }
+    }
+}
+
 // The interior `plan` past the world's edge, and the player in it: the world room stays, so the world goes on.
 // The interior's layers and instances past the world's edge.
 void Build(yyc::CInstance* self, const Plan& plan) {
@@ -220,6 +244,7 @@ void Build(yyc::CInstance* self, const Plan& plan) {
         }
     }
     g_building = true;
+    std::vector<std::pair<const Placed*, int>> coded;  // instances with creation code, and their ids here
     for (const Placed& p : plan.instances) {
         const int id = static_cast<int>(Real("instance_create_depth", {kOriginX + p.x, kOriginY + p.y, 0, double(p.object)}));
         yyc::CInstance* instance = yyc::FindInstance(id);
@@ -227,7 +252,9 @@ void Build(yyc::CInstance* self, const Plan& plan) {
         yyc::SetBuiltinReal(instance, yyc::va::YYVar_image_xscale, p.xscale);
         yyc::SetBuiltinReal(instance, yyc::va::YYVar_image_yscale, p.yscale);
         g_built.push_back(id);
+        if (p.creationCode != 0) coded.emplace_back(&p, id);
     }
+    RunCreationCode(coded);
     g_building = false;
 }
 

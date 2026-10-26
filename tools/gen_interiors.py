@@ -17,6 +17,18 @@ for line in (root / 'decompiled/data/sprites.tsv').read_text(encoding='utf-8').s
         sprites[cols[1]] = int(cols[0])
 
 
+# Instance creation code (gml_RoomCC_<room>_<n>_Create): YYC keeps none in data.win, so the dump cannot say which
+# instance has some. These objects have it, the n-th of them in room order getting code n (checked for the museum:
+# each showcase's code sets `owner` to the bundle next to it). The wizard tower's one code (the dungeon entry's
+# secretRoom) is left out: dungeons are off in coop.
+creation_objects = {'rmMuseum': ('objMuseumBundle', 'objMuseumShowcase')}
+creation_code = {}
+for line in (root / 'decompiled/data/room_creation_code.tsv').read_text(encoding='utf-8').splitlines():
+    m = re.match(r'gml_RoomCC_(\w+?)_(\d+)_Create\t(0x[0-9A-F]+)', line)
+    if m:
+        creation_code.setdefault(m[1], {})[int(m[2])] = m[3]
+
+
 def pair(text):  # "(1,25, 6)" -> (1.25, 6.0): the dump writes decimal commas
     a, b = text.strip('()').split(', ')
     return float(a.replace(',', '.')), float(b.replace(',', '.'))
@@ -33,21 +45,25 @@ for line in dump:
     if line.startswith('room '):
         m = re.match(r'room (\d+) (\S+) (\d+)x(\d+)', line)
         room = {'index': int(m[1]), 'name': m[2], 'width': int(m[3]), 'height': int(m[4]), 'spawn': None,
-                'instances': [], 'tiles': [], 'pictures': [], 'backgrounds': []}
+                'instances': [], 'coded': 0, 'tiles': [], 'pictures': [], 'backgrounds': []}
         rooms.append(room)
         continue
     m = re.match(r"  layer '(.*)' depth (-?\d+) type (\w+)", line)
     if m:
         depth = int(m[2])
         continue
-    m = re.match(r'    instance (\w+) at (\(.*?\)) scale (\(.*?\))', line)
+    m = re.match(r'    instance (\w+) at (\(.*?\)) scale (\(.*?\)).* id (\d+)$', line)
     if m:
         x, y = pair(m[2])
         sx, sy = pair(m[3])
         if m[1] == 'objPlayer':
             room['spawn'] = (x, y)
         else:
-            room['instances'].append((objects[m[1]], m[1], x, y, sx, sy))
+            code = '0'
+            if m[1] in creation_objects.get(room['name'], ()):
+                code = creation_code[room['name']][room['coded']]
+                room['coded'] += 1
+            room['instances'].append((objects[m[1]], m[1], x, y, sx, sy, int(m[4]), code))
         continue
     m = re.match(r'    tiles: tileset (\d+) (\w+) tile (\d+)x(\d+) .*; (\d+)x(\d+) cells', line)
     if m:
@@ -82,8 +98,9 @@ for r in rooms:
     out.append('    {' + ', '.join(f'{{{d}, {s}, {x:g}, {y:g}}}' for d, s, _, x, y in r['pictures']) + '},')
     out.append('    {' + ', '.join(f"{{{t['depth']}, {t['tileset']}, {t['cols']}, {t['rows']}, k{r['name']}Tiles{t['depth']}}}" for t in r['tiles']) + '},')
     out.append('    {')
-    for o, name, x, y, sx, sy in r['instances']:
-        out.append(f'        {{{o}, {x:g}, {y:g}, {sx:g}, {sy:g}}},  // {name}')
+    assert r['coded'] == len(creation_code.get(r['name'], {})) or r['name'] not in creation_objects, r['name']
+    for o, name, x, y, sx, sy, room_id, code in r['instances']:
+        out.append(f'        {{{o}, {x:g}, {y:g}, {sx:g}, {sy:g}, {room_id}, {code}}},  // {name}')
     out.append('    }};')
     out.append('')
 out.append('const Plan* const kPlans[] = {' + ', '.join(f"&k{r['name']}" for r in rooms) + '};')
