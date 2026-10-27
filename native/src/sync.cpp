@@ -48,6 +48,8 @@ constexpr int kSlotHpWhite = 0x577;
 constexpr int kSlotDmg = 0x197;  // objPlayer.dmg: what a hit takes off an object (parObject Other_10)
 constexpr int kSlotStack = 0x80E;    // a drop's `stack`: how many of its item it gives
 constexpr float kMaxStack = 10000;  // sanity bound for a stack from the network
+constexpr int kObjSkeleton = 30;
+constexpr int kSlotBigSkeleton = 0xB3;
 
 #pragma pack(push, 1)
 struct ObjectMsg {
@@ -62,6 +64,8 @@ struct ObjectMsg {
     // kSpawn of a drop: its `stack`, 0 = keep. DropItem adds a new drop to one lying near (stack + 1) - all the
     // more with lighthouses and amulets; the guest's copy stayed at 1 (PLAYTEST8.md #14, #15).
     float stack;
+    // kSpawn of a skeleton: its bigSkeleton (a bone pile's, PLAYTEST8.md #4); the guest's replica was small.
+    float big;
 };
 struct HpMsg {
     int32_t id;  // the host's instance id
@@ -204,6 +208,7 @@ ObjectMsg MakeObjectMsg(MessageType type, const InstanceInfo& info, int id, int3
             msg.image = static_cast<float>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_image_index));
         }
         if (item != kNoItem) msg.stack = ReadVar(id, kSlotStack);
+        if (info.object == kObjSkeleton) msg.big = ReadVar(id, kSlotBigSkeleton);
     }
     return msg;
 }
@@ -815,10 +820,19 @@ int CreateReplica(yyc::CInstance* self, int hostId, int object, double x, double
     return id;
 }
 
+void ApplyBig(int local, const ObjectMsg& msg) {
+    if (msg.object != kObjSkeleton || !(msg.big > 0)) return;
+    yyc::RValue big = yyc::Real(msg.big);
+    yyc::SetVar(local, kSlotBigSkeleton, &big);
+}
+
 void ApplySpawn(yyc::CInstance* self, const ObjectMsg& msg) {
     // An enemy update may have created the replica already (it can overtake the spawn message).
     const auto known = g_hostToLocal.find(msg.id);
-    if (known != g_hostToLocal.end() && yyc::FindInstance(known->second) != nullptr) return;
+    if (known != g_hostToLocal.end() && yyc::FindInstance(known->second) != nullptr) {
+        ApplyBig(known->second, msg);
+        return;
+    }
     const int id = CreateReplica(self, msg.id, msg.object, msg.x, msg.y, msg.depth);
     if (id != 0 && msg.item != kNoItem) {
         yyc::RValue item = yyc::Real(msg.item);
@@ -828,6 +842,7 @@ void ApplySpawn(yyc::CInstance* self, const ObjectMsg& msg) {
             yyc::SetVar(id, kSlotStack, &stack);
         }
     }
+    if (id != 0) ApplyBig(id, msg);
     if (id != 0 && msg.sprite >= 0) {
         if (yyc::CInstance* replica = yyc::FindInstance(id)) {
             yyc::SetBuiltinReal(replica, yyc::va::YYVar_sprite_index, msg.sprite);
