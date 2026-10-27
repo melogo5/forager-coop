@@ -53,9 +53,11 @@ struct MobState {
     float imageIndex;
     float xscale;
     float hp;  // so the replica's health bar shows the guest's hits (which land on the host)
+    float alpha;  // a bone pile's skeleton fades in (Create: 0, its step raises it): replicas stayed unseen
 };
 #pragma pack(pop)
 constexpr int kSlotHp = yyc::slot::hp;
+constexpr uint32_t kYYVarImageAlpha = 0x01AD8790;  // decompiled/code/yyvar_map.tsv
 
 bool (*g_isHost)() = nullptr;
 bool (*g_isGuest)() = nullptr;
@@ -355,6 +357,7 @@ MobState Capture(yyc::CInstance* mob, int id) {
     s.sprite = static_cast<int32_t>(yyc::GetBuiltinReal(mob, yyc::va::YYVar_sprite_index));
     s.imageIndex = static_cast<float>(yyc::GetBuiltinReal(mob, yyc::va::YYVar_image_index));
     s.xscale = static_cast<float>(yyc::GetBuiltinReal(mob, yyc::va::YYVar_image_xscale));
+    s.alpha = static_cast<float>(yyc::GetBuiltinReal(mob, kYYVarImageAlpha));
     yyc::RValue hp{};
     yyc::GetVar(id, kSlotHp, &hp);
     s.hp = static_cast<float>(yyc::ToReal(hp));
@@ -390,6 +393,7 @@ void Follow(yyc::CInstance* mob, const MobState& s) {
     yyc::SetBuiltinReal(mob, yyc::va::YYVar_sprite_index, s.sprite);
     yyc::SetBuiltinReal(mob, yyc::va::YYVar_image_index, s.imageIndex);
     yyc::SetBuiltinReal(mob, yyc::va::YYVar_image_xscale, s.xscale);
+    if (s.alpha >= 0 && s.alpha <= 1) yyc::SetBuiltinReal(mob, kYYVarImageAlpha, s.alpha);
     yyc::RValue hp = yyc::Real(s.hp);
     yyc::SetVar(static_cast<int>(yyc::GetBuiltinReal(mob, yyc::va::YYVar_id)), kSlotHp, &hp);
 }

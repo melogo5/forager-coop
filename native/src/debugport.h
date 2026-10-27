@@ -19,6 +19,7 @@
 //   script <hex address> [n...]  -> a GML script's result (address from decompiled/code/index.tsv)
 //   dump                         -> "N: object x y; ..." every world object, asleep ones too (world-diff.ps1)
 //   obj <id>                     -> "object name at (x, y) [asleep]": what an instance id is
+//   look <id>                    -> sprite, image, alpha, visible, xscale, depth: how it is drawn
 //   sleepcheck                   -> "N: id; ..." instances asleep but on no sleep list (being woken)
 //   cellcheck                    -> "N: id; ..." cell sleep-list entries whose instance is gone (ProcessCulls crash)
 // It answers in the world and in the menus (there `player` is the menu object).

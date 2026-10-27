@@ -243,6 +243,18 @@ std::string Answer(yyc::CInstance* self, const std::string& line) {
         return std::to_string(count) + ":" + out.str();
     }
     if (c == "cellcheck") return mobs::DeadCellEntries(self);
+    if (c == "look" && w.size() == 2) {  // how an instance is drawn: sprite, frame, alpha, visible, xscale, depth
+        yyc::CInstance* instance = yyc::FindInstance(Slot(w[1]));
+        if (instance == nullptr) return "no such instance";
+        constexpr uint32_t kImageAlpha = 0x01AD8790, kVisible = 0x01AD8C80;  // decompiled/code/yyvar_map.tsv
+        char text[160] = {};
+        snprintf(text, sizeof(text), "sprite %.0f image %.2f alpha %.2f visible %.0f xscale %.2f depth %.0f",
+                 yyc::GetBuiltinReal(instance, yyc::va::YYVar_sprite_index),
+                 yyc::GetBuiltinReal(instance, yyc::va::YYVar_image_index), yyc::GetBuiltinReal(instance, kImageAlpha),
+                 yyc::GetBuiltinReal(instance, kVisible), yyc::GetBuiltinReal(instance, yyc::va::YYVar_image_xscale),
+                 yyc::GetBuiltinReal(instance, yyc::va::YYVar_depth));
+        return text;
+    }
     if (c == "obj" && w.size() == 2) {  // what an instance id is: object, name, place, asleep or not
         yyc::CInstance* instance = yyc::FindInstance(Slot(w[1]));
         if (instance == nullptr) return "no such instance";
