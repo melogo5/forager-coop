@@ -30,6 +30,7 @@ enum MessageType : uint8_t {
     kCharacter = 31,      // host -> guest: u8 hasData, stored Data.cin
     kCharacterSave = 32,  // guest -> host: the guest's Data.cin
     kGearState = 33,      // guest -> host: the guest's owned gear, a float per category (gearCurrent)
+    kBuffState = 37,      // guest -> host: the guest's buff[type, k] (ReadBuffs)
 };
 
 constexpr uint32_t kScriptDeserializeCharacterChunk = 0x005BC8F0;
@@ -42,6 +43,9 @@ constexpr char kPlayerCreate[] = "gml_Object_objPlayer_Create_0";
 constexpr unsigned kGearEverySteps = 60;        // 1 s: look for a change
 constexpr unsigned kGearResendSteps = 600;      // 10 s: sent anyway (a puppet made again starts with base gear)
 constexpr size_t kMaxGearCategories = 128;
+constexpr int kSlotBuff = 0xD2;  // objPlayer.buff[type, k]: HasBuff reads buff[type, 0]
+constexpr int kMaxBuffRows = 64;
+constexpr int kBuffColumns = 4;
 constexpr uint32_t kScriptCinderLoad = 0x005CE0D0;    // CinderLoad(buffer) -> cinder (chunk map)
 constexpr uint32_t kScriptCinderDelete = 0x005C9BD0;  // CinderDelete(cinder)
 constexpr int kSlotSaveFile = yyc::slot::saveFile;
@@ -355,9 +359,81 @@ void ApplyGuestGear(const net::Message& message) {
     if (changed > 0) Log("character: guest %u's puppet now has its gear (%d categories changed)", message.from, changed);
 }
 
+// The player's buff[type, k] (shrines, potions, boons): rows, then each row's values; absent ones are NaN.
+std::vector<float> ReadBuffs(yyc::CInstance* player, int id) {
+    yyc::RValue buff{};
+    std::vector<float> out;
+    if (!yyc::GetVar(id, kSlotBuff, &buff) || (buff.kind & yyc::kKindMask) != yyc::kArray) {
+        yyc::Free(&buff);
+        return out;
+    }
+    yyc::RValue height{};
+    yyc::CallBuiltin("array_height_2d", player, 1, &buff, &height);
+    const int rows = (std::min)(static_cast<int>(yyc::ToReal(height)), kMaxBuffRows);
+    yyc::Free(&height);
+    out.push_back(static_cast<float>(rows));
+    for (int r = 0; r < rows; ++r) {
+        yyc::RValue args[2] = {buff, yyc::Real(r)};
+        yyc::RValue width{};
+        yyc::CallBuiltin("array_length_2d", player, 2, args, &width);
+        const int cols = static_cast<int>(yyc::ToReal(width));
+        yyc::Free(&width);
+        for (int c = 0; c < kBuffColumns; ++c) {
+            yyc::RValue value{};
+            const bool known = c < cols && yyc::GetVarAt(id, kSlotBuff, r * yyc::kArray2dStride + c, &value) &&
+                               yyc::IsNumber(value);
+            out.push_back(known ? static_cast<float>(yyc::ToReal(value)) : NAN);
+            yyc::Free(&value);
+        }
+    }
+    yyc::Free(&buff);
+    return out;
+}
+
+// Playtest 8 #10: HasBuff asks PlayerFind().buff - for the guest's drops (made by the host) its puppet's.
+void SendOwnBuffs(yyc::CInstance* localPlayer) {
+    static std::vector<float> sent;
+    static unsigned steps = 0;
+    if (++steps % kGearEverySteps != 0) return;
+    const int id = static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_id));
+    const std::vector<float> buffs = ReadBuffs(localPlayer, id);
+    const auto same = [](const std::vector<float>& a, const std::vector<float>& b) {
+        return a.size() == b.size() && memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0;  // NaN-safe
+    };
+    if (buffs.empty() || (same(buffs, sent) && steps % kGearResendSteps != 0)) return;
+    if (net::Send(kBuffState, buffs.data(), buffs.size() * sizeof(float))) sent = buffs;
+}
+
+void ApplyGuestBuffs(const net::Message& message) {
+    yyc::CInstance* puppet = puppet::Instance(message.from);
+    const size_t count = message.payload.size() / sizeof(float);
+    if (puppet == nullptr || count == 0 || message.payload.size() % sizeof(float) != 0) return;
+    std::vector<float> values(count);
+    memcpy(values.data(), message.payload.data(), message.payload.size());
+    const int rows = static_cast<int>(values[0]);
+    if (rows < 0 || rows > kMaxBuffRows || count != 1 + static_cast<size_t>(rows) * kBuffColumns) return;
+    const int id = static_cast<int>(yyc::GetBuiltinReal(puppet, yyc::va::YYVar_id));
+    int active = 0;
+    for (int r = 0; r < rows; ++r) {
+        for (int c = 0; c < kBuffColumns; ++c) {
+            const float value = values[1 + r * kBuffColumns + c];
+            if (!std::isfinite(value)) continue;
+            yyc::RValue v = yyc::Real(value);
+            yyc::SetVarAt(id, kSlotBuff, r * yyc::kArray2dStride + c, &v);
+            if (c == 0 && value != 0) ++active;
+        }
+    }
+    static int lastActive = -1;
+    if (active != lastActive) Log("character: guest %u's puppet carries its buffs (%d active)", message.from, active);
+    lastActive = active;
+}
+
 // Every 15 s: save into the temporary slot, then upload its Data.cin.
 void GuestTick(yyc::CInstance* localPlayer) {
-    if (net::IsConnected()) SendOwnGear(localPlayer);
+    if (net::IsConnected()) {
+        SendOwnGear(localPlayer);
+        SendOwnBuffs(localPlayer);
+    }
     if (g_settle > 0 && --g_settle == 0) {
         GuestUploadNow();
         return;
@@ -370,6 +446,10 @@ void GuestTick(yyc::CInstance* localPlayer) {
 bool HostHandle(const net::Message& message, yyc::CInstance* localPlayer, bool* guestIntroduced) {
     if (message.type == kGearState) {
         ApplyGuestGear(message);
+        return true;
+    }
+    if (message.type == kBuffState) {
+        ApplyGuestBuffs(message);
         return true;
     }
     if (message.type == kGuestHello) {
