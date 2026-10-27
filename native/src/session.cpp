@@ -32,6 +32,7 @@
 #include "interiors.h"
 #include "look.h"
 #include "traps.h"
+#include "bombs.h"
 #include "familiars.h"
 #include "land.h"
 #include "mobs.h"
@@ -335,7 +336,7 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             progress::Handle(message, localPlayer) || quests::Handle(message, localPlayer) ||
             stations::Handle(message, localPlayer) || skills::Handle(message, localPlayer) || traps::Handle(message, localPlayer) ||
             banks::Handle(message, localPlayer) || reconcile::Handle(message, localPlayer) || chests::Handle(message, localPlayer) ||
-            familiars::Handle(message, localPlayer)) {
+            familiars::Handle(message, localPlayer) || bombs::Handle(message, localPlayer)) {
             continue;
         }
         bool guestIntroduced = false;
@@ -732,6 +733,7 @@ void Leave() {
     g_remotes.clear();
     character::Reset();
     familiars::Reset();
+    bombs::Reset();
     world::Reset();
     sync::Reset();
     mobs::Reset();
@@ -781,7 +783,7 @@ bool SessionInstall() {
     if (!sync::InstallHooks(isHost, isGuest) || !mobs::InstallHooks(isHost, isGuest) ||
         !character::InstallHooks(isGuest) || !storage::InstallHooks() || !land::InstallHooks(isHost, isGuest) ||
         !progress::InstallHooks() || !stations::InstallHooks() || !chests::InstallHooks(isHost) ||
-        !traps::InstallHooks(isHost, isGuest) || !banks::InstallHooks(isHost, isGuest) || !skills::InstallHooks()) {
+        !traps::InstallHooks(isHost, isGuest) || !bombs::InstallHooks() || !banks::InstallHooks(isHost, isGuest) || !skills::InstallHooks()) {
         return false;
     }
     Role role = Role::kNone;
