@@ -31,6 +31,12 @@ void GuestTick(yyc::CInstance* localPlayer);
 // the world (default 8), and back out 20 s later.
 void DebugTick(yyc::CInstance* localPlayer, bool isHost);
 
+// The session's room changed to `room` (the local player is there now): remembers where a dungeon begins.
+void OnRoomEntered(yyc::CInstance* localPlayer, int room);
+
+// Where a player who died in a dungeon gets back up (where it came in); false outside dungeons.
+bool RespawnPoint(yyc::CInstance* localPlayer, double* x, double* y);
+
 // Forgets the last session.
 void Reset();
 

@@ -37,6 +37,8 @@ bool IsGuest() { return g_isGuest != nullptr && g_isGuest(); }
 RoomMsg g_lastGo{};         // guest: the host's last "into room N"
 unsigned g_waitSteps = 0;   // guest: steps outside the host's room
 constexpr unsigned kRetrySteps = 240;  // 4 s: a fade takes about one
+double g_entryX = 0, g_entryY = 0;  // where the player came into the current dungeon
+int g_entryRoom = -1;
 int g_following = -1;      // guest: the room the host told us to go to, allowed through once
 int g_guestRoom = kRoomGame;  // guest: the host's room as last told
 
@@ -189,7 +191,22 @@ void DebugTick(yyc::CInstance* localPlayer, bool isHost) {
     }
 }
 
+void OnRoomEntered(yyc::CInstance* localPlayer, int room) {
+    if (!IsDungeon(room)) return;
+    g_entryRoom = room;
+    g_entryX = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_x);
+    g_entryY = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_y);
+}
+
+bool RespawnPoint(yyc::CInstance* localPlayer, double* x, double* y) {
+    if (!IsDungeon(CurrentRoom(localPlayer)) || CurrentRoom(localPlayer) != g_entryRoom) return false;
+    *x = g_entryX;
+    *y = g_entryY;
+    return true;
+}
+
 void Reset() {
+    g_entryRoom = -1;
     g_following = -1;
     g_waitSteps = 0;
     g_guestRoom = kRoomGame;

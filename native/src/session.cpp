@@ -499,9 +499,12 @@ void RespawnIfDead(yyc::CInstance* localPlayer) {
     yyc::SetVar(id, kSlotHp, &full);
     yyc::RValue invulnerable = yyc::Real(kRespawnInvulSteps);
     yyc::SetVar(id, kSlotInvulFrames, &invulnerable);
-    yyc::SetBuiltinReal(localPlayer, yyc::va::YYVar_x, kRespawnX);
-    yyc::SetBuiltinReal(localPlayer, yyc::va::YYVar_y, kRespawnY);
-    Log("session: died - respawned on the starting island with %.0f hp", full.real);
+    double x = kRespawnX, y = kRespawnY;
+    const bool inDungeon = dungeons::RespawnPoint(localPlayer, &x, &y);  // a dungeon room has no starting island
+    yyc::SetBuiltinReal(localPlayer, yyc::va::YYVar_x, x);
+    yyc::SetBuiltinReal(localPlayer, yyc::va::YYVar_y, y);
+    Log("session: died - respawned %s with %.0f hp", inDungeon ? "at the dungeon's way in" : "on the starting island",
+        full.real);
 }
 
 // Forager has no global pause: world objects (enemies, chests, ...) call IsMenuOpen() themselves and
@@ -654,6 +657,7 @@ void Tick(yyc::CInstance* localPlayer) {
             reconcile::Reset();
         }
         g_lastSharedRoom = room;
+        dungeons::OnRoomEntered(localPlayer, room);
     }
     DebugVisitRoom(localPlayer, inWorld);
     skilltab::DebugTick(localPlayer);
