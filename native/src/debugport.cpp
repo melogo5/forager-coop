@@ -243,6 +243,23 @@ std::string Answer(yyc::CInstance* self, const std::string& line) {
         return std::to_string(count) + ":" + out.str();
     }
     if (c == "cellcheck") return mobs::DeadCellEntries(self);
+    if (c == "watermap" && w.size() == 6) {  // '1' water / '0' land per grid point, rows joined by '/'
+        const int x0 = Slot(w[1]), y0 = Slot(w[2]), x1 = Slot(w[3]), y1 = Slot(w[4]), step = Slot(w[5]);
+        if (step < 4 || (x1 - x0) / step > 200 || (y1 - y0) / step > 200) return "too big";
+        std::string map;
+        for (int y = y0; y <= y1; y += step) {
+            for (int x = x0; x <= x1; x += step) {
+                yyc::RValue values[2] = {yyc::Real(x), yyc::Real(y)};
+                yyc::RValue* args[2] = {&values[0], &values[1]};
+                yyc::RValue result{};
+                yyc::At<yyc::ScriptFn>(yyc::script::WaterCollision)(self, self, &result, 2, args);
+                map += yyc::ToReal(result) != 0 ? '1' : '0';
+                yyc::Free(&result);
+            }
+            map += '/';
+        }
+        return map;
+    }
     if (c == "look" && w.size() == 2) {  // how an instance is drawn: sprite, frame, alpha, visible, xscale, depth
         yyc::CInstance* instance = yyc::FindInstance(Slot(w[1]));
         if (instance == nullptr) return "no such instance";

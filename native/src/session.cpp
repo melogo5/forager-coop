@@ -637,6 +637,7 @@ void Tick(yyc::CInstance* localPlayer) {
     if (g_role == Role::kHost) SteamInvites(localPlayer);
     sync::Tick(localPlayer);
     storage::DebugTick(localPlayer);
+    land::Tick(localPlayer);
     land::DebugTick(localPlayer);
     if (g_role == Role::kHost) mobs::HostTick(localPlayer);
     if (g_role == Role::kHost) clock::HostTick(localPlayer);

@@ -11,6 +11,9 @@ namespace coop::land {
 // Creates the hooks (enabled by the caller).
 bool InstallHooks(bool (*isHost)(), bool (*isGuest)());
 
+// Game thread, every local player step: the host's land map goes out a while after a purchase.
+void Tick(yyc::CInstance* localPlayer);
+
 // Game thread, every local player step (testing aid, see land.cpp).
 void DebugTick(yyc::CInstance* localPlayer);
 

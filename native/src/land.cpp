@@ -19,6 +19,7 @@ namespace {
 
 constexpr uint8_t kLand = 50;      // host -> guest: the host bought an island
 constexpr uint8_t kLandfill = 52;  // either way: LandfillMsg
+constexpr uint8_t kLandMap = 54;   // host -> guest: the world's land map after a purchase (MapMsg + rows)
 constexpr uint8_t kDirt = 53;      // either way: x, y (f64), then CreateDirt's third argument (see SendDirt)
 constexpr uint32_t kScriptSpawnLand = 0x00763750;  // SpawnLand(x, y, biome): x, y of the sale sign
 constexpr int kObjPurchaseLand = 229;              // the sign standing on an island for sale
@@ -60,6 +61,12 @@ yyc::EventFn g_origSignStep = nullptr;
 bool (*g_isHost)() = nullptr;
 bool (*g_isGuest)() = nullptr;
 int g_applying = 0;
+// PLAYTEST8 #1: an island bought with a guest in the game came out a little different there although SpawnLand ran
+// with the same seed (the objects it makes draw random numbers in their Create too, not alike at both). A while after
+// a purchase the host sends the land map of the whole world; the guest puts land and water right where they differ.
+constexpr unsigned kMapAfterSteps = 120;
+constexpr int kMapStart = 8, kMapStep = 16, kMapEnd = 1336;  // tile centres over rmGame (1344 x 1344)
+unsigned g_mapIn = 0;  // host: steps until the land map goes out (0: none due)
 
 bool CalledFromPurchase() {
     const StackFrame* top = yyc::TopFrame();
@@ -78,6 +85,7 @@ yyc::RValue* __cdecl SpawnLandHook(yyc::CInstance* self, yyc::CInstance* other, 
     yyc::RValue* r = g_origSpawnLand(self, other, result, argc, args);
     CallReal(self, "randomize", {});
     net::Send(kLand, &msg, sizeof(msg));
+    g_mapIn = kMapAfterSteps;
     Log("land: bought island at (%.0f, %.0f), biome %.0f", msg.x, msg.y, msg.biome);
     return r;
 }
@@ -132,6 +140,7 @@ void BuildAndShare(yyc::CInstance* localPlayer, LandMsg msg, const char* buyer) 
     yyc::Free(&result);
     if (sign != nullptr) CallReal(localPlayer, "instance_destroy", {double(signId)});
     net::Send(kLand, &msg, sizeof(msg));
+    g_mapIn = kMapAfterSteps;
     Log("land: %s bought the island at (%.0f, %.0f), biome %.0f", buyer, msg.x, msg.y, msg.biome);
 }
 
@@ -251,6 +260,30 @@ void ApplyLandfill(yyc::CInstance* localPlayer, net::PeerId from, const Landfill
 }
 
 
+// Land ('0') or water ('1') at every tile centre, row by row.
+std::string LandMap(yyc::CInstance* self) {
+    std::string map;
+    for (int y = kMapStart; y <= kMapEnd; y += kMapStep) {
+        for (int x = kMapStart; x <= kMapEnd; x += kMapStep) map += IsWater(self, x, y) ? '1' : '0';
+    }
+    return map;
+}
+
+void ApplyLandMap(yyc::CInstance* localPlayer, const std::vector<uint8_t>& payload) {
+    const std::string mine = LandMap(localPlayer);
+    if (payload.size() != mine.size()) return;
+    const int columns = (kMapEnd - kMapStart) / kMapStep + 1;
+    int fixed = 0;
+    for (size_t i = 0; i < mine.size(); ++i) {
+        if (payload[i] == static_cast<uint8_t>(mine[i])) continue;
+        const LandfillMsg msg{double(kMapStart + kMapStep * (int(i) % columns)),
+                              double(kMapStart + kMapStep * (int(i) / columns)), payload[i] == '1' ? 1.0 : 0.0};
+        ApplyLandfill(localPlayer, net::kHostPeer, msg);
+        ++fixed;
+    }
+    Log("land: the host's land map - %d tiles put right", fixed);
+}
+
 // Testing aid: COOP_DEBUG_LANDFILL=1 fills the nearest water tile (16 px grid, up to 10 tiles away) ~5 s in.
 void DebugLandfill(yyc::CInstance* localPlayer) {
     static const bool enabled = GetEnvironmentVariableA("COOP_DEBUG_LANDFILL", nullptr, 0) > 0;
@@ -336,6 +369,13 @@ bool InstallHooks(bool (*isHost)(), bool (*isGuest)()) {
     return ok;
 }
 
+void Tick(yyc::CInstance* localPlayer) {
+    if (g_mapIn == 0 || --g_mapIn != 0 || !net::IsConnected()) return;
+    const std::string map = LandMap(localPlayer);
+    net::Send(kLandMap, map.data(), map.size());
+    Log("land: the land map sent (%zu tiles)", map.size());
+}
+
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     if (message.type == kDirt) {
         ApplyDirt(localPlayer, message.from, message.payload);
@@ -347,6 +387,10 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
             memcpy(&msg, message.payload.data(), sizeof(msg));
             if (std::isfinite(msg.x) && std::isfinite(msg.y)) ApplyLandfill(localPlayer, message.from, msg);
         }
+        return true;
+    }
+    if (message.type == kLandMap) {
+        if (g_isGuest != nullptr && g_isGuest()) ApplyLandMap(localPlayer, message.payload);
         return true;
     }
     if (message.type != kLand) return false;

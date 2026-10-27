@@ -19,6 +19,16 @@ Start-Sleep 5
 $bought = Select-String -Path $hostLog -Pattern 'land: debug bought the island at \((\d+), (\d+)\)' | Select-Object -First 1
 "HOST=$h GUEST=$g; $(if ($bought) { $bought.Line } else { 'nothing bought' })"
 Check 'the host bought an island' ([bool]$bought)
+# PLAYTEST8 #1: islands bought with a guest in the game came out a little different there. Land vs water on a
+# 16 px grid over the whole world, at both.
+$hostMap = (Ask $h 'watermap 8 8 1336 1336 16').Split('/'); $guestMap = (Ask $g 'watermap 8 8 1336 1336 16').Split('/')
+$landDiff = @()
+for ($r = 0; $r -lt $hostMap.Count; $r++) {
+  for ($c = 0; $c -lt $hostMap[$r].Length; $c++) {
+    if ($hostMap[$r][$c] -ne $guestMap[$r][$c]) { $landDiff += "($(8 + 16 * $c), $(8 + 16 * $r)) host $($hostMap[$r][$c])" }
+  }
+}
+Check "land and water are the same at the guest ($($landDiff.Count) points differ$(if ($landDiff) { ': ' + (($landDiff | Select-Object -First 12) -join '; ') }))" ($landDiff.Count -eq 0)
 # Every chest (all four kinds) of a game, woken up: "object at (x, y)".
 function Chests([int]$game) {
   foreach ($object in 150, 151, 152, 153) {
