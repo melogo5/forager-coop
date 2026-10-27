@@ -2,18 +2,22 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 #include "log.h"
+#include "puppet.h"
 
 namespace coop::dungeons {
 
 namespace {
 
 constexpr uint8_t kGoRoom = 38;   // host -> guests: RoomMsg, everyone into this room (the host is on its way)
-constexpr uint8_t kAskRoom = 39;  // guest -> host: RoomMsg, the guest's way in or out of a dungeon
+constexpr uint8_t kAskRoom = 39;     // guest -> host: RoomMsg, the guest's way in or out of a dungeon
+constexpr uint8_t kLanternLit = 44;  // either way: x, y (float) of a dungeon lantern lit here
 constexpr int kFirstDungeon = 14, kLastDungeon = 21;  // decompiled/data/rooms.tsv
 constexpr int kRoomGame = yyc::kRoomGame;
 constexpr int kObjWorldControl = 3;     // holds currentDungeon (the entrances set it there)
@@ -22,6 +26,12 @@ constexpr int kSlotTarget = 0x852;
 constexpr int kSlotCurrentDungeon = 0x15E;
 constexpr int kSlotSpawnPlayerX = 0x7E6, kSlotSpawnPlayerY = 0x7E7;  // globals: where the world puts the player
 constexpr uint32_t kScriptSaveGame = 0x004FAE80;
+// Dungeon lanterns: lit by a hit (Other_10) or with E (Other_11, lit = 1); the last one lit opens the way on (the
+// lantern's own events check them all). A guest's E stayed its own: the host lit it for the guest, nothing opened.
+constexpr int kObjDungeonLantern = 207;
+constexpr int kSlotLit = 0x610;
+constexpr unsigned kLanternEverySteps = 30;
+constexpr double kLanternMatch = 8;
 
 #pragma pack(push, 1)
 struct RoomMsg {
@@ -39,6 +49,8 @@ unsigned g_waitSteps = 0;   // guest: steps outside the host's room
 constexpr unsigned kRetrySteps = 240;  // 4 s: a fade takes about one
 double g_entryX = 0, g_entryY = 0;  // where the player came into the current dungeon
 int g_entryRoom = -1;
+std::vector<int> g_litHere;  // lanterns lit at the last look
+unsigned g_lanternSteps = 0;
 int g_following = -1;      // guest: the room the host told us to go to, allowed through once
 int g_guestRoom = kRoomGame;  // guest: the host's room as last told
 
@@ -99,6 +111,53 @@ void Go(yyc::CInstance* player, const RoomMsg& msg) {
     }
 }
 
+bool IsLit(int id) {
+    yyc::RValue value{};
+    const bool lit = yyc::GetVar(id, kSlotLit, &value) && yyc::IsNumber(value) && yyc::ToReal(value) != 0;
+    yyc::Free(&value);
+    return lit;
+}
+
+void SendNewlyLit(yyc::CInstance* self) {
+    std::vector<int> lit;
+    const int count = static_cast<int>(yyc::CallReal(self, "instance_number", {double(kObjDungeonLantern)}));
+    for (int i = 0; i < count; ++i) {
+        const int id = static_cast<int>(yyc::CallReal(self, "instance_find", {double(kObjDungeonLantern), double(i)}));
+        if (!IsLit(id)) continue;
+        lit.push_back(id);
+        if (std::find(g_litHere.begin(), g_litHere.end(), id) != g_litHere.end()) continue;
+        yyc::CInstance* lantern = yyc::FindInstance(id);
+        const float xy[2] = {static_cast<float>(yyc::GetBuiltinReal(lantern, yyc::va::YYVar_x)),
+                             static_cast<float>(yyc::GetBuiltinReal(lantern, yyc::va::YYVar_y))};
+        net::Send(kLanternLit, xy, sizeof(xy));
+    }
+    g_litHere = lit;
+}
+
+void ApplyLanternLit(yyc::CInstance* localPlayer, net::PeerId from, float x, float y) {
+    const int count = static_cast<int>(yyc::CallReal(localPlayer, "instance_number", {double(kObjDungeonLantern)}));
+    for (int i = 0; i < count; ++i) {
+        const int id = static_cast<int>(yyc::CallReal(localPlayer, "instance_find", {double(kObjDungeonLantern), double(i)}));
+        yyc::CInstance* lantern = yyc::FindInstance(id);
+        if (lantern == nullptr || IsLit(id)) continue;
+        const double dx = yyc::GetBuiltinReal(lantern, yyc::va::YYVar_x) - x;
+        const double dy = yyc::GetBuiltinReal(lantern, yyc::va::YYVar_y) - y;
+        if (std::sqrt(dx * dx + dy * dy) > kLanternMatch) continue;
+        yyc::CInstance* puppet = puppet::Instance(from);
+        if (!IsGuest() && puppet != nullptr) {
+            puppet::BeginActing(from);  // as the guest: what it opens is the host's world, sent on as usual
+            yyc::PerformEvent(lantern, puppet, yyc::kEvOther, yyc::kEvUser0 + 1);  // Other_11: E
+            puppet::EndActing();
+        } else {
+            yyc::RValue one = yyc::Real(1);
+            yyc::SetVar(id, kSlotLit, &one);
+        }
+        g_litHere.push_back(id);  // not news to send back
+        Log("dungeons: lantern at (%.0f, %.0f) lit by player %u", x, y, from);
+        return;
+    }
+}
+
 }  // namespace
 
 void Install(bool (*isGuest)()) { g_isGuest = isGuest; }
@@ -132,6 +191,14 @@ int SharedRoom(yyc::CInstance* localPlayer) {
 }
 
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer, bool* stop) {
+    if (message.type == kLanternLit) {
+        float xy[2] = {};
+        if (message.payload.size() == sizeof(xy)) {
+            memcpy(xy, message.payload.data(), sizeof(xy));
+            if (std::isfinite(xy[0]) && std::isfinite(xy[1])) ApplyLanternLit(localPlayer, message.from, xy[0], xy[1]);
+        }
+        return true;
+    }
     if (message.type != kGoRoom && message.type != kAskRoom) return false;
     if (message.payload.size() != sizeof(RoomMsg)) return true;
     RoomMsg msg{};
@@ -157,6 +224,11 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer, bool* stop
         *stop = true;  // what comes after it is news of that room
     }
     return true;
+}
+
+void Tick(yyc::CInstance* localPlayer) {
+    if (!IsDungeon(CurrentRoom(localPlayer)) || ++g_lanternSteps % kLanternEverySteps != 0) return;
+    SendNewlyLit(localPlayer);
 }
 
 void GuestTick(yyc::CInstance* localPlayer) {
@@ -192,6 +264,12 @@ void DebugTick(yyc::CInstance* localPlayer, bool isHost) {
 }
 
 void OnRoomEntered(yyc::CInstance* localPlayer, int room) {
+    g_litHere.clear();  // what this room starts with is the same for everyone: lanterns lit from here on are news
+    const int count = static_cast<int>(yyc::CallReal(localPlayer, "instance_number", {double(kObjDungeonLantern)}));
+    for (int i = 0; i < count; ++i) {
+        const int id = static_cast<int>(yyc::CallReal(localPlayer, "instance_find", {double(kObjDungeonLantern), double(i)}));
+        if (IsLit(id)) g_litHere.push_back(id);
+    }
     if (!IsDungeon(room)) return;
     g_entryRoom = room;
     g_entryX = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_x);

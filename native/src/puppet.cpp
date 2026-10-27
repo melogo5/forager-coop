@@ -69,7 +69,9 @@ struct Puppet {
 
 LocalStepFn g_onLocalStep = nullptr;
 bool g_holdLocal = false;
-std::vector<const yyc::CInstance*> g_inert;  // objPlayers whose events do not run (SetInert)
+// objPlayers whose events do not run (SetInert), with their ids: a pointer alone outlives its instance - the next
+// objPlayer made in a new room (a dungeon) can get the same address and was taken for a puppet (no events: frozen).
+std::vector<std::pair<const yyc::CInstance*, int>> g_inert;
 std::vector<Puppet> g_puppets;  // in the order they were created
 bool g_creating = false;     // PlayerFind() -> calling instance, while a puppet runs Create_0
 int g_actorId = 0;           // PlayerFind() -> this instance id, when non-zero
@@ -110,9 +112,12 @@ void Prune() {
 bool IsPuppetInstance(const yyc::CInstance* instance) {
     if (instance == nullptr) return false;
     for (const auto& puppet : g_puppets) {
-        if (puppet.instance == instance) return true;
+        if (puppet.instance == instance && yyc::FindInstance(puppet.id) == instance) return true;
     }
-    return !g_inert.empty() && std::find(g_inert.begin(), g_inert.end(), instance) != g_inert.end();
+    for (const auto& [inert, id] : g_inert) {
+        if (inert == instance && yyc::FindInstance(id) == instance) return true;
+    }
+    return false;
 }
 
 const char* CallerName() {
@@ -450,8 +455,12 @@ void SetEnemiesSeeAll(bool on) { g_enemiesSeeAll = on; }
 void HoldLocalPlayer(bool hold) { g_holdLocal = hold; }
 
 void SetInert(yyc::CInstance* instance, bool inert) {
-    g_inert.erase(std::remove(g_inert.begin(), g_inert.end(), instance), g_inert.end());
-    if (inert && instance != nullptr) g_inert.push_back(instance);
+    g_inert.erase(std::remove_if(g_inert.begin(), g_inert.end(),
+                                 [instance](const auto& entry) { return entry.first == instance; }),
+                  g_inert.end());
+    if (inert && instance != nullptr) {
+        g_inert.emplace_back(instance, static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_id)));
+    }
 }
 
 void SetFamiliarsFollowHost(bool on) { g_familiarsFollowHost = on; }

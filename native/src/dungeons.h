@@ -23,6 +23,9 @@ int SharedRoom(yyc::CInstance* localPlayer);
 // has to wait for the new room.
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer, bool* stop);
 
+// Game thread, every step in the shared room: lanterns lit here go to the others.
+void Tick(yyc::CInstance* localPlayer);
+
 // Guest, game thread, every step while not in the host's room: if no fade is taking it there (a lost one), starts
 // one again after a while.
 void GuestTick(yyc::CInstance* localPlayer);

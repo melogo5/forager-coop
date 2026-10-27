@@ -98,6 +98,10 @@ constexpr int kSyncedParents[] = {
     115,  // objBridge: no parent (PLAYTEST.md #10)
     64,   // parCritter: fireflies, butterflies, cows... (streamed by mobs like enemies; PLAYTEST.md #15)
     63,   // objTrader: the wandering merchant the host's world spawns (PLAYTEST8.md #3); other NPCs are fixed
+    209,  // objDungeonDoor, 195 objElectricBarrier, 206 objVinedWall, 208 objBreakableWall: a dungeon's way on,
+    195,  // opened at the host by a solved puzzle (puzzles.cpp) - gone at the guests too
+    206,
+    208,
 };
 constexpr int kSlotKilledByPlayer = 0x5DF;
 constexpr uint32_t kYYVarRoomSpeed = 0x01AD8750;

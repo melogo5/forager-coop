@@ -34,6 +34,7 @@
 #include "traps.h"
 #include "bombs.h"
 #include "dungeons.h"
+#include "puzzles.h"
 #include "familiars.h"
 #include "land.h"
 #include "mobs.h"
@@ -351,7 +352,8 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             progress::Handle(message, localPlayer) || quests::Handle(message, localPlayer) ||
             stations::Handle(message, localPlayer) || skills::Handle(message, localPlayer) || traps::Handle(message, localPlayer) ||
             banks::Handle(message, localPlayer) || reconcile::Handle(message, localPlayer) || chests::Handle(message, localPlayer) ||
-            familiars::Handle(message, localPlayer) || bombs::Handle(message, localPlayer)) {
+            familiars::Handle(message, localPlayer) || bombs::Handle(message, localPlayer) ||
+            puzzles::Handle(message, localPlayer)) {
             continue;
         }
         bool guestIntroduced = false;
@@ -655,6 +657,7 @@ void Tick(yyc::CInstance* localPlayer) {
             Log("session: the shared room is now %d - replicas and enemies start over", room);
             sync::Reset();
             reconcile::Reset();
+            puzzles::Reset();
         }
         g_lastSharedRoom = room;
         dungeons::OnRoomEntered(localPlayer, room);
@@ -670,6 +673,8 @@ void Tick(yyc::CInstance* localPlayer) {
 
     if (g_role == Role::kHost) SteamInvites(localPlayer);
     sync::Tick(localPlayer);
+    dungeons::Tick(localPlayer);
+    if (!inWorld) puzzles::Tick(localPlayer);  // the shared room is a dungeon
     storage::DebugTick(localPlayer);
     land::Tick(localPlayer);
     land::DebugTick(localPlayer);
@@ -770,6 +775,7 @@ void Leave() {
     familiars::Reset();
     bombs::Reset();
     dungeons::Reset();
+    puzzles::Reset();
     g_deferred.clear();
     g_lastSharedRoom = -1;
     world::Reset();
@@ -822,7 +828,7 @@ bool SessionInstall() {
     if (!sync::InstallHooks(isHost, isGuest) || !mobs::InstallHooks(isHost, isGuest) ||
         !character::InstallHooks(isGuest) || !storage::InstallHooks() || !land::InstallHooks(isHost, isGuest) ||
         !progress::InstallHooks() || !stations::InstallHooks() || !chests::InstallHooks(isHost) ||
-        !traps::InstallHooks(isHost, isGuest) || !bombs::InstallHooks() || !banks::InstallHooks(isHost, isGuest) || !skills::InstallHooks()) {
+        !traps::InstallHooks(isHost, isGuest) || !bombs::InstallHooks() || !puzzles::InstallHooks(isHost, isGuest) || !banks::InstallHooks(isHost, isGuest) || !skills::InstallHooks()) {
         return false;
     }
     Role role = Role::kNone;
