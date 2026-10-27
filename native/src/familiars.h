@@ -4,6 +4,8 @@
 // global.droids, which HandleDroids walks.
 #pragma once
 
+#include <string>
+
 #include "net.h"
 #include "yyc.h"
 
@@ -12,8 +14,12 @@ namespace coop::familiars {
 // Guest, from the instance_create hook: `createdId` (object index `object`) was just made.
 void OnCreated(yyc::CInstance* self, int createdId, int object);
 
-// Guest, game thread, every local player step in the world: tells the host about its own familiars.
-void GuestTick();
+// Guest, game thread, every local player step in the world: tells the host about its own familiars (and makes
+// again the droids it had in the last game, once the host sends them).
+void GuestTick(yyc::CInstance* localPlayer);
+
+// Host, game thread: guest `name` (`peer`) has introduced itself - it gets back the droids it had.
+void HostOnGuest(const std::string& name, net::PeerId peer);
 
 // Host, game thread, every local player step: drops copies whose guest is gone.
 void HostTick(yyc::CInstance* localPlayer);

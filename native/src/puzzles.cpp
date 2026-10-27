@@ -16,6 +16,7 @@ namespace {
 
 constexpr uint8_t kPuzzleState = 45;  // either way: StateEntry list, what pieces are now (see kKinds: who sends)
 constexpr uint8_t kPuzzleUse = 46;    // guest -> host: UseMsg, the guest's E on a piece
+constexpr uint8_t kPuzzleMirror = 104;  // either way (the host passes it on): UseMsg, an E done by everyone
 constexpr unsigned kEverySteps = 6;   // 10 looks a second
 constexpr int kSlotX = -1, kSlotY = -2;  // StateEntry.slot for the position
 constexpr int kSlotImage = -3;           // ... for image_index (a terminal's symbol)
@@ -28,11 +29,16 @@ constexpr int kMaxPuzzleFlags = 64;
 // Variables (decompiled/code/var_slots.tsv) of the pieces.
 constexpr int kSolved = 0x7D8, kElectrified = 0x1D2, kFacing = 0x409, kAngleTo = 0x58, kReflectLaser = 0x745,
               kDown = 0x1A7, kNumber = 0x6AF, kUsable = 0x8CA, kH = 0x553, kV = 0x8D9;
+// Ice (objFrozenChest, frozen doors): a fire hit sets `burn`, `freeze` approaches `meltTo` every step, and at 0 the
+// block makes what it holds (the boss key) and goes.
+constexpr int kFreeze = 0x443, kMeltTo = 0x63C, kBurn = 0xD7, kFrozen = 0x447;
+constexpr int kObjFrozenChest = 178;
 
 enum class Use : uint8_t {
     kNone,     // not interacted with (or nothing of ours happens on E)
     kAtHost,   // the guest's E is done by the host, as the guest's puppet
     kOwn,      // the guest's E stays its own (it takes from its inventory); its result goes to the host
+    kMirror,   // anyone's E is done by every player on their own copy, as themselves
 };
 
 struct Kind {
@@ -55,8 +61,16 @@ const std::vector<Kind> kKinds = {
     {180, 0x00CD1410, Use::kAtHost, false, {kSlotImage, kUsable}},  // objComputerTerminal: E turns the symbol
     {182, 0x00CE0920, Use::kAtHost, false, {kDown, kSolved, kUsable}},  // objVolcanoPushDownPillar
     {164, 0x00C96CF0, Use::kAtHost, false, {kUsable}},                           // objPushDownPillar
+    // The boss door opens for a key that follows PlayerFind() - the local player - so everyone's key follows them.
+    // Frozen in ice (rmCrystalCave): a guest's fire thawed its own key only, the host could not take it (playtest 9).
+    {75, 0x00B3F510, Use::kMirror, false, {kFreeze, kBurn}},  // objBossKey
+    // Ice melts at every player from the same fire (a guest's fire arrow melted only its own block: the key was the
+    // guest's alone, playtest 9); each block makes its own key (sync.cpp sends no destroy of it).
+    {kObjFrozenChest, 0, Use::kOwn, false, {kFreeze, kMeltTo, kBurn}},  // objFrozenChest
+    {209, 0, Use::kOwn, false, {kFreeze, kMeltTo, kBurn, kFrozen}},     // objDungeonDoor (a frozen one)
+    {153, 0, Use::kOwn, false, {kFreeze, kBurn}},                       // objTreasureChestSmallFrozen
 };
-constexpr size_t kHookCount = 9;  // kinds with an Other_11 hook, in kKinds order
+constexpr size_t kHookCount = 10;  // kinds with an Other_11 hook, in kKinds order
 
 #pragma pack(push, 1)
 struct StateEntry {
@@ -125,8 +139,9 @@ void WriteNumber(int id, int slot, float value) {
     yyc::SetVar(id, slot, &v);
 }
 
-// What this side sends: the host everything; a guest only what its own E did (kOwn pieces).
-bool Sends(const Kind& kind) { return IsHost() || kind.use == Use::kOwn; }
+// What this side sends: the host everything; a guest what is its own too (kOwn and kMirror pieces).
+bool FromAnyone(const Kind& kind) { return kind.use == Use::kOwn || kind.use == Use::kMirror; }
+bool Sends(const Kind& kind) { return IsHost() || FromAnyone(kind); }
 
 int PuzzleFlagCount(yyc::CInstance* self) {
     const yyc::RValue* flags = yyc::GlobalVar(kSlotGlobalPuzzle);
@@ -203,7 +218,7 @@ void ApplyState(const net::Message& message, yyc::CInstance* localPlayer) {
         yyc::CInstance* piece = yyc::FindInstance(entry.id);
         const Kind* kind = KindOf(entry.object);
         if (piece == nullptr || kind == nullptr || ObjectOf(piece) != entry.object || !std::isfinite(entry.value)) continue;
-        if (!IsGuest() && kind->use != Use::kOwn) continue;  // the host takes from a guest only its own results
+        if (!IsGuest() && !FromAnyone(*kind)) continue;  // the host takes from a guest only what is its own too
         WriteNumber(entry.id, entry.slot, entry.value);
         if (kind->moves && entry.slot == kSlotX) {  // the host moves it: no sliding of its own here
             WriteNumber(entry.id, kH, 0);
@@ -229,23 +244,39 @@ void ApplyUse(yyc::CInstance* localPlayer, net::PeerId from, const UseMsg& msg) 
     Log("puzzles: guest %u used piece %d (object %d)", from, msg.id, msg.object);
 }
 
-// The guest's E on a piece the host does: sent instead of done here.
+// Another player's E on a kMirror piece: ours does the same, as the local player.
+void ApplyMirror(yyc::CInstance* localPlayer, net::PeerId from, const UseMsg& msg) {
+    yyc::CInstance* piece = yyc::FindInstance(msg.id);
+    const Kind* kind = KindOf(msg.object);
+    if (piece == nullptr || kind == nullptr || kind->use != Use::kMirror || ObjectOf(piece) != msg.object) {
+        Log("puzzles: player %u used piece %d (object %d) - not here", from, msg.id, msg.object);
+        return;
+    }
+    ++g_applying;
+    yyc::PerformEvent(piece, localPlayer, yyc::kEvOther, yyc::kEvUser0 + 1);  // Other_11: E
+    --g_applying;
+    Log("puzzles: player %u used piece %d (object %d) - done here too", from, msg.id, msg.object);
+}
+
+// The guest's E on a piece the host does: sent instead of done here. An E on a kMirror piece: done here and sent.
 template <size_t N>
 void __cdecl InteractHook(yyc::CInstance* self, yyc::CInstance* other) {
     const Kind* kind = KindOf(ObjectOf(self));
-    if (kind != nullptr && kind->use == Use::kAtHost && IsGuest() && net::IsConnected() && g_applying == 0) {
-        const UseMsg msg{IdOf(self), static_cast<int16_t>(kind->object), 0};
+    const bool ours = kind != nullptr && net::IsConnected() && g_applying == 0;
+    const UseMsg msg{IdOf(self), static_cast<int16_t>(kind != nullptr ? kind->object : 0), 0};
+    if (ours && kind->use == Use::kAtHost && IsGuest()) {
         net::Send(kPuzzleUse, &msg, sizeof(msg));
         return;
     }
     g_orig[N](self, other);
+    if (ours && kind->use == Use::kMirror) net::Send(kPuzzleMirror, &msg, sizeof(msg));
 }
 
 template <size_t... N>
 struct HookTable {
     static constexpr yyc::EventFn kHooks[] = {&InteractHook<N>...};
 };
-using Hooks = HookTable<0, 1, 2, 3, 4, 5, 6, 7, 8>;
+using Hooks = HookTable<0, 1, 2, 3, 4, 5, 6, 7, 8, 9>;
 static_assert(sizeof(Hooks::kHooks) / sizeof(Hooks::kHooks[0]) == kHookCount, "one hook per hooked kind");
 
 }  // namespace
@@ -275,13 +306,27 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
         ApplyState(message, localPlayer);
         return true;
     }
-    if (message.type != kPuzzleUse) return false;
+    if (message.type != kPuzzleUse && message.type != kPuzzleMirror) return false;
     UseMsg msg{};
-    if (message.payload.size() == sizeof(msg) && IsHost()) {
-        memcpy(&msg, message.payload.data(), sizeof(msg));
+    if (message.payload.size() != sizeof(msg)) return true;
+    memcpy(&msg, message.payload.data(), sizeof(msg));
+    if (message.type == kPuzzleMirror) {
+        ApplyMirror(localPlayer, message.from, msg);
+    } else if (IsHost()) {
         ApplyUse(localPlayer, message.from, msg);
     }
     return true;
+}
+
+bool MeltsAtEachSide(int object) { return object == kObjFrozenChest; }
+
+void OnDestroyed(int id, int object) {
+    if (!MeltsAtEachSide(object) || !net::IsConnected()) return;
+    // Its last `freeze` may not have gone out: the others' blocks melt now (Approach would raise a lone freeze of 0).
+    const StateEntry melted[2] = {{id, static_cast<int16_t>(object), static_cast<int16_t>(kFreeze), 0},
+                                  {id, static_cast<int16_t>(object), static_cast<int16_t>(kMeltTo), 0}};
+    net::Send(kPuzzleState, melted, sizeof(melted));
+    Log("puzzles: ice block %d melted here - melts at the others too", id);
 }
 
 void Reset() {

@@ -34,6 +34,10 @@ constexpr uint32_t kOpenEvents[] = {
 constexpr int kOpenEventCount = sizeof(kOpenEvents) / sizeof(kOpenEvents[0]);
 constexpr int kFirstChest = 150, kLastChest = 153;  // objTreasureChest .. objTreasureChestSmallFrozen
 constexpr int kObjKeyChest = 150;
+// A dungeon's reward chest is an objTreasureChest too, but blue: its Other_11 opens it without a key (it checks
+// sprite_index == sprTreasureChestBLue first). Taken for a key chest, it waited for the other players' keys and
+// took the host's key (playtest 9).
+constexpr double kSprKeylessChest = 1090;
 constexpr int kObjItemGet = 289;      // the reward the key chest makes: its `item` is what the player gets
 constexpr double kKeyItem = 110;      // what objTreasureChest Other_11 counts and removes (ItemCount/RemoveItem)
 constexpr uint32_t kScriptItemCount = 0x006AB090;
@@ -110,6 +114,11 @@ ChestMsg Describe(yyc::CInstance* chest, int id) {
 
 // kOpenEvents' index for a hooked chest kind (150, 151, 152; the frozen small chest is not hooked).
 int EventIndex(int object) { return object == kObjKeyChest ? 0 : object == 151 ? 1 : 2; }
+
+bool NeedsKeys(yyc::CInstance* chest) {
+    return yyc::GetBuiltinReal(chest, yyc::va::YYVar_object_index) == kObjKeyChest &&
+           yyc::GetBuiltinReal(chest, yyc::va::YYVar_sprite_index) != kSprKeylessChest;
+}
 
 bool Opened(int id) { return yyc::FindInstance(id) == nullptr || ReadNumber(id, kSlotUsable) == 0; }
 
@@ -204,7 +213,7 @@ void __cdecl OpenHook(yyc::CInstance* self, yyc::CInstance* other) {
         return;
     }
     const int id = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
-    if (N == 0) {
+    if (N == 0 && NeedsKeys(self)) {
         OpenKeyChest(self, other, id);
         return;
     }
@@ -342,9 +351,9 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
         case kChestOpened: {  // a keyless chest someone opened: ours opens too
             ChestMsg msg{};
             // A key chest opens only when every key is in; the session already passes this on to the others.
-            if (!Read(message, &msg) || !IsTreasureChest(msg.object) || msg.object == kObjKeyChest) return true;
+            if (!Read(message, &msg) || !IsTreasureChest(msg.object)) return true;
             WithChest(localPlayer, msg, [localPlayer, msg](int local) {
-                if (Opened(local)) return;
+                if (Opened(local) || NeedsKeys(yyc::FindInstance(local))) return;
                 OpenHere(yyc::FindInstance(local), localPlayer);
                 Log("chests: the other player opened chest %d at (%.0f, %.0f) - opened here too", msg.object, msg.x,
                     msg.y);

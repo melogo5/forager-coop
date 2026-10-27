@@ -20,6 +20,7 @@
 #include "mobs.h"
 #include "mutant.h"
 #include "puppet.h"
+#include "puzzles.h"
 #include "interiors.h"
 #include "skilltab.h"
 #include "stations.h"
@@ -328,10 +329,24 @@ yyc::CInstance* FindAt(yyc::CInstance* self, int object, double x, double y) {
     return std::sqrt(dx * dx + dy * dy) <= kMatchDistance ? instance : nullptr;
 }
 
+// Sounds an object loops and stops only in its own Destroy event, which a quiet destroy skips: they played on
+// until the game was restarted (playtest 9: a desert watcher's laser at the guest).
+struct LoopSound {
+    int object;
+    double sound;  // decompiled/data/sounds.tsv
+};
+constexpr LoopSound kLoopSounds[] = {
+    {37, 25},  // objWatcher: sndWatcherLaser
+    {37, 26},  // objWatcher: sndWatcherLaserLoop
+};
+
 void DestroySilently(yyc::CInstance* self, int id) {
+    yyc::CInstance* instance = yyc::FindInstance(id);
+    const int object = instance != nullptr ? static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_object_index)) : -1;
     ++g_applyingRemote;
     CallReal(self, "instance_destroy", {double(id), 0});  // execute_event = false: no drops, no XP
     --g_applyingRemote;
+    StopLoopsOfGone(self, object);
 }
 
 // ---- builtin hooks ----
@@ -501,7 +516,9 @@ void __cdecl DestroyHook(yyc::CInstance* self, yyc::CInstance* other, int id, in
         world::OnInstanceDestroyed();
         g_hostOwnedDrops.erase(targetId);  // destroyed quietly too (a host destroy): not only when reported
     }
-    if (!synced || chests::IsTreasureChest(info.object)) return;  // an opened chest is gone for its opener only
+    if (synced && targetId != 0 && yyc::FindInstance(targetId) == nullptr) puzzles::OnDestroyed(info.id, info.object);
+    // An opened chest is gone for its opener only; an ice block melts at each player by itself.
+    if (!synced || chests::IsTreasureChest(info.object) || puzzles::MeltsAtEachSide(info.object)) return;
 
     if (IsHost()) {
         // Created and gone within one step: the guest never heard of it.
@@ -706,6 +723,7 @@ void ApplyHp(yyc::CInstance* self, const HpMsg& msg) {
         yyc::RValue v = yyc::Real(values[i]);
         yyc::SetVar(local, slots[i], &v);
     }
+    mobs::NoteHostHp(local, msg.hp);
 }
 
 // Guest: a tool hit goes to the host with the guest's own damage (the puppet's would be used there otherwise).
@@ -1306,6 +1324,24 @@ void EndSuppressSpawns(yyc::CInstance* self) {
     }
     if (!g_suppressed.empty()) Log("sync: removed %zu locally generated objects", g_suppressed.size());
     g_suppressed.clear();
+}
+
+void StopLoopsOfGone(yyc::CInstance* self, int object) {
+    for (const LoopSound& loop : kLoopSounds) {
+        if (loop.object != object || CallReal(self, "instance_number", {double(object)}) > 0) continue;
+        CallReal(self, "audio_stop_sound", {loop.sound});
+    }
+}
+
+void SendDamage(int localId, float amount) {
+    yyc::CInstance* target = yyc::FindInstance(localId);
+    const auto host = g_localToHost.find(localId);
+    if (target == nullptr || host == g_localToHost.end() || !(amount > 0) || !Connected()) return;
+    const InstanceInfo info = Describe(target);
+    ObjectMsg msg{host->second, info.object, static_cast<float>(info.x), static_cast<float>(info.y), amount,
+                  kNoItem, kOwnerAnyone, -1, 0};
+    if (net::Send(kHit, &msg, sizeof(msg))) ++g_sent[kHit];
+    Log("sync: own damage %.1f to object %d at (%.0f, %.0f) sent to the host", amount, info.object, info.x, info.y);
 }
 
 int HostIdOf(int localId) {

@@ -49,8 +49,15 @@ constexpr uint32_t kScriptDmgPlayer = 0x00727030;
 constexpr uint32_t kDroidDraw = 0x00B4E5E0;
 constexpr int kSlotDroidFloatY = 0x432;
 constexpr int kSlotDroidXscale = 0x913;
+constexpr int kSlotDroidFacing = 0x409;  // line 25 too: a droid made with no one to follow has none yet
 constexpr int kSlotDroidId = 0x1B7;
 constexpr char kCreateFrame[] = "gml_Object_objPlayer_Create_0";
+// draw_sprite_ext as YYC calls it: (self, sprite, subimg, x, y, xscale, yscale, rot, colour, alpha). objPlayer's
+// Draw_0 draws the bow's crosshair (sprArcheryCrosshair) with it - a puppet's showed the others where one aimed.
+constexpr uint32_t kDrawSpriteExt = 0x016E6650;
+constexpr int kSprArcheryCrosshair = 1279;
+using DrawSpriteExtFn = void(__cdecl*)(yyc::CInstance* self, int sprite, int subimg, float x, float y, float xscale,
+                                       float yscale, float rot, int colour, float alpha);
 
 using yyc::StackFrame;
 
@@ -94,6 +101,8 @@ yyc::EventFn g_origSkipped[kSkippedCount] = {};
 yyc::ScriptFn g_origPlayerFind = nullptr;
 yyc::ScriptFn g_origDmgPlayer = nullptr;
 yyc::EventFn g_origDroidDraw = nullptr;
+DrawSpriteExtFn g_origDrawSpriteExt = nullptr;
+bool g_drawingPuppet = false;
 
 Puppet* Find(net::PeerId player) {
     for (auto& puppet : g_puppets) {
@@ -138,7 +147,14 @@ int8_t KindOf(yyc::CInstance* self) {
     const int object = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_object_index));
     if (object < 0 || object >= kMaxObjects) return kOther;
     int8_t& kind = g_kinds[object];
-    if (kind == 0) kind = IsA(self, object, kParEnemy) ? kEnemy : IsA(self, object, kParFamiliar) ? kFamiliar : kOther;
+    // The boss key is a parFamiliar, but no one's companion: it follows whoever picks it up - the local player, as
+    // the boss door checks (puzzles.cpp); at a guest it went after the host's puppet.
+    constexpr int kObjBossKey = 75;
+    if (kind == 0) {
+        kind = IsA(self, object, kParEnemy)                                     ? kEnemy
+               : object != kObjBossKey && IsA(self, object, kParFamiliar) ? kFamiliar
+                                                                                : kOther;
+    }
     return kind;
 }
 
@@ -229,8 +245,16 @@ void __cdecl DrawHook(yyc::CInstance* self, yyc::CInstance* other) {
     }
     const int previous = g_actorId;
     g_actorId = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
+    g_drawingPuppet = true;
     g_origDraw(self, other);
+    g_drawingPuppet = false;
     g_actorId = previous;
+}
+
+void __cdecl DrawSpriteExtHook(yyc::CInstance* self, int sprite, int subimg, float x, float y, float xscale,
+                               float yscale, float rot, int colour, float alpha) {
+    if (g_drawingPuppet && sprite == kSprArcheryCrosshair) return;
+    g_origDrawSpriteExt(self, sprite, subimg, x, y, xscale, yscale, rot, colour, alpha);
 }
 
 // Damage meant for a puppet must not land on the local player (for now it is dropped): DmgPlayer hurts PlayerFind(),
@@ -316,7 +340,9 @@ double ReadReal(int id, int slot);
 
 void __cdecl DroidDrawHook(yyc::CInstance* self, yyc::CInstance* other) {
     const int id = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
-    if (!IsSetReal(id, kSlotDroidFloatY) || !IsSetReal(id, kSlotDroidXscale)) return;  // drawn after its first step
+    if (!IsSetReal(id, kSlotDroidFloatY) || !IsSetReal(id, kSlotDroidXscale) || !IsSetReal(id, kSlotDroidFacing)) {
+        return;  // drawn after its first step
+    }
     // Its look is global.droidNames[droidId]: a droid of the other player's world may have none here.
     if (!familiars::HasDroidLook(self, static_cast<int>(ReadReal(id, kSlotDroidId)))) return;
     g_origDroidDraw(self, other);
@@ -437,6 +463,7 @@ bool InstallHooks(LocalStepFn onLocalStep, LocalStepFn beforeLocalStep1) {
     ok = Hook(ev::Draw_73, reinterpret_cast<void*>(&DrawEndHook), &g_origDrawEnd) && ok;
     ok = Hook(kScriptDmgPlayer, reinterpret_cast<void*>(&DmgPlayerHook), &g_origDmgPlayer) && ok;
     ok = Hook(kDroidDraw, reinterpret_cast<void*>(&DroidDrawHook), &g_origDroidDraw) && ok;
+    ok = Hook(kDrawSpriteExt, reinterpret_cast<void*>(&DrawSpriteExtHook), &g_origDrawSpriteExt) && ok;
     for (int i = 0; i < kSkippedCount; ++i) {
         ok = Hook(kSkippedEvents[i], reinterpret_cast<void*>(Skipped::kHooks[i]), &g_origSkipped[i]) && ok;
     }

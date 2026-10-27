@@ -1,9 +1,13 @@
 #include "familiars.h"
 
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <vector>
 
+#include "character.h"
+#include "files.h"
 #include "log.h"
 #include "puppet.h"
 
@@ -12,11 +16,20 @@ namespace coop::familiars {
 namespace {
 
 constexpr uint8_t kFamiliars = 34;  // guest -> host: FamiliarEntry per own familiar
+constexpr uint8_t kRestore = 106;   // host -> guest: FamiliarEntry per own familiar it had (kept with its character)
 constexpr int kParFamiliar = 74;    // decompiled/data/objects.tsv: objBossKey 75, lantern 76, halo 77, objDroid 78
 constexpr int kObjBossKey = 75;     // a key flying to its chest, not anyone's companion
+constexpr int kObjDroid = 78;
 constexpr int kSlotDroidId = 0x1B7;
-constexpr int kSlotDroidNames = 0x1B8;  // global: each droid's look (a sprite) by droidId
-constexpr int kMaxDroidLooks = 256;
+// global.droidNames: a ds_grid with a row per droidId - name, look (a sprite), colour. Read as an array, no droid had a
+// look and none was drawn, the guest's own crafted one included (playtest 9).
+constexpr int kSlotDroidNames = 0x1B8;
+constexpr double kLookColumn = 1;
+constexpr double kDsTypeGrid = 5;
+constexpr int kSlotDroids = 0x1BA;  // global: the droidIds of the world's droids (ds_list); GainItem adds to it
+constexpr int kSlotFollowing = 0x435;
+constexpr int kSlotFacing = 0x409;
+constexpr char kStoreExtension[] = ".familiars";
 constexpr unsigned kCheckEverySteps = 60;
 constexpr unsigned kResendSteps = 600;
 constexpr size_t kMaxFamiliars = 32;
@@ -55,37 +68,30 @@ double DroidId(int id) {
     return droidId;
 }
 
+double DroidGrid(yyc::CInstance* self) {
+    const yyc::RValue* grid = yyc::GlobalVar(kSlotDroidNames);
+    if (grid == nullptr || !yyc::IsNumber(*grid)) return -1;
+    const double id = yyc::ToReal(*grid);
+    return yyc::CallReal(self, "ds_exists", {id, kDsTypeGrid}) != 0 ? id : -1;
+}
+
 int DroidLookCount(yyc::CInstance* self) {
-    const yyc::RValue* looks = yyc::GlobalVar(kSlotDroidNames);
-    if (looks == nullptr || (looks->kind & yyc::kKindMask) != yyc::kArray) return 0;
-    yyc::RValue copy = *looks;  // a plain copy: no reference taken or freed
-    yyc::RValue length{};
-    yyc::CallBuiltin("array_length_1d", self, 1, &copy, &length);
-    const int count = static_cast<int>(yyc::ToReal(length));
-    yyc::Free(&length);
-    return count;
+    const double grid = DroidGrid(self);
+    return grid >= 0 ? static_cast<int>(yyc::CallReal(self, "ds_grid_height", {grid})) : 0;
 }
 
 double DroidLook(yyc::CInstance* self, int droidId) {
     if (droidId < 0 || droidId >= DroidLookCount(self)) return -1;
-    const yyc::RValue look = yyc::ArrayElement(yyc::GlobalVar(kSlotDroidNames), droidId);
-    return yyc::IsNumber(look) ? yyc::ToReal(look) : -1;
+    return yyc::CallReal(self, "ds_grid_get", {DroidGrid(self), kLookColumn, double(droidId)});
 }
 
-// The host's droidId for a look: an entry of its global.droidNames with it, else one added at the end (the
-// runtime grows an array accessed one past its end). -1 if neither.
+// The droidId with this look here (the grid is the game's own list, the same for everyone), -1 if none.
 int DroidIdForLook(yyc::CInstance* self, double look) {
     const int count = DroidLookCount(self);
     for (int i = 0; i < count; ++i) {
         if (DroidLook(self, i) == look) return i;
     }
-    yyc::RValue* looks = yyc::GlobalVar(kSlotDroidNames);
-    if (looks == nullptr || (looks->kind & yyc::kKindMask) != yyc::kArray || count >= kMaxDroidLooks) return -1;
-    using ArrayIndexFn = yyc::RValue*(__thiscall*)(yyc::RValue* array, int index);
-    yyc::RValue* added = yyc::At<ArrayIndexFn>(yyc::va::ArrayIndex)(looks, count);
-    if (added == nullptr) return -1;
-    *added = yyc::Real(look);
-    return count;
+    return -1;
 }
 
 void DestroyCopies(yyc::CInstance* self, std::vector<int>& copies) {
@@ -111,10 +117,51 @@ void ApplyList(yyc::CInstance* self, net::PeerId from, const std::vector<Familia
             yyc::RValue droidId = yyc::Real(DroidIdForLook(self, entry.look));
             yyc::SetVar(id, kSlotDroidId, &droidId);
         }
+        // Its End Step takes `facing` from whom it follows: with no one, none, and Draw_0 failed on it (line 25).
+        yyc::RValue facing = yyc::Real(1);
+        yyc::SetVar(id, kSlotFacing, &facing);
+        yyc::RValue following = yyc::Real(yyc::GetBuiltinReal(puppet, yyc::va::YYVar_id));
+        yyc::SetVar(id, kSlotFollowing, &following);
         puppet::SetFamiliarOwner(id, from);
         copies.push_back(id);
     }
     Log("familiars: guest %u has %zu of its own - copies made", from, copies.size());
+    // Kept with the guest's character: the guest's world is the host's, its droids were gone after a rejoin.
+    const std::string name = character::HostGuestName(from);
+    const auto* bytes = reinterpret_cast<const uint8_t*>(list.data());
+    if (!coop::files::WriteAtomic(character::GuestDataFile(name, kStoreExtension), bytes,
+                                  list.size() * sizeof(FamiliarEntry))) {
+        Log("familiars: cannot keep guest '%s' familiars", name.c_str());
+    }
+}
+
+std::vector<FamiliarEntry> g_restore;  // guest: its droids as the host kept them, made once in the world
+bool g_restorePending = false;
+
+// Guest: its droids from the last game, made again as GainItem makes a crafted one.
+void Restore(yyc::CInstance* localPlayer) {
+    g_restorePending = false;
+    if (!g_own.empty()) return;
+    const double x = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_x);
+    const double y = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_y);
+    const yyc::RValue* droids = yyc::GlobalVar(kSlotDroids);
+    for (const FamiliarEntry& entry : g_restore) {
+        if (entry.object != kObjDroid) continue;  // the lantern and the halo come back with the gear
+        const int droidId = DroidIdForLook(localPlayer, entry.look);
+        const int id =
+            static_cast<int>(yyc::CallReal(localPlayer, "instance_create_depth", {x, y, -y, double(kObjDroid)}));
+        if (yyc::FindInstance(id) == nullptr) continue;
+        yyc::RValue value = yyc::Real(droidId);
+        yyc::SetVar(id, kSlotDroidId, &value);
+        yyc::RValue following = yyc::Real(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_id));
+        yyc::SetVar(id, kSlotFollowing, &following);
+        if (droids != nullptr && yyc::IsNumber(*droids)) {
+            yyc::CallReal(localPlayer, "ds_list_add", {yyc::ToReal(*droids), double(droidId)});
+        }
+        puppet::SetFamiliarOwner(id, puppet::kOwnSelf);
+        g_own.push_back(id);
+    }
+    Log("familiars: %zu own droid(s) back from the last game", g_own.size());
 }
 
 }  // namespace
@@ -126,7 +173,8 @@ void OnCreated(yyc::CInstance* self, int createdId, int object) {
     Log("familiars: own familiar %d (object %d) - follows us, sent to the host", createdId, object);
 }
 
-void GuestTick() {
+void GuestTick(yyc::CInstance* localPlayer) {
+    if (g_restorePending) Restore(localPlayer);
     if (++g_steps % kCheckEverySteps != 0) return;
     std::vector<FamiliarEntry> list;
     std::vector<int> alive;
@@ -153,7 +201,26 @@ void HostTick(yyc::CInstance* localPlayer) {
     }
 }
 
+void HostOnGuest(const std::string& name, net::PeerId peer) {
+    std::ifstream in(character::GuestDataFile(name, kStoreExtension), std::ios::binary);
+    const std::vector<uint8_t> stored((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (stored.empty() || stored.size() % sizeof(FamiliarEntry) != 0) return;
+    net::SendTo(peer, kRestore, stored.data(), stored.size());
+    Log("familiars: guest '%s' gets back %zu familiar(s)", name.c_str(), stored.size() / sizeof(FamiliarEntry));
+}
+
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
+    if (message.type == kRestore) {
+        const size_t size = message.payload.size();
+        if (message.from != net::kHostPeer || size % sizeof(FamiliarEntry) != 0 ||
+            size / sizeof(FamiliarEntry) > kMaxFamiliars) {
+            return true;
+        }
+        g_restore.resize(size / sizeof(FamiliarEntry));
+        if (size > 0) memcpy(g_restore.data(), message.payload.data(), size);
+        g_restorePending = true;
+        return true;
+    }
     if (message.type != kFamiliars) return false;
     const size_t size = message.payload.size();
     if (message.from == net::kHostPeer || size % sizeof(FamiliarEntry) != 0 || size / sizeof(FamiliarEntry) > kMaxFamiliars) {
@@ -169,6 +236,8 @@ bool HasDroidLook(yyc::CInstance* self, int droidId) { return DroidLook(self, dr
 
 void Reset() {
     g_own.clear();
+    g_restore.clear();
+    g_restorePending = false;
     g_sent.clear();
     g_steps = 0;
     g_copies.clear();

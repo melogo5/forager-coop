@@ -37,7 +37,8 @@ void DebugTick(yyc::CInstance* localPlayer, bool isHost);
 // The session's room changed to `room` (the local player is there now): remembers where a dungeon begins.
 void OnRoomEntered(yyc::CInstance* localPlayer, int room);
 
-// Where a player who died in a dungeon gets back up (where it came in); false outside dungeons.
+// Where a player who died in a dungeon gets back up (where it came in); false outside dungeons. Its minecarts go
+// back to their starts, so it can ride the way again.
 bool RespawnPoint(yyc::CInstance* localPlayer, double* x, double* y);
 
 // Forgets the last session.

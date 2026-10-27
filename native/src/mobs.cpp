@@ -66,6 +66,11 @@ std::unordered_map<int, MobState> g_targets;  // guest: host id -> latest state
 unsigned g_received = 0;
 unsigned g_purgedAt = 0;  // guest: the update the last purge followed
 unsigned g_applySteps = 0;
+// Guest: each replica's health as Follow last set it. Lower by the next Follow, something of ours hit it (an arrow,
+// a staff's bolt, our bomb: they work on the replica here) - the host never heard, and its health came back over it:
+// a guest's bow did nothing to enemies (playtest 9). The difference goes to the host as our hit.
+std::unordered_map<int, float> g_hpSet;
+constexpr float kNoticedDamage = 0.01f;
 constexpr unsigned kTraceEverySteps = 120;  // log replica positions every ~2 s
 
 yyc::ScriptFn g_origCullObject = nullptr;
@@ -394,8 +399,17 @@ void Follow(yyc::CInstance* mob, const MobState& s) {
     yyc::SetBuiltinReal(mob, yyc::va::YYVar_image_index, s.imageIndex);
     yyc::SetBuiltinReal(mob, yyc::va::YYVar_image_xscale, s.xscale);
     if (s.alpha >= 0 && s.alpha <= 1) yyc::SetBuiltinReal(mob, kYYVarImageAlpha, s.alpha);
+    const int id = static_cast<int>(yyc::GetBuiltinReal(mob, yyc::va::YYVar_id));
+    if (const auto set = g_hpSet.find(id); set != g_hpSet.end()) {
+        yyc::RValue now{};
+        if (yyc::GetVar(id, kSlotHp, &now) && yyc::IsNumber(now) && yyc::ToReal(now) < set->second - kNoticedDamage) {
+            sync::SendDamage(id, set->second - static_cast<float>(yyc::ToReal(now)));
+        }
+        yyc::Free(&now);
+    }
     yyc::RValue hp = yyc::Real(s.hp);
-    yyc::SetVar(static_cast<int>(yyc::GetBuiltinReal(mob, yyc::va::YYVar_id)), kSlotHp, &hp);
+    yyc::SetVar(id, kSlotHp, &hp);
+    g_hpSet[id] = s.hp;
 }
 
 // Guest: enemies are exactly what the host streams. Any other active enemy here - one from the loaded save that
@@ -423,6 +437,7 @@ void ApplyTargets(yyc::CInstance* self) {
         if (local == 0 && !sync::WasDestroyed(s.id)) local = AdoptOrSpawn(self, s);
         yyc::CInstance* mob = local != 0 ? yyc::FindInstance(local) : nullptr;
         if (mob == nullptr) {
+            g_hpSet.erase(local);
             it = g_targets.erase(it);  // gone here (destroyed by the host); a new update brings it back
             continue;
         }
@@ -525,8 +540,13 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     return true;
 }
 
+void NoteHostHp(int localId, float hp) {
+    if (const auto set = g_hpSet.find(localId); set != g_hpSet.end()) set->second = hp;
+}
+
 void Reset() {
     g_targets.clear();
+    g_hpSet.clear();
     g_cellLists.clear();
     g_filed.clear();
     g_received = 0;

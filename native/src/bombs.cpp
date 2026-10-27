@@ -16,6 +16,10 @@ constexpr uint8_t kBombBlast = 36;   // either way: BombMsg, that bomb went off
 constexpr int kObjBomb = 294;        // decompiled/data/objects.tsv
 constexpr int kObjExplosion = 295;
 constexpr double kSndBombExplode = 148;  // decompiled/data/sounds.tsv
+// The fuse loops from Create_0 until Destroy_0 stops it. A decoy goes without Destroy_0 (that is the blast), and one
+// whose blast never matched it hissed on forever (playtest 9): it goes when its own fuse is out, and the fuse sound
+// stops once no bomb is left.
+constexpr double kSndBombFuse = 146;
 constexpr double kMatchDistance = 12;    // the decoy and the owner's bomb sit on the same spot
 constexpr char kPlacer[] = "gml_Script_UseBomb";
 constexpr uint32_t kBombAlarm = 0x010314F0;      // objBomb Alarm_0: the fuse runs out -> instance_destroy
@@ -53,9 +57,21 @@ BombMsg Describe(yyc::CInstance* bomb) {
                    static_cast<float>(yyc::GetBuiltinReal(bomb, yyc::va::YYVar_depth))};
 }
 
+void StopFuseIfNoBombs(yyc::CInstance* self) {
+    if (yyc::CallReal(self, "instance_number", {double(kObjBomb)}) == 0) {
+        yyc::CallReal(self, "audio_stop_sound", {kSndBombFuse});
+    }
+}
+
+// A decoy's fuse is out: it goes quietly; the owner's blast is shown when it comes.
 void __cdecl AlarmHook(yyc::CInstance* self, yyc::CInstance* other) {
-    if (g_decoys.count(IdOf(self)) > 0) return;  // waits for the owner's blast
-    g_origAlarm(self, other);
+    const int id = IdOf(self);
+    if (g_decoys.erase(id) == 0) {
+        g_origAlarm(self, other);
+        return;
+    }
+    yyc::CallReal(self, "instance_destroy", {double(id), 0});
+    StopFuseIfNoBombs(self);
 }
 
 void __cdecl DestroyHook(yyc::CInstance* self, yyc::CInstance* other) {
@@ -103,6 +119,7 @@ void Blast(yyc::CInstance* self, const BombMsg& msg) {
         yyc::CallReal(self, "instance_destroy", {double(*it), 0});  // no Destroy_0: that is the real blast
         it = g_decoys.erase(it);
     }
+    StopFuseIfNoBombs(self);
     ++g_placing;
     const int id =
         static_cast<int>(yyc::CallReal(self, "instance_create_depth", {msg.x, msg.y, msg.depth, double(kObjExplosion)}));

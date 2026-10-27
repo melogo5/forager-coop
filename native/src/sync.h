@@ -54,6 +54,14 @@ int HighestCreatedId();
 void BeginSuppressSpawns();
 void EndSuppressSpawns(yyc::CInstance* self);
 
+// After an instance of `object` went without its Destroy event: the sounds that event would have stopped stop, once
+// no other instance of that object is left to play them.
+void StopLoopsOfGone(yyc::CInstance* self, int object);
+
+// Guest: a hit of its own that the host never heard of (an arrow, a staff's bolt, the guest's bomb) took `amount`
+// off a replica's health: the host deals it to its enemy, as the guest's hit.
+void SendDamage(int localId, float amount);
+
 // The id the host uses for a local instance: itself on the host, the bound host id (or -1) on the guest.
 int HostIdOf(int localId);
 // The local instance a peer message refers to: by host id when known, else the `object` standing at (x, y).

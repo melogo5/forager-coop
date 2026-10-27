@@ -17,6 +17,7 @@
 #include "interiors.h"
 #include "log.h"
 #include "puppet.h"
+#include "puzzles.h"
 #include "sync.h"
 
 namespace coop::reconcile {
@@ -102,7 +103,10 @@ void ForEachObject(yyc::CInstance* self, const Area& area, double grow, Visit vi
             const int object = static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_object_index));
             const double x = yyc::GetBuiltinReal(instance, yyc::va::YYVar_x);
             const double y = yyc::GetBuiltinReal(instance, yyc::va::YYVar_y);
-            if (Moving(object) || chests::IsTreasureChest(object) || !Inside(area, x, y, grow)) continue;
+            if (Moving(object) || chests::IsTreasureChest(object) || puzzles::MeltsAtEachSide(object) ||
+                !Inside(area, x, y, grow)) {
+                continue;
+            }
             visit(instance, id, object, x, y);
         }
     }
@@ -283,7 +287,9 @@ std::vector<WorldObject> WorldObjects(yyc::CInstance* self) {
                 isKind = isKind || object == kind ||
                          CallReal(self, "object_is_ancestor", {double(object), double(kind)}) != 0;
             }
-            kept[object] = isKind && !Moving(object) && !chests::IsTreasureChest(object) ? 1 : -1;
+            kept[object] = isKind && !Moving(object) && !chests::IsTreasureChest(object) && !puzzles::MeltsAtEachSide(object)
+                               ? 1
+                               : -1;
         }
         if (kept[object] != 1) continue;
         objects.push_back({object, yyc::GetBuiltinReal(instance, yyc::va::YYVar_x),

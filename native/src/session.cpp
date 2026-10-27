@@ -266,6 +266,7 @@ constexpr uint8_t kSharedTypes[] = {
     91,  // quests
     94,  // stations: craft state
     93,  // chests: a treasure chest opened
+    104,  // puzzles: an E everyone does (the boss key)
 };
 
 // Types only the host sends. One from a guest is a broken or hostile peer: the host drops it (it obeyed before - a
@@ -284,6 +285,7 @@ constexpr uint8_t kHostOnlyTypes[] = {
     96,                  // traps: what a trap holds (a guest asks with 101)
     97, 99, 100,         // chests: moved, keys so far, reward
     102,                 // banks: what a bank holds (a guest asks with 103)
+    106,                 // familiars: a guest's own, kept by the host
 };
 
 bool FromGuestButHostOnly(const net::Message& message) {
@@ -361,6 +363,7 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             // The guest's character answer is out; now the world, so it arrives after it.
             if (guestIntroduced) {
                 skills::HostOnGuest(character::HostGuestName(message.from), message.from, localPlayer);
+                familiars::HostOnGuest(character::HostGuestName(message.from), message.from);
                 world::HostRequestSnapshot(localPlayer, message.from);
             }
             continue;
@@ -618,7 +621,7 @@ void Tick(yyc::CInstance* localPlayer) {
     }
     if (g_role == Role::kGuest) {
         character::GuestTick(localPlayer);
-        if (connected) familiars::GuestTick();
+        if (connected) familiars::GuestTick(localPlayer);
     }
     if (!connected && g_wasConnected) {
         Log("session: peer gone");

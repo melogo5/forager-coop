@@ -32,6 +32,11 @@ constexpr int kObjDungeonLantern = 207;
 constexpr int kSlotLit = 0x610;
 constexpr unsigned kLanternEverySteps = 30;
 constexpr double kLanternMatch = 8;
+// Minecarts ride a path (`path`) to its end, where their step reverses it for the ride back.
+constexpr int kObjMinecart = 201;
+constexpr int kSlotPath = 0x6D2;
+constexpr uint32_t kYYVarXstart = 0x01AD8BA0, kYYVarYstart = 0x01AD8BA8;  // decompiled/code/yyvar_map.tsv
+constexpr double kCartAtStart = 8;
 
 #pragma pack(push, 1)
 struct RoomMsg {
@@ -158,6 +163,39 @@ void ApplyLanternLit(yyc::CInstance* localPlayer, net::PeerId from, float x, flo
     }
 }
 
+double Distance(double x0, double y0, double x1, double y1) { return std::hypot(x1 - x0, y1 - y0); }
+
+// A dead player gets up at the dungeon's way in, but the minecarts it rode stood at the far ends of their rails: it
+// could not get back (playtest 9). Every cart here is the local player's (the others ride theirs on their own
+// screens only), so each goes back to where the dungeon put it, its path turned the way it was then.
+void ResetMinecarts(yyc::CInstance* localPlayer) {
+    int moved = 0;
+    const int count = static_cast<int>(yyc::CallReal(localPlayer, "instance_number", {double(kObjMinecart)}));
+    for (int i = 0; i < count; ++i) {
+        const int id = static_cast<int>(yyc::CallReal(localPlayer, "instance_find", {double(kObjMinecart), double(i)}));
+        yyc::CInstance* cart = yyc::FindInstance(id);
+        if (cart == nullptr) continue;
+        const double sx = yyc::GetBuiltinReal(cart, kYYVarXstart), sy = yyc::GetBuiltinReal(cart, kYYVarYstart);
+        if (Distance(yyc::GetBuiltinReal(cart, yyc::va::YYVar_x), yyc::GetBuiltinReal(cart, yyc::va::YYVar_y), sx, sy) <=
+            kCartAtStart) {
+            continue;
+        }
+        yyc::RValue value{};
+        const double path = yyc::GetVar(id, kSlotPath, &value) && yyc::IsNumber(value) ? yyc::ToReal(value) : -1;
+        yyc::Free(&value);
+        if (path < 0 || yyc::CallReal(cart, "path_exists", {path}) == 0) continue;
+        const double toFirst = Distance(yyc::CallReal(cart, "path_get_x", {path, 0}), yyc::CallReal(cart, "path_get_y", {path, 0}), sx, sy);
+        const double toLast = Distance(yyc::CallReal(cart, "path_get_x", {path, 1}), yyc::CallReal(cart, "path_get_y", {path, 1}), sx, sy);
+        if (toLast < toFirst) yyc::CallReal(cart, "path_reverse", {path});
+        yyc::CallReal(cart, "path_start", {path, 0, 0, 1});  // to the path's start, path_position 0: E rides it again
+        yyc::CallReal(cart, "path_end");
+        yyc::SetBuiltinReal(cart, yyc::va::YYVar_x, sx);
+        yyc::SetBuiltinReal(cart, yyc::va::YYVar_y, sy);
+        ++moved;
+    }
+    if (moved > 0) Log("dungeons: %d minecart(s) back where they started", moved);
+}
+
 }  // namespace
 
 void Install(bool (*isGuest)()) { g_isGuest = isGuest; }
@@ -280,6 +318,7 @@ bool RespawnPoint(yyc::CInstance* localPlayer, double* x, double* y) {
     if (!IsDungeon(CurrentRoom(localPlayer)) || CurrentRoom(localPlayer) != g_entryRoom) return false;
     *x = g_entryX;
     *y = g_entryY;
+    ResetMinecarts(localPlayer);
     return true;
 }
 

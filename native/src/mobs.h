@@ -20,6 +20,9 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer);
 // Game thread: an instance is being destroyed - its id leaves every cull list (mobs.cpp).
 void ForgetInstance(yyc::CInstance* self, int id);
 
+// Guest: the host set replica `localId`'s health to `hp` (after a hit) - not damage of ours to report.
+void NoteHostHp(int localId, float hp);
+
 // Testing aid (debug port `cellcheck`): entries of the cell lists whose instance is gone, "N: id; ... awake M"
 // (M: entries of instances awake - one that dies so is left there).
 std::string DeadCellEntries(yyc::CInstance* self);
