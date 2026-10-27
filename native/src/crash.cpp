@@ -84,7 +84,16 @@ LONG CALLBACK OnException(EXCEPTION_POINTERS* info) {
     if (busy) return EXCEPTION_CONTINUE_SEARCH;
     busy = true;
     const auto address = reinterpret_cast<uintptr_t>(info->ExceptionRecord->ExceptionAddress);
-    Log("crash: exception 0x%08lX at VA %08X; GML stack:", code, static_cast<unsigned>(address - yyc::g_imageDelta));
+    // Playtest 8: two guest crashes outside Forager.exe; the module says whose code it was.
+    HMODULE module = nullptr;
+    char moduleName[MAX_PATH] = "?";
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCSTR>(address), &module)) {
+        GetModuleFileNameA(module, moduleName, MAX_PATH);
+    }
+    Log("crash: exception 0x%08lX at VA %08X (%s +0x%X, thread %lu); GML stack:", code,
+        static_cast<unsigned>(address - yyc::g_imageDelta), moduleName,
+        static_cast<unsigned>(address - reinterpret_cast<uintptr_t>(module)), GetCurrentThreadId());
     LogGmlStack();
     busy = false;
     return EXCEPTION_CONTINUE_SEARCH;

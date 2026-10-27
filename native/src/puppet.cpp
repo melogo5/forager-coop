@@ -42,6 +42,11 @@ constexpr uint32_t kSkippedEvents[] = {
 constexpr int kSkippedCount = sizeof(kSkippedEvents) / sizeof(kSkippedEvents[0]);
 constexpr int kCollisionSlot = 3;  // kSkippedEvents[3]: the collision with parEntity
 constexpr uint32_t kScriptDmgPlayer = 0x00727030;
+// objDroid sets floatY and xscale only in its End Step (Step_2); Draw_0 line 25 needs them. A droid made between
+// End Step and Draw (a spawn from the host, the familiars made with a puppet) crashed the guest (PLAYTEST8.md).
+constexpr uint32_t kDroidDraw = 0x00B4E5E0;
+constexpr int kSlotDroidFloatY = 0x432;
+constexpr int kSlotDroidXscale = 0x913;
 constexpr char kCreateFrame[] = "gml_Object_objPlayer_Create_0";
 
 using yyc::StackFrame;
@@ -82,6 +87,7 @@ yyc::EventFn g_origDrawEnd = nullptr;
 yyc::EventFn g_origSkipped[kSkippedCount] = {};
 yyc::ScriptFn g_origPlayerFind = nullptr;
 yyc::ScriptFn g_origDmgPlayer = nullptr;
+yyc::EventFn g_origDroidDraw = nullptr;
 
 Puppet* Find(net::PeerId player) {
     for (auto& puppet : g_puppets) {
@@ -284,6 +290,19 @@ struct SkippedTable {
 using Skipped = SkippedTable<0, 1, 2, 3, 4, 5, 6, 7, 8>;
 static_assert(sizeof(Skipped::kHooks) / sizeof(Skipped::kHooks[0]) == kSkippedCount, "one hook per skipped event");
 
+bool IsSetReal(int id, int slot) {
+    yyc::RValue value{};
+    const bool set = yyc::GetVar(id, slot, &value) && yyc::IsNumber(value);
+    yyc::Free(&value);
+    return set;
+}
+
+void __cdecl DroidDrawHook(yyc::CInstance* self, yyc::CInstance* other) {
+    const int id = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
+    if (!IsSetReal(id, kSlotDroidFloatY) || !IsSetReal(id, kSlotDroidXscale)) return;  // drawn after its first step
+    g_origDroidDraw(self, other);
+}
+
 bool Hook(uint32_t va, void* detour, void* original) {
     const MH_STATUS status = MH_CreateHook(yyc::At<void*>(va), detour, static_cast<void**>(original));
     if (status != MH_OK) Log("puppet: hook @ VA %08X failed: %s", va, MH_StatusToString(status));
@@ -398,6 +417,7 @@ bool InstallHooks(LocalStepFn onLocalStep, LocalStepFn beforeLocalStep1) {
     ok = Hook(ev::Draw_0, reinterpret_cast<void*>(&DrawHook), &g_origDraw) && ok;
     ok = Hook(ev::Draw_73, reinterpret_cast<void*>(&DrawEndHook), &g_origDrawEnd) && ok;
     ok = Hook(kScriptDmgPlayer, reinterpret_cast<void*>(&DmgPlayerHook), &g_origDmgPlayer) && ok;
+    ok = Hook(kDroidDraw, reinterpret_cast<void*>(&DroidDrawHook), &g_origDroidDraw) && ok;
     for (int i = 0; i < kSkippedCount; ++i) {
         ok = Hook(kSkippedEvents[i], reinterpret_cast<void*>(Skipped::kHooks[i]), &g_origSkipped[i]) && ok;
     }
@@ -421,6 +441,8 @@ void SetInert(yyc::CInstance* instance, bool inert) {
 }
 
 void SetFamiliarsFollowHost(bool on) { g_familiarsFollowHost = on; }
+
+bool IsCreatingPuppet() { return g_creating; }
 
 yyc::CInstance* Instance(net::PeerId player) {
     Prune();

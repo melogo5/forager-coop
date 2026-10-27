@@ -36,6 +36,7 @@ constexpr uint32_t kScriptDeserializeCharacterChunk = 0x005BC8F0;
 constexpr uint32_t kScriptGearEdit = 0x006CAAC0;
 constexpr int kGearFieldOwned = 2;
 constexpr int kSlotGearCurrent = 0x535;
+constexpr char kPlayerCreate[] = "gml_Object_objPlayer_Create_0";
 constexpr uint32_t kScriptCinderLoad = 0x005CE0D0;    // CinderLoad(buffer) -> cinder (chunk map)
 constexpr uint32_t kScriptCinderDelete = 0x005C9BD0;  // CinderDelete(cinder)
 constexpr int kSlotSaveFile = yyc::slot::saveFile;
@@ -192,21 +193,38 @@ double OwnedGear(int playerId, int category) {
     return gear;
 }
 
-// Playtest 6: crafted gear went missing (host and guest, over a rejoin or in play) and nothing in the logs said
-// when. In a session every change of a player's owned gear is logged with who got it and what changed it.
-yyc::RValue* __cdecl GearEditHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
-                                  yyc::RValue** args) {
-    const bool traced = net::IsConnected() && argc >= 3 && yyc::IsNumber(*args[0]) && yyc::IsNumber(*args[1]) &&
-                        static_cast<int>(yyc::ToReal(*args[1])) == kGearFieldOwned;
-    if (!traced) return g_origGearEdit(self, other, result, argc, args);
-    const yyc::StackFrame* caller = yyc::TopFrame();
-    const std::string by = caller != nullptr && caller->name != nullptr ? caller->name : "?";
+int GearTarget(yyc::CInstance* self, yyc::CInstance* other) {
     yyc::RValue zero = yyc::Real(0);
     yyc::RValue* findArgs[1] = {&zero};
     yyc::RValue found{};
     yyc::At<yyc::ScriptFn>(yyc::va::Script_PlayerFind)(self, other, &found, 1, findArgs);  // as GearEdit will
-    const int target = static_cast<int>(yyc::ToReal(found));
+    const int target = yyc::IsNumber(found) ? static_cast<int>(yyc::ToReal(found)) : -4;
     yyc::Free(&found);
+    return target;
+}
+
+// Playtest 6: crafted gear went missing (host and guest, over a rejoin or in play) and nothing in the logs said
+// when. In a session every change of a player's owned gear is logged with who got it and what changed it.
+// Playtest 8 (that log): objPlayer's Create_0 hands the starting pickaxe, wallet and backpack to PlayerFind() - the
+// FIRST player. Another objPlayer made later (the skill tree's avatar, the tree opened in the world) reset the real
+// player's crafted ones. A new objPlayer only ever gives gear to itself.
+yyc::RValue* __cdecl GearEditHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
+                                  yyc::RValue** args) {
+    const yyc::StackFrame* caller = yyc::TopFrame();
+    const bool byCreate = caller != nullptr && caller->name != nullptr && strcmp(caller->name, kPlayerCreate) == 0;
+    if (byCreate && self != nullptr && !puppet::IsCreatingPuppet()) {
+        yyc::CInstance* instance = yyc::FindInstance(GearTarget(self, other));
+        if (instance != nullptr && instance != self) {
+            static int told = 0;
+            if (told++ < 5) Log("gear: a new objPlayer would have reset the player's gear - skipped");
+            return result;
+        }
+    }
+    const bool traced = net::IsConnected() && argc >= 3 && yyc::IsNumber(*args[0]) && yyc::IsNumber(*args[1]) &&
+                        static_cast<int>(yyc::ToReal(*args[1])) == kGearFieldOwned;
+    if (!traced) return g_origGearEdit(self, other, result, argc, args);
+    const std::string by = caller != nullptr && caller->name != nullptr ? caller->name : "?";
+    const int target = GearTarget(self, other);
     yyc::CInstance* instance = yyc::FindInstance(target);
     const int category = static_cast<int>(yyc::ToReal(*args[0]));
     const double before = instance != nullptr ? OwnedGear(target, category) : -4;

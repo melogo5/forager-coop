@@ -64,6 +64,9 @@ yyc::CInstance* Instance(net::PeerId player);
 std::vector<yyc::CInstance*> Instances();
 bool IsPuppet(const yyc::CInstance* instance);
 
+// True while a puppet's Create_0 runs (its gear goes to itself through PlayerFind).
+bool IsCreatingPuppet();
+
 // While acting, PlayerFind() returns player `player`'s puppet: game code run in between treats that player as
 // "the player". Nests (the outermost player stays); every Begin needs an End. Without a puppet for `player`
 // nothing changes.
