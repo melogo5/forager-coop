@@ -19,7 +19,7 @@ $mh = Join-Path $root 'third_party\minhook'
 $sources = @(
     "$root\src\dllmain.cpp", "$root\src\yyc.cpp", "$root\src\log.cpp", "$root\src\trace.cpp", "$root\src\crash.cpp",
     "$root\src\net.cpp", "$root\src\session.cpp", "$root\src\puppet.cpp", "$root\src\world.cpp", "$root\src\sync.cpp", "$root\src\sync_debug.cpp", "$root\src\mobs.cpp", "$root\src\character.cpp", "$root\src\storage.cpp", "$root\src\land.cpp", "$root\src\clock.cpp", "$root\src\unlocks.cpp", "$root\src\coins.cpp", "$root\src\progress.cpp", "$root\src\quests.cpp", "$root\src\stations.cpp", "$root\src\skills.cpp", "$root\src\reconcile.cpp", "$root\src\chests.cpp", "$root\src\steam.cpp", "$root\src\skilltab.cpp", "$root\src\fishing.cpp", "$root\src\debugport.cpp", "$root\src\look.cpp", "$root\src\traps.cpp", "$root\src\banks.cpp", "$root\src\interiors.cpp",
-    "$root\src\gui.cpp", "$root\src\lan.cpp", "$root\src\menu.cpp", "$root\src\savefix.cpp", "$root\src\files.cpp", "$root\src\familiars.cpp", "$root\src\bombs.cpp",
+    "$root\src\gui.cpp", "$root\src\lan.cpp", "$root\src\menu.cpp", "$root\src\savefix.cpp", "$root\src\files.cpp", "$root\src\familiars.cpp", "$root\src\bombs.cpp", "$root\src\dungeons.cpp",
     "$mh\src\hook.c", "$mh\src\buffer.c", "$mh\src\trampoline.c", "$mh\src\hde\hde32.c"
 ) | ForEach-Object { "`"$_`"" }
 

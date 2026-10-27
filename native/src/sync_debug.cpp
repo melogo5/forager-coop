@@ -148,15 +148,6 @@ void DebugXp(yyc::CInstance* localPlayer, unsigned steps) {
     GiveXp(localPlayer, amount);
 }
 
-// Testing aid: COOP_DEBUG_DUNGEON=1 tries to enter the first dungeon room ~5 s in (it must be refused).
-void DebugDungeon(yyc::CInstance* localPlayer) {
-    static const bool enabled = GetEnvironmentVariableA("COOP_DEBUG_DUNGEON", nullptr, 0) > 0;
-    static unsigned steps = 0;
-    if (!enabled || ++steps != 300) return;
-    Log("sync: debug tries to enter room %d", kFirstDungeonRoom);
-    CallReal(localPlayer, "room_goto", {double(kFirstDungeonRoom)});
-}
-
 // Testing aid: COOP_DEBUG_CRAFTDROP=<item> on the guest makes a drop of that item next to it ~5 s in, the way
 // a finished craft does (inside the crafting flag), to check that it lands in the inventory.
 void DebugCraftDrop(yyc::CInstance* localPlayer) {
@@ -237,7 +228,6 @@ void DebugTick(yyc::CInstance* localPlayer, unsigned steps) {
     DebugCensus(localPlayer, steps);
     DebugCullTest(localPlayer);
     DebugCraftDrop(localPlayer);
-    DebugDungeon(localPlayer);
     DebugXp(localPlayer, steps);
 }
 

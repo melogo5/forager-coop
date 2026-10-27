@@ -18,7 +18,6 @@ struct InstanceInfo {
 constexpr int kParResource = 281;  // drops; `item` says what they give
 constexpr int kSlotItem = 0x5B8;   // decompiled/code/var_slots.tsv
 constexpr int kNoOne = -4;
-constexpr int kFirstDungeonRoom = 14;  // rmAncientTomb ... (decompiled/data/rooms.tsv)
 constexpr uint8_t kCensusType = 18;    // host -> guest (testing aid): write down your world objects now
 
 namespace internal {

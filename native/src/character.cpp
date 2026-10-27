@@ -439,6 +439,8 @@ void GuestTick(yyc::CInstance* localPlayer) {
         return;
     }
     if (++g_steps % kUploadEverySteps != 0 || !net::IsConnected()) return;
+    // SaveGame in a dungeon would write the dungeon into the guest's copy of the world (back out, it loads that).
+    if (static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_room)) != yyc::kRoomGame) return;
     world::GuestSaveCharacter(localPlayer);
     g_settle = kSaveSettleSteps;
 }

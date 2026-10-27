@@ -33,6 +33,7 @@
 #include "look.h"
 #include "traps.h"
 #include "bombs.h"
+#include "dungeons.h"
 #include "familiars.h"
 #include "land.h"
 #include "mobs.h"
@@ -120,6 +121,7 @@ bool g_inviteHinted = false;  // host: told about F2 in this world
 std::string g_myName;         // shown over our character on the other players' screens; set when a session starts
 std::vector<net::PeerId> g_peers;  // linked at the last step
 bool g_wasInWorld = true;
+int g_lastSharedRoom = -1;  // the room the session was last played in (-1: none yet)
 std::map<net::PeerId, PlayerStateMsg> g_remotes;  // the other players' last state, shown as puppets
 puppet::Swing g_swing{};  // the local player's swing to send next (KeepSwing)
 
@@ -323,10 +325,23 @@ void OnPlayerState(net::PeerId from, const PlayerStateMsg& state) {
     }
 }
 
+// Messages that came after "into room N": they wait until this player is in that room too.
+std::vector<net::Message> g_deferred;
+
 void HandleMessages(yyc::CInstance* localPlayer) {
     std::vector<net::Message> inbox;
+    inbox.swap(g_deferred);
     net::Drain(inbox);
-    for (const auto& message : inbox) {
+    for (size_t index = 0; index < inbox.size(); ++index) {
+        const net::Message& message = inbox[index];
+        bool stop = false;
+        if (dungeons::Handle(message, localPlayer, &stop)) {
+            if (stop) {
+                g_deferred.assign(inbox.begin() + index + 1, inbox.end());
+                return;
+            }
+            continue;
+        }
         if (IsStaleClaim(message) || FromGuestButHostOnly(message)) continue;
         if (g_role == Role::kHost && message.from != net::kHostPeer) Relay(message);
         if (sync::Handle(message, localPlayer) || mobs::Handle(message, localPlayer) ||
@@ -626,13 +641,28 @@ void Tick(yyc::CInstance* localPlayer) {
     // Inside a building (museum, wizard tower, druid tree) the world room sleeps: nothing here is the shared
     // world, so nothing is synced; the peer's news waits in the inbox until we are back. (A census taken in
     // there would make the guest remove its whole surroundings.)
+    // Dungeons are played together: the shared room is the host's, the world or a dungeon (dungeons.cpp).
     constexpr int kRoomGame = yyc::kRoomGame;
-    const bool inWorld = static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_room)) == kRoomGame;
-    if (inWorld != g_wasInWorld) Log("session: %s the world room", inWorld ? "back in" : "left");
+    const int room = static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_room));
+    const bool inWorld = room == kRoomGame;
+    const bool inShared = room == dungeons::SharedRoom(localPlayer);
+    if (inShared != g_wasInWorld) Log("session: %s the shared room (%d)", inShared ? "in" : "left", room);
+    if (inShared && room != g_lastSharedRoom) {
+        if (g_lastSharedRoom != -1) {
+            Log("session: the shared room is now %d - replicas and enemies start over", room);
+            sync::Reset();
+            reconcile::Reset();
+        }
+        g_lastSharedRoom = room;
+    }
     DebugVisitRoom(localPlayer, inWorld);
     skilltab::DebugTick(localPlayer);
-    g_wasInWorld = inWorld;
-    if (!inWorld) return;
+    dungeons::DebugTick(localPlayer, g_role == Role::kHost);
+    g_wasInWorld = inShared;
+    if (!inShared) {
+        if (g_role == Role::kGuest) dungeons::GuestTick(localPlayer);  // on the way: retries a lost fade
+        return;
+    }
 
     if (g_role == Role::kHost) SteamInvites(localPlayer);
     sync::Tick(localPlayer);
@@ -642,7 +672,7 @@ void Tick(yyc::CInstance* localPlayer) {
     if (g_role == Role::kHost) mobs::HostTick(localPlayer);
     if (g_role == Role::kHost) clock::HostTick(localPlayer);
     unlocks::Tick(localPlayer);
-    if (g_role == Role::kHost) reconcile::HostTick(localPlayer);
+    if (g_role == Role::kHost && inWorld) reconcile::HostTick(localPlayer);  // the world census
     reconcile::DebugTick(localPlayer);
     chests::DebugTick(localPlayer);
     chests::Tick(localPlayer);
@@ -735,6 +765,9 @@ void Leave() {
     character::Reset();
     familiars::Reset();
     bombs::Reset();
+    dungeons::Reset();
+    g_deferred.clear();
+    g_lastSharedRoom = -1;
     world::Reset();
     sync::Reset();
     mobs::Reset();
@@ -781,6 +814,7 @@ bool SessionInstall() {
     if (!fishing::InstallHooks([] { return g_role != Role::kNone; })) return false;
     const auto isHost = [] { return g_role == Role::kHost; };
     const auto isGuest = [] { return g_role == Role::kGuest; };
+    dungeons::Install(isGuest);
     if (!sync::InstallHooks(isHost, isGuest) || !mobs::InstallHooks(isHost, isGuest) ||
         !character::InstallHooks(isGuest) || !storage::InstallHooks() || !land::InstallHooks(isHost, isGuest) ||
         !progress::InstallHooks() || !stations::InstallHooks() || !chests::InstallHooks(isHost) ||

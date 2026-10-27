@@ -14,6 +14,7 @@
 #include "MinHook.h"
 #include "chests.h"
 #include "bombs.h"
+#include "dungeons.h"
 #include "familiars.h"
 #include "log.h"
 #include "mobs.h"
@@ -518,9 +519,7 @@ void __cdecl DestroyHook(yyc::CInstance* self, yyc::CInstance* other, int id, in
     }
 }
 
-// Dungeons are not part of coop (yet): rooms other than the world are not synced, so while connected nobody
-// enters one (QUESTIONS.md). The entrance's transition just plays and the player stays in the world.
-constexpr int kLastDungeonRoom = 21;   // ... rmVolcanoSpaceTower; 22-24 are interiors (wizard tower, druid tree, museum)
+// Dungeons: everyone goes together (dungeons.cpp).
 yyc::BuiltinFn g_origRoomGoto = nullptr;
 
 void __cdecl RoomGotoHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstance* other, int argc,
@@ -528,10 +527,7 @@ void __cdecl RoomGotoHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInsta
     const int room = argc >= 1 ? static_cast<int>(yyc::ToReal(args[0])) : -1;
     if (skilltab::InterceptRoomGoto(self, room)) return;  // the skill tree opens/closes in the world room
     if (interiors::InterceptRoomGoto(self, room)) return;  // interiors are built in the world room
-    if (Connected() && room >= kFirstDungeonRoom && room <= kLastDungeonRoom) {
-        Log("sync: not entering room %d - no dungeons in coop", room);
-        return;
-    }
+    if (dungeons::InterceptRoomGoto(self, room)) return;  // a guest's way in or out: asked of the host
     g_origRoomGoto(result, self, other, argc, args);
 }
 
