@@ -324,6 +324,19 @@ void DestroySilently(yyc::CInstance* self, int id) {
 // ---- builtin hooks ----
 
 // Guest: what the player builds or places (build menu, placeable items, seeds) must exist on the host too.
+// An NPC's reward (Other_12 when its quest is done): the druid's chest for its second quest stayed the guest's
+// own (PLAYTEST8.md #12). The quest is done on the guest's copy of the NPC, so the guest reports what it made.
+bool CreatedByNpcReward(yyc::CInstance* self) {
+    constexpr int kParNpc = 47;  // decompiled/data/objects.tsv
+    const StackFrame* top = yyc::TopFrame();
+    if (top == nullptr || top->name == nullptr || self == nullptr) return false;
+    const size_t length = strlen(top->name);
+    constexpr char kReward[] = "_Other_12";
+    constexpr size_t kRewardLength = sizeof(kReward) - 1;
+    return length > kRewardLength && strcmp(top->name + length - kRewardLength, kReward) == 0 &&
+           IsKind(self, self, kParNpc);
+}
+
 bool CreatedByGuestAction() {
     const StackFrame* top = yyc::TopFrame();
     if (top == nullptr || top->name == nullptr) return false;
@@ -439,7 +452,7 @@ void __cdecl CreateHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstanc
         if (puppet::IsActing()) g_guestDrops[id] = puppet::ActingPlayer();
     } else if (IsGuest() && g_suppressing > 0) {
         g_suppressed.push_back(id);
-    } else if (IsGuest() && CreatedByGuestAction()) {
+    } else if (IsGuest() && (CreatedByGuestAction() || (CreatedByNpcReward(self) && !IsDrop(self, object)))) {
         const InstanceInfo info = Describe(created);
         Send(kGuestSpawn, info, info.id);
         Log("sync: built object %d at (%.0f, %.0f), sent to the host", info.object, info.x, info.y);

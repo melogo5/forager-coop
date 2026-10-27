@@ -191,6 +191,13 @@ std::string Answer(yyc::CInstance* self, const std::string& line) {
         }
         return "ok";
     }
+    if (c == "sets" && w.size() == 4) {  // a string variable (one word), e.g. an NPC's callbackPending
+        if (yyc::FindInstance(Slot(w[1])) == nullptr) return "no such instance";
+        yyc::RValue value = yyc::String(w[3].c_str());
+        yyc::SetVar(Slot(w[1]), Slot(w[2]), &value);
+        yyc::Free(&value);
+        return "ok";
+    }
     if (c == "event" && w.size() == 4) {
         yyc::CInstance* target = yyc::FindInstance(Slot(w[1]));
         if (target == nullptr) return "no such instance";
