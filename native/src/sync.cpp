@@ -45,6 +45,8 @@ constexpr int kSlotHpAlpha = 0x574;
 constexpr int kSlotHpLast = 0x575;
 constexpr int kSlotHpWhite = 0x577;
 constexpr int kSlotDmg = 0x197;  // objPlayer.dmg: what a hit takes off an object (parObject Other_10)
+constexpr int kSlotStack = 0x80E;    // a drop's `stack`: how many of its item it gives
+constexpr float kMaxStack = 10000;  // sanity bound for a stack from the network
 
 #pragma pack(push, 1)
 struct ObjectMsg {
@@ -56,6 +58,9 @@ struct ObjectMsg {
     int32_t owner;  // kSpawn of a drop: who may collect it (kOwnerAnyone/Host/Guest - the receiving guest)
     float sprite;   // kSpawn: the look it rolled after creation (ore vs plain rock...); -1 = keep
     float image;
+    // kSpawn of a drop: its `stack`, 0 = keep. DropItem adds a new drop to one lying near (stack + 1) - all the
+    // more with lighthouses and amulets; the guest's copy stayed at 1 (PLAYTEST8.md #14, #15).
+    float stack;
 };
 struct HpMsg {
     int32_t id;  // the host's instance id
@@ -186,6 +191,8 @@ unsigned g_applied[16] = {};
 unsigned g_steps = 0;
 constexpr unsigned kStatsEverySteps = 600;
 
+float ReadVar(int id, int slot);
+
 ObjectMsg MakeObjectMsg(MessageType type, const InstanceInfo& info, int id, int32_t item, int32_t owner) {
     ObjectMsg msg{id, info.object, static_cast<float>(info.x), static_cast<float>(info.y),
                   static_cast<float>(info.depth), item, owner, -1, 0};
@@ -194,6 +201,7 @@ ObjectMsg MakeObjectMsg(MessageType type, const InstanceInfo& info, int id, int3
             msg.sprite = static_cast<float>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_sprite_index));
             msg.image = static_cast<float>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_image_index));
         }
+        if (item != kNoItem) msg.stack = ReadVar(id, kSlotStack);
     }
     return msg;
 }
@@ -799,6 +807,10 @@ void ApplySpawn(yyc::CInstance* self, const ObjectMsg& msg) {
     if (id != 0 && msg.item != kNoItem) {
         yyc::RValue item = yyc::Real(msg.item);
         yyc::SetVar(id, kSlotItem, &item);
+        if (msg.stack >= 1 && msg.stack <= kMaxStack) {
+            yyc::RValue stack = yyc::Real(std::floor(msg.stack));
+            yyc::SetVar(id, kSlotStack, &stack);
+        }
     }
     if (id != 0 && msg.sprite >= 0) {
         if (yyc::CInstance* replica = yyc::FindInstance(id)) {
@@ -810,7 +822,7 @@ void ApplySpawn(yyc::CInstance* self, const ObjectMsg& msg) {
     if (id != 0 && msg.owner == kOwnerGuest) {
         if (yyc::CInstance* drop = yyc::FindInstance(id)) {
             CollectNow(drop, self);  // straight into our inventory
-            Log("sync: our drop of item %d collected", msg.item);
+            Log("sync: our drop of item %d x%.0f collected", msg.item, msg.stack);
         }
     }
 }

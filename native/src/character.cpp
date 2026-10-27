@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -28,6 +29,7 @@ enum MessageType : uint8_t {
     kGuestHello = 30,     // guest -> host: name
     kCharacter = 31,      // host -> guest: u8 hasData, stored Data.cin
     kCharacterSave = 32,  // guest -> host: the guest's Data.cin
+    kGearState = 33,      // guest -> host: the guest's owned gear, a float per category (gearCurrent)
 };
 
 constexpr uint32_t kScriptDeserializeCharacterChunk = 0x005BC8F0;
@@ -37,6 +39,9 @@ constexpr uint32_t kScriptGearEdit = 0x006CAAC0;
 constexpr int kGearFieldOwned = 2;
 constexpr int kSlotGearCurrent = 0x535;
 constexpr char kPlayerCreate[] = "gml_Object_objPlayer_Create_0";
+constexpr unsigned kGearEverySteps = 60;        // 1 s: look for a change
+constexpr unsigned kGearResendSteps = 600;      // 10 s: sent anyway (a puppet made again starts with base gear)
+constexpr size_t kMaxGearCategories = 128;
 constexpr uint32_t kScriptCinderLoad = 0x005CE0D0;    // CinderLoad(buffer) -> cinder (chunk map)
 constexpr uint32_t kScriptCinderDelete = 0x005C9BD0;  // CinderDelete(cinder)
 constexpr int kSlotSaveFile = yyc::slot::saveFile;
@@ -306,8 +311,53 @@ void GuestUploadNow() {
     }
 }
 
+int GearCount(yyc::CInstance* player, int playerId) {
+    yyc::RValue gear{};
+    if (!yyc::GetVar(playerId, kSlotGearCurrent, &gear)) return 0;
+    int count = 0;
+    if ((gear.kind & yyc::kKindMask) == yyc::kArray) {
+        yyc::RValue length{};
+        yyc::CallBuiltin("array_length_1d", player, 1, &gear, &length);
+        count = static_cast<int>(yyc::ToReal(length));
+        yyc::Free(&length);
+    }
+    yyc::Free(&gear);
+    return (std::min)(count, static_cast<int>(kMaxGearCategories));
+}
+
+// Playtest 8 #15: amulets did nothing for the guest. Its drops are made by the host, which asks the gear of
+// PlayerFind() - the guest's puppet, that had only the starting gear. The puppet carries the guest's gear.
+void SendOwnGear(yyc::CInstance* localPlayer) {
+    static std::vector<float> sent;
+    static unsigned steps = 0;
+    if (++steps % kGearEverySteps != 0) return;
+    const int id = static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_id));
+    std::vector<float> gear(static_cast<size_t>(GearCount(localPlayer, id)));
+    for (size_t i = 0; i < gear.size(); ++i) gear[i] = static_cast<float>(OwnedGear(id, static_cast<int>(i)));
+    if (gear.empty() || (gear == sent && steps % kGearResendSteps != 0)) return;
+    if (net::Send(kGearState, gear.data(), gear.size() * sizeof(float))) sent = gear;
+}
+
+void ApplyGuestGear(const net::Message& message) {
+    yyc::CInstance* puppet = puppet::Instance(message.from);
+    if (puppet == nullptr || message.payload.size() % sizeof(float) != 0) return;
+    const int id = static_cast<int>(yyc::GetBuiltinReal(puppet, yyc::va::YYVar_id));
+    const size_t count = (std::min)(message.payload.size() / sizeof(float), static_cast<size_t>(GearCount(puppet, id)));
+    int changed = 0;
+    for (size_t i = 0; i < count; ++i) {
+        float value = 0;
+        memcpy(&value, message.payload.data() + i * sizeof(float), sizeof(value));
+        if (!std::isfinite(value) || value == OwnedGear(id, static_cast<int>(i))) continue;
+        yyc::RValue item = yyc::Real(value);
+        yyc::SetVarAt(id, kSlotGearCurrent, static_cast<int>(i), &item);
+        ++changed;
+    }
+    if (changed > 0) Log("character: guest %u's puppet now has its gear (%d categories changed)", message.from, changed);
+}
+
 // Every 15 s: save into the temporary slot, then upload its Data.cin.
 void GuestTick(yyc::CInstance* localPlayer) {
+    if (net::IsConnected()) SendOwnGear(localPlayer);
     if (g_settle > 0 && --g_settle == 0) {
         GuestUploadNow();
         return;
@@ -318,6 +368,10 @@ void GuestTick(yyc::CInstance* localPlayer) {
 }
 
 bool HostHandle(const net::Message& message, yyc::CInstance* localPlayer, bool* guestIntroduced) {
+    if (message.type == kGearState) {
+        ApplyGuestGear(message);
+        return true;
+    }
     if (message.type == kGuestHello) {
         const std::string asked = SafeName(std::string(message.payload.begin(), message.payload.end()));
         const std::string name = FreeName(asked, message.from);
