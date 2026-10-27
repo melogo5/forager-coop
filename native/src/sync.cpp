@@ -13,6 +13,7 @@
 
 #include "MinHook.h"
 #include "chests.h"
+#include "familiars.h"
 #include "log.h"
 #include "mobs.h"
 #include "mutant.h"
@@ -430,6 +431,7 @@ void __cdecl CreateHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstanc
     yyc::CInstance* created = yyc::FindInstance(id);
     if (created == nullptr) return;
     const int object = static_cast<int>(yyc::GetBuiltinReal(created, yyc::va::YYVar_object_index));
+    if (IsGuest()) familiars::OnCreated(self, id, object);
     if (IsGuest() && IsScrollSpawner(object) && CreatedByScroll()) {
         // Its spawns would be the guest's own (skipped here): the host runs the spawner (playtest 4, bug 4).
         g_scrollSpawners.push_back(id);

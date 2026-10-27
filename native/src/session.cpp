@@ -32,6 +32,7 @@
 #include "interiors.h"
 #include "look.h"
 #include "traps.h"
+#include "familiars.h"
 #include "land.h"
 #include "mobs.h"
 #include "progress.h"
@@ -333,7 +334,8 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             unlocks::Handle(message, localPlayer) || coins::Handle(message, localPlayer) ||
             progress::Handle(message, localPlayer) || quests::Handle(message, localPlayer) ||
             stations::Handle(message, localPlayer) || skills::Handle(message, localPlayer) || traps::Handle(message, localPlayer) ||
-            banks::Handle(message, localPlayer) || reconcile::Handle(message, localPlayer) || chests::Handle(message, localPlayer)) {
+            banks::Handle(message, localPlayer) || reconcile::Handle(message, localPlayer) || chests::Handle(message, localPlayer) ||
+            familiars::Handle(message, localPlayer)) {
             continue;
         }
         bool guestIntroduced = false;
@@ -590,10 +592,12 @@ void Tick(yyc::CInstance* localPlayer) {
     TrackPeers(localPlayer, peers);
     if (g_role == Role::kHost) {
         world::HostTick();
+        familiars::HostTick(localPlayer);
         WarnIfPortClosed();
     }
     if (g_role == Role::kGuest) {
         character::GuestTick(localPlayer);
+        if (connected) familiars::GuestTick();
     }
     if (!connected && g_wasConnected) {
         Log("session: peer gone");
@@ -727,6 +731,7 @@ void Leave() {
     g_peers.clear();
     g_remotes.clear();
     character::Reset();
+    familiars::Reset();
     world::Reset();
     sync::Reset();
     mobs::Reset();

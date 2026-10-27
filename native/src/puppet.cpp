@@ -7,8 +7,10 @@
 #include <initializer_list>
 #include <cstring>
 #include <string>
+#include <unordered_map>
 
 #include "MinHook.h"
+#include "familiars.h"
 #include "gui.h"
 #include "log.h"
 
@@ -47,6 +49,7 @@ constexpr uint32_t kScriptDmgPlayer = 0x00727030;
 constexpr uint32_t kDroidDraw = 0x00B4E5E0;
 constexpr int kSlotDroidFloatY = 0x432;
 constexpr int kSlotDroidXscale = 0x913;
+constexpr int kSlotDroidId = 0x1B7;
 constexpr char kCreateFrame[] = "gml_Object_objPlayer_Create_0";
 
 using yyc::StackFrame;
@@ -73,6 +76,7 @@ int g_actorId = 0;           // PlayerFind() -> this instance id, when non-zero
 int g_actingDepth = 0;       // BeginActing nesting
 bool g_enemiesSeeAll = false;       // host with guests: enemies go for the nearest player (PLAYTEST.md #8)
 bool g_familiarsFollowHost = false;  // guest: familiars are the host's (PLAYTEST.md #14)
+std::unordered_map<int, int> g_familiarOwners;  // familiar id -> kOwnSelf or the peer whose puppet it follows
 constexpr int kParEnemy = yyc::obj::parEnemy;
 constexpr int kParFamiliar = 74;     // lantern, halo, droids...
 constexpr int kMaxObjects = 1024;
@@ -167,8 +171,14 @@ yyc::RValue* __cdecl PlayerFindHook(yyc::CInstance* self, yyc::CInstance* other,
             id = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
         }
     }
-    if (id == 0 && g_familiarsFollowHost && !g_puppets.empty() && self != nullptr && KindOf(self) == kFamiliar) {
-        if (const Puppet* host = Find(net::kHostPeer)) id = host->id;
+    if (id == 0 && !g_puppets.empty() && self != nullptr && KindOf(self) == kFamiliar) {
+        const auto owner = g_familiarOwners.find(static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id)));
+        if (owner != g_familiarOwners.end()) {
+            if (owner->second == kOwnSelf) return g_origPlayerFind(self, other, result, argc, args);
+            if (const Puppet* puppet = Find(static_cast<net::PeerId>(owner->second))) id = puppet->id;
+        } else if (g_familiarsFollowHost) {
+            if (const Puppet* host = Find(net::kHostPeer)) id = host->id;
+        }
     }
     if (id == 0 && g_enemiesSeeAll && !g_puppets.empty() && self != nullptr && KindOf(self) == kEnemy) {
         g_origPlayerFind(self, other, result, argc, args);
@@ -297,9 +307,13 @@ bool IsSetReal(int id, int slot) {
     return set;
 }
 
+double ReadReal(int id, int slot);
+
 void __cdecl DroidDrawHook(yyc::CInstance* self, yyc::CInstance* other) {
     const int id = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
     if (!IsSetReal(id, kSlotDroidFloatY) || !IsSetReal(id, kSlotDroidXscale)) return;  // drawn after its first step
+    // Its look is global.droidNames[droidId]: a droid of the other player's world may have none here.
+    if (!familiars::HasDroidLook(self, static_cast<int>(ReadReal(id, kSlotDroidId)))) return;
     g_origDroidDraw(self, other);
 }
 
@@ -443,6 +457,14 @@ void SetInert(yyc::CInstance* instance, bool inert) {
 void SetFamiliarsFollowHost(bool on) { g_familiarsFollowHost = on; }
 
 bool IsCreatingPuppet() { return g_creating; }
+
+void SetFamiliarOwner(int familiarId, int owner) {
+    if (owner == kNoOwner) {
+        g_familiarOwners.erase(familiarId);
+    } else {
+        g_familiarOwners[familiarId] = owner;
+    }
+}
 
 yyc::CInstance* Instance(net::PeerId player) {
     Prune();

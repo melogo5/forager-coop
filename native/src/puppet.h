@@ -58,6 +58,12 @@ void SetInert(yyc::CInstance* instance, bool inert);
 // host's puppet.
 void SetFamiliarsFollowHost(bool on);
 
+// A familiar with a known owner follows that player: kOwnSelf - the local player (the guest's own droid), else
+// that peer's puppet (the host's copy of a guest's droid). kNoOwner forgets it.
+constexpr int kOwnSelf = -1;
+constexpr int kNoOwner = -2;
+void SetFamiliarOwner(int familiarId, int owner);
+
 // Player `player`'s puppet, or nullptr when there is none.
 yyc::CInstance* Instance(net::PeerId player);
 // Every puppet there is, in the order they were created.
