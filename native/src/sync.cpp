@@ -38,6 +38,7 @@ enum MessageType : uint8_t {
     kGuestSpawnAck = 16,   // host -> guest: id = the host's instance, item = the guest's instance
     kObjectHp = 17,        // host -> guest: health of a world object after a hit (HpMsg)
     kProgress = 19,        // host -> guest: the shared level/XP/skill points (ProgressMsg)
+    kGuestSummon = 25,     // guest -> host: a creature the guest's sigil or scroll made (ObjectMsg)
 };
 constexpr int kSlotHp = yyc::slot::hp;
 constexpr int kSlotHpAlpha = 0x574;
@@ -356,6 +357,23 @@ bool CreatedByScroll() {
     return top != nullptr && top->name != nullptr && strcmp(top->name, "gml_Script_UseScroll") == 0;
 }
 
+// Playtest 8: a guest's sigil showed only the boss's name, the wizard's scroll cleared the ground but no animals
+// came - creatures are the host's (mobs.cpp streams them; the guest drops its own). The host makes them instead.
+bool CreatedBySummon() {
+    const StackFrame* top = yyc::TopFrame();
+    return top != nullptr && top->name != nullptr &&
+           (strcmp(top->name, "gml_Script_UseSigil") == 0 || strcmp(top->name, "gml_Script_UseScroll") == 0);
+}
+
+// Enemies (bosses too) and critters - what mobs.cpp streams.
+bool IsCreature(yyc::CInstance* self, int object) {
+    constexpr int kParCritter = 64;  // decompiled/data/objects.tsv
+    for (const int parent : {static_cast<int>(yyc::obj::parEnemy), kParCritter}) {
+        if (object == parent || CallReal(self, "object_is_ancestor", {double(object), double(parent)}) != 0) return true;
+    }
+    return false;
+}
+
 // The world is being loaded: the room entered again (back from the skill tree, a building), a zone read from the
 // save. What that creates is in every player's world already; sent as new, it would be doubled at the guests
 // (PLAYTEST3.md #1-#3).
@@ -394,6 +412,12 @@ void __cdecl CreateHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstanc
     if (IsGuest() && IsScrollSpawner(object) && CreatedByScroll()) {
         // Its spawns would be the guest's own (skipped here): the host runs the spawner (playtest 4, bug 4).
         g_scrollSpawners.push_back(id);
+        return;
+    }
+    if (IsGuest() && CreatedBySummon() && IsCreature(self, object)) {
+        const InstanceInfo info = Describe(created);
+        Send(kGuestSummon, info, info.id);
+        Log("sync: summoned creature %d at (%.0f, %.0f), sent to the host", info.object, info.x, info.y);
         return;
     }
     if (!IsSynced(self, object)) return;
@@ -934,6 +958,22 @@ void ApplyGuestSpawn(yyc::CInstance* self, net::PeerId from, const ObjectMsg& ms
     Log("sync: guest built object %d at (%.0f, %.0f) -> %d (guest %u)", msg.object, msg.x, msg.y, id, from);
 }
 
+// Host: the creature a guest's sigil or scroll made. Ours from here: streamed to the guests like any enemy (the
+// guest's own copy is adopted by position or dropped).
+void ApplyGuestSummon(yyc::CInstance* self, net::PeerId from, const ObjectMsg& msg) {
+    if (!IsFinite(msg) || !IsCreature(self, msg.object)) {
+        Log("sync: guest %u summoned object %d - not a creature; ignored", from, msg.object);
+        return;
+    }
+    puppet::BeginActing(from);
+    ++g_applyingRemote;
+    const int id = static_cast<int>(
+        CallReal(self, "instance_create_depth", {msg.x, msg.y, msg.depth, double(msg.object)}));
+    --g_applyingRemote;
+    puppet::EndActing();
+    Log("sync: guest %u summoned object %d at (%.0f, %.0f) -> %d", from, msg.object, msg.x, msg.y, id);
+}
+
 void ApplyGuestDestroyed(yyc::CInstance* self, net::PeerId from, const ObjectMsg& msg) {
     yyc::CInstance* target = ResolveOnHost(self, msg);
     if (target == nullptr) return;
@@ -1270,6 +1310,9 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
             return true;
         case kGuestSpawn:
             if (size == sizeof(ObjectMsg) && IsHost()) ApplyGuestSpawn(localPlayer, message.from, ReadObject(message));
+            return true;
+        case kGuestSummon:
+            if (size == sizeof(ObjectMsg) && IsHost()) ApplyGuestSummon(localPlayer, message.from, ReadObject(message));
             return true;
         case kGuestSpawnAck:
             if (size == sizeof(ObjectMsg) && IsGuest()) {
