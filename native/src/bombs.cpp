@@ -20,7 +20,10 @@ constexpr double kMatchDistance = 12;    // the decoy and the owner's bomb sit o
 constexpr char kPlacer[] = "gml_Script_UseBomb";
 constexpr uint32_t kBombAlarm = 0x010314F0;      // objBomb Alarm_0: the fuse runs out -> instance_destroy
 constexpr uint32_t kBombDestroy = 0x0102F1A0;    // objBomb Destroy_0: the blast (ExplosionCreate, damage)
-constexpr uint32_t kExplosionStep = 0x01034190;  // objExplosion Step_0: hurts what it touches
+constexpr uint32_t kExplosionStep = 0x01034190;  // objExplosion Step_0: hurts what it touches (once: dealtDmg)
+constexpr int kSlotDealtDmg = 0x16D;
+constexpr int kSlotDmg = 0x197;
+constexpr int kSlotDmgPlayer = 0x198;
 
 #pragma pack(push, 1)
 struct BombMsg {
@@ -64,8 +67,15 @@ void __cdecl DestroyHook(yyc::CInstance* self, yyc::CInstance* other) {
     g_origDestroy(self, other);
 }
 
+// The step also grows, fades and ends the blast: it runs, with the damage marked as dealt already.
 void __cdecl ExplosionStepHook(yyc::CInstance* self, yyc::CInstance* other) {
-    if (g_harmless.count(IdOf(self)) > 0) return;
+    const int id = IdOf(self);
+    if (g_harmless.count(id) > 0) {
+        yyc::RValue dealt = yyc::Real(1), none = yyc::Real(0), none2 = yyc::Real(0);
+        yyc::SetVar(id, kSlotDealtDmg, &dealt);
+        yyc::SetVar(id, kSlotDmg, &none);
+        yyc::SetVar(id, kSlotDmgPlayer, &none2);
+    }
     g_origExplosionStep(self, other);
 }
 
