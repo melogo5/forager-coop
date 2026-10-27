@@ -370,12 +370,37 @@ void AfterWorldEndStep(yyc::CInstance* self) {
 // A world save while inside: for its time the interior is taken down and the player stands at the door, so the save
 // has the world as if the player had not gone in; then the interior is put back.
 double g_savedX = 0, g_savedY = 0;
+std::vector<int> g_beforeSave;  // the interior's ids before the save took it down
+
+// A menu open on something of the interior (a museum bundle's objSocketMenu) keeps its `owner`: the rebuilt
+// interior has new ids, and a menu whose owner is gone draws nothing while the player stays in it - the guest
+// (saving every 15 s) could not move after choosing a bundle (PLAYTEST8.md #2). Same plan, same order.
+void RemapMenuOwners(const std::vector<int>& before, const std::vector<int>& after) {
+    if (before.size() != after.size()) return;
+    constexpr int kParMenu = 238;  // decompiled/data/objects.tsv
+    const int count = static_cast<int>(Real("instance_number", {double(kParMenu)}));
+    for (int i = 0; i < count; ++i) {
+        const int menu = static_cast<int>(Real("instance_find", {double(kParMenu), double(i)}));
+        yyc::RValue owner{};
+        const bool known = yyc::GetVar(menu, kSlotOwner, &owner) && yyc::IsNumber(owner);
+        const int old = known ? static_cast<int>(yyc::ToReal(owner)) : 0;
+        yyc::Free(&owner);
+        for (size_t k = 0; known && k < before.size(); ++k) {
+            if (before[k] != old) continue;
+            yyc::RValue now = yyc::Real(after[k]);
+            yyc::SetVar(menu, kSlotOwner, &now);
+            Log("interiors: menu %d now on %d (was %d, rebuilt after the save)", menu, after[k], old);
+            break;
+        }
+    }
+}
 
 void BeforeSave() {
     yyc::CInstance* player = g_inside != nullptr && g_playerId != 0 ? yyc::FindInstance(g_playerId) : nullptr;
     if (player == nullptr) return;
     g_savedX = yyc::GetBuiltinReal(player, yyc::va::YYVar_x);
     g_savedY = yyc::GetBuiltinReal(player, yyc::va::YYVar_y);
+    g_beforeSave = g_built;
     Teardown(player);  // the save takes layer sprites and instances: none of the interior's may be there
     yyc::SetBuiltinReal(player, yyc::va::YYVar_x, GlobalReal(kSlotSpawnPlayerX));
     yyc::SetBuiltinReal(player, yyc::va::YYVar_y, GlobalReal(kSlotSpawnPlayerY));
@@ -385,6 +410,8 @@ void AfterSave() {
     yyc::CInstance* player = g_inside != nullptr && g_playerId != 0 ? yyc::FindInstance(g_playerId) : nullptr;
     if (player == nullptr) return;
     Build(player, *g_inside);
+    RemapMenuOwners(g_beforeSave, g_built);
+    g_beforeSave.clear();
     yyc::SetBuiltinReal(player, yyc::va::YYVar_x, g_savedX);
     yyc::SetBuiltinReal(player, yyc::va::YYVar_y, g_savedY);
     Log("interiors: the world saved without the interior, as if the player were at the door");
