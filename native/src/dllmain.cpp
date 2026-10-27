@@ -3,6 +3,7 @@
 
 #include "MinHook.h"
 #include "crash.h"
+#include "intro.h"
 #include "log.h"
 #include "menu.h"
 #include "session.h"
@@ -70,6 +71,7 @@ DWORD WINAPI InstallCoop(LPVOID) {
     }
     const bool sessionOk = coop::SessionInstall();
     const bool menuOk = coop::MenuInstall();
+    coop::IntroInstall();
     coop::TraceInstall();
     const MH_STATUS enabled = MH_EnableHook(MH_ALL_HOOKS);
     coop::Log("hooks %s (session %s, menu %s)", enabled == MH_OK ? "enabled" : MH_StatusToString(enabled),

@@ -33,6 +33,10 @@ powershell -File native\build.ps1 -Install   # + копия в папку игр
 Брандмауэр Windows при первом запуске спросит разрешение для Forager — его нужно дать.
 Что синхронизируется и что нет — [docs/coop/STATUS.md](../docs/coop/STATUS.md).
 
+Заставки Humble Bundle и HopFrog при запуске пропускаются, если рядом с `Forager.exe` лежит файл
+`coop_skip_intro.txt` (содержимое неважно; удалить файл — заставки вернутся) или задана переменная окружения
+`COOP_SKIP_INTRO`. `build.ps1 -Install` и `tools\gametest\install.ps1` создают этот файл сами.
+
 Для отладки остались параметры запуска: `-coop host 7790` и `-coop join <IP> 7790`.
 
 DLL ставит хуки, только если `Forager.exe` — поддерживаемый билд (PE timestamp `0x60148428`); на другом билде
@@ -58,6 +62,7 @@ DLL ставит хуки, только если `Forager.exe` — поддер�
 - `src/clock.cpp` — время суток и погода с хоста
 - `src/unlocks.cpp` — постройки, открытые у хоста, открываются и у гостя
 - `src/net.cpp` — TCP: поток приёма, кадры `[u32 размер][u8 тип][данные]` до 8 МБ
+- `src/intro.cpp` — пропуск заставок при запуске (опция `coop_skip_intro.txt`)
 - `src/crash.cpp` — запись GML-стека в лог при падении
 - `src/trace.cpp` — трассировщик для разработки: перехватывает функции из `coop_trace.txt`
   (рядом с `Forager.exe`, строки `имя<TAB>VA` как в `decompiled/code/index.tsv`) и пишет в лог цепочки GML-вызовов

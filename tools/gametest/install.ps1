@@ -9,3 +9,5 @@ for ($i = 0; ; $i++) {
   try { Copy-Item (Join-Path $root 'native\build\version.dll') "$d\version.dll" -Force; break }
   catch { if ($i -ge 10) { throw }; Start-Sleep 1 }
 }
+# In development the startup logos are always skipped (native/src/intro.cpp).
+New-Item -ItemType File -Force "$d\coop_skip_intro.txt" | Out-Null
