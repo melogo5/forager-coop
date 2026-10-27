@@ -587,6 +587,8 @@ void Step(yyc::CInstance* control) {
             character::GuestUploadNow();
             Log("menu: the guest's last save sent to the host");
             world::RemoveGuestSaveSlot();
+        } else if (!session::HostFarewellDone()) {
+            return;
         }
         session::Leave();
         g_loadingWorld = false;

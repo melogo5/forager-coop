@@ -41,6 +41,8 @@ void GuestTick(yyc::CInstance* localPlayer);
 // Host, game thread: handles guest introductions and character uploads; false for other messages.
 // Sets *guestIntroduced after answering an introduction: that is the moment to send the world.
 bool HostHandle(const net::Message& message, yyc::CInstance* localPlayer, bool* guestIntroduced);
+// Host: stores a guest's character upload; false for other messages.
+bool HostTakeSave(const net::Message& message);
 
 // Forgets the last session (guest: stored character, swap done; host: guest names), to start again.
 void Reset();

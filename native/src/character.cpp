@@ -471,23 +471,25 @@ bool HostHandle(const net::Message& message, yyc::CInstance* localPlayer, bool* 
         *guestIntroduced = true;
         return true;
     }
-    if (message.type == kCharacterSave) {
-        const std::string name = HostGuestName(message.from);
-        const std::vector<uint8_t>& data = message.payload;
-        // An empty or foreign file would replace the stored character and make this guest a new one next time.
-        if (data.size() < 4 || memcmp(data.data(), "cndr", 4) != 0) {
-            Log("character: guest '%s' sent a broken save (%zu bytes) - the stored one is kept", name.c_str(),
-                data.size());
-            return true;
-        }
-        if (!WriteFile(GuestFile(name), data.data(), data.size())) {
-            Log("character: cannot save guest '%s'", name.c_str());
-            return true;
-        }
-        Log("character: saved guest '%s' (%zu bytes)", name.c_str(), data.size());
+    return HostTakeSave(message);
+}
+
+bool HostTakeSave(const net::Message& message) {
+    if (message.type != kCharacterSave) return false;
+    const std::string name = HostGuestName(message.from);
+    const std::vector<uint8_t>& data = message.payload;
+    // An empty or foreign file would replace the stored character and make this guest a new one next time.
+    if (data.size() < 4 || memcmp(data.data(), "cndr", 4) != 0) {
+        Log("character: guest '%s' sent a broken save (%zu bytes) - the stored one is kept", name.c_str(),
+            data.size());
         return true;
     }
-    return false;
+    if (!WriteFile(GuestFile(name), data.data(), data.size())) {
+        Log("character: cannot save guest '%s'", name.c_str());
+        return true;
+    }
+    Log("character: saved guest '%s' (%zu bytes)", name.c_str(), data.size());
+    return true;
 }
 
 void Reset() {

@@ -24,6 +24,9 @@ void JoinSteam(uint64_t hostSteamId);
 // Back in the main menu after playing: ends the session (the host tells the guest first) and forgets it,
 // so Host/Join work again.
 void Leave();
+// Host, back in the main menu, every step before Leave: tells the guests and waits (a few seconds at most) for
+// their last character saves. True when Leave may go.
+bool HostFarewellDone();
 // The current session has been in a world.
 bool PlayedWorld();
 // A message for the COOP screen about how the last session ended (empty if none); taken once.

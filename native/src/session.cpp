@@ -84,7 +84,7 @@ constexpr int kMaxGuests = 3;  // 4 players (docs/coop/MULTIPLAYER.md)
 enum MessageType : uint8_t {
     kHello = 1,
     kPlayerState = 2,
-    kBye = 7,        // host -> guest: the host left its world; the session is over
+    kBye = 7,        // host -> guest: the host left its world; the guest sends its last save, the session is over
     kPeerState = 8,  // host -> guests: another guest's PlayerStateMsg (PeerStateMsg)
     kPeerGone = 9,   // host -> guests: u8 player - that guest left
 };
@@ -116,6 +116,13 @@ bool g_playedWorld = false;  // this session has been in a world (back in the me
 unsigned g_steps = 0;
 unsigned g_offlineSteps = 0;
 bool g_leaving = false;  // guest: on the way back to the main menu
+// The host left: the guest saves at once and sends that save before going (it lost up to 15 s of play before);
+// the host, back in the menu, waits for it a little.
+constexpr unsigned kGuestByeSaveSteps = 120;  // SaveGame is asynchronous
+constexpr unsigned kHostFarewellSteps = 480;  // 8 s: a save takes ~2 s and is a few KB
+unsigned g_byeSaveSteps = 0;                  // guest: its last save is being written
+unsigned g_farewellSteps = 0;                 // host: steps spent waiting for the guests' last saves
+std::vector<net::PeerId> g_farewellWaiting;   // host: guests whose last save has not come yet
 std::string g_notice;    // shown on the COOP screen when back in the menu
 bool g_wasConnected = false;
 bool g_inviteHinted = false;  // host: told about F2 in this world
@@ -208,6 +215,21 @@ void GuestGoToMenu(yyc::CInstance* localPlayer, const char* why) {
     yyc::RValue result{};
     yyc::At<yyc::ScriptFn>(kScriptRestartGame)(localPlayer, localPlayer, &result, 0, nullptr);
     yyc::Free(&result);
+}
+
+// Guest: the host is leaving. In the world the game saves now and the save goes after it once written; elsewhere
+// (a dungeon must not be saved into the world copy) the last save goes as it is.
+void GuestOnBye(yyc::CInstance* localPlayer) {
+    if (g_byeSaveSteps > 0) return;
+    const int room = static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_room));
+    if (net::IsConnected() && room == yyc::kRoomGame) {
+        Log("session: the host is leaving - saving the character for it");
+        world::GuestSaveCharacter(localPlayer);
+        g_byeSaveSteps = kGuestByeSaveSteps;
+        return;
+    }
+    if (net::IsConnected()) character::GuestUploadNow();
+    GuestGoToMenu(localPlayer, "the host left");
 }
 
 uint32_t OurProtocol();
@@ -369,7 +391,7 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             continue;
         }
         if (message.type == kBye && g_role == Role::kGuest) {
-            GuestGoToMenu(localPlayer, "the host left");
+            GuestOnBye(localPlayer);
             return;  // the room is going away; the rest does not matter any more
         }
         if (message.type == kHello && message.payload.size() == sizeof(HelloMsg)) {
@@ -602,6 +624,13 @@ void Tick(yyc::CInstance* localPlayer) {
     ApplyDebugCheats();
     ApplyDebugSpeed(localPlayer);
     if (g_role == Role::kNone || g_leaving) return;
+    if (g_byeSaveSteps > 0) {
+        if (--g_byeSaveSteps == 0) {
+            character::GuestUploadNow();
+            GuestGoToMenu(localPlayer, "the host left");
+        }
+        return;
+    }
     if (!g_playedWorld && g_role == Role::kHost && !HostWorldAllowed(localPlayer)) {
         g_playedWorld = true;  // back in the menu this ends the session
         return;
@@ -755,6 +784,33 @@ void JoinSteam(uint64_t hostSteamId) {
     net::StartJoinSteam(hostSteamId);
 }
 
+bool HostFarewellDone() {
+    if (g_role != Role::kHost) return true;
+    if (g_farewellSteps == 0) {
+        g_farewellWaiting = net::Peers();
+        if (g_farewellWaiting.empty()) return true;
+        net::Send(kBye, nullptr, 0);
+        Log("session: back in the menu - waiting for the last save of %zu guest(s)", g_farewellWaiting.size());
+    }
+    std::vector<net::Message> inbox;
+    net::Drain(inbox);
+    for (const net::Message& message : inbox) {
+        if (!character::HostTakeSave(message)) continue;
+        g_farewellWaiting.erase(std::remove(g_farewellWaiting.begin(), g_farewellWaiting.end(), message.from),
+                                g_farewellWaiting.end());
+    }
+    const std::vector<net::PeerId> peers = net::Peers();
+    g_farewellWaiting.erase(std::remove_if(g_farewellWaiting.begin(), g_farewellWaiting.end(),
+                                           [&](net::PeerId peer) {
+                                               return std::find(peers.begin(), peers.end(), peer) == peers.end();
+                                           }),
+                            g_farewellWaiting.end());
+    if (g_farewellWaiting.empty()) return true;
+    if (++g_farewellSteps < kHostFarewellSteps) return false;
+    Log("session: %zu guest(s) sent no last save - going without it", g_farewellWaiting.size());
+    return true;
+}
+
 void Leave() {
     if (g_role == Role::kNone) return;
     const bool host = g_role == Role::kHost;
@@ -770,6 +826,9 @@ void Leave() {
     g_role = Role::kNone;
     g_playedWorld = false;
     g_leaving = false;
+    g_byeSaveSteps = 0;
+    g_farewellSteps = 0;
+    g_farewellWaiting.clear();
     g_offlineSteps = 0;
     g_wasConnected = false;
     g_peers.clear();
