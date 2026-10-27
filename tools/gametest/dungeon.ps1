@@ -48,7 +48,25 @@ if ($cube.Success) {
   Check 'the guest sees the cube where the host has it' ($hostCube -eq $guestCube)
 } else { 'note: no cube in this room' }
 
-$hpSlot =(Select-String (Join-Path $PSScriptRoot '..\..\native\src\yyc.h') -Pattern 'constexpr int hp = (0x[0-9A-Fa-f]+|\d+)').Matches[0].Groups[1].Value
+# The other pieces with E (puzzles.cpp): object -> the variable E changes.
+$pieces = [ordered]@{ '200' = '0x58'; '181' = '0x8ca'; '205' = '0x7d8'; '180' = 'image'; '182' = '0x1a7' }
+foreach ($object in $pieces.Keys) {
+  $piece = [regex]::Match((Ask $g "woken $object list $object"), '^\d+: (\d+) ')
+  if (-not $piece.Success) { continue }
+  $id = $piece.Groups[1].Value; $slot = $pieces[$object]
+  function Value([int]$game) {
+    if ($slot -eq 'image') { return [regex]::Match((Ask $game "woken $object look $id"), 'image ([\d.]+)').Groups[1].Value }
+    Ask $game "woken $object var $id $slot"
+  }
+  $hostBefore = Value $h
+  Ask $g "woken $object event $id 7 11" | Out-Null
+  Start-Sleep 2
+  $hostAfter = Value $h; $guestAfter = Value $g
+  Check "piece $id (object $object): the guest's E changed it at the host ($hostBefore -> $hostAfter) and the guest has it ($guestAfter)" `
+    ($hostAfter -ne $hostBefore -and $hostAfter -eq $guestAfter)
+}
+
+$hpSlot = (Select-String (Join-Path $PSScriptRoot '..\..\native\src\yyc.h') -Pattern 'constexpr int hp = (0x[0-9A-Fa-f]+|\d+)').Matches[0].Groups[1].Value
 $me = (Ask $g 'player').Split(' ')
 Ask $g "set $($me[0]) $hpSlot 0" | Out-Null
 Start-Sleep 1

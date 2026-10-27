@@ -1,9 +1,9 @@
 // Dungeon puzzles in coop (PLAYTEST8.md #18). The host's dungeon is the real one:
 //  - a guest's E on a puzzle piece (push a cube, turn a mirror, a runic pillar, a brazier, a terminal, a pillar to
-//    push down, the blood altar) is not done at the guest: the host does it as the guest's puppet;
-//  - a gem socket takes the gem from the inventory, so the guest's own E stays its own and its result (solved) goes
-//    to the host;
-//  - what the pieces are (solved, lit, down, facing, colour, order, electrified, a cube's place) goes from the host
+//    push down) is not done at the guest: the host does it as the guest's puppet;
+//  - a gem socket takes the gem from the inventory and the blood altar opens a choice of boons, so there the guest's
+//    own E stays its own and its result (solved, used) goes to the host;
+//  - what the pieces are (solved, down, facing, order, a terminal's symbol, electrified, a cube's place) goes from the host
 //    to the guests whenever it changes;
 //  - doors, barriers and breakable walls are world objects (sync.cpp): opened at the host, gone at the guests.
 // Lanterns have their own exchange (dungeons.cpp).
