@@ -91,6 +91,7 @@ constexpr int kSyncedParents[] = {
     23,   // parEnemy
     115,  // objBridge: no parent (PLAYTEST.md #10)
     64,   // parCritter: fireflies, butterflies, cows... (streamed by mobs like enemies; PLAYTEST.md #15)
+    63,   // objTrader: the wandering merchant the host's world spawns (PLAYTEST8.md #3); other NPCs are fixed
 };
 constexpr int kSlotKilledByPlayer = 0x5DF;
 constexpr uint32_t kYYVarRoomSpeed = 0x01AD8750;
