@@ -18,7 +18,11 @@
 
 ## Showcase
 
-[![Forager Co-op Mod showcase](https://img.youtube.com/vi/apy2HmzMUoY/maxresdefault.jpg)](https://www.youtube.com/watch?v=apy2HmzMUoY)
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=apy2HmzMUoY"><img src="docs/images/showcase.jpg" alt="Watch the Forager Co-op Mod showcase on YouTube" width="720"></a>
+  <br>
+  <a href="https://www.youtube.com/watch?v=apy2HmzMUoY"><b>▶ Watch the showcase on YouTube</b></a>
+</p>
 
 ## Features
 
@@ -114,16 +118,13 @@ The developer documentation is in Russian:
 |---|---|
 | [`native/`](native/) | source of `version.dll` |
 | [`docs/coop/`](docs/coop/) | spec, architecture, status, playtest notes |
-| [`decompiled/`](decompiled/) | notes on the game's internals and the Ghidra scripts that produced them |
 | [`tools/gametest/`](tools/gametest/) | test automation: two game windows, clicks, screenshots |
 | [`mods/CoopTest/`](mods/CoopTest/) | the first prototype on the Mod API (frozen) |
 
 ## Legal
 
-The code and notes in this repository are under the [MIT license](LICENSE). The repository contains no decompiled
-game code: `decompiled/code`, `decompiled/data` and `decompiled/symbols` are derived from HopFrog's code and are
-not published — you can regenerate them from your own copy of the game ([decompiled/README.md](decompiled/README.md)).
-You need a purchased copy of Forager to play.
+The code and notes in this repository are under the [MIT license](LICENSE). The repository contains no game code or
+assets. You need a purchased copy of Forager to play.
 
 Forager © HopFrog / Humble Games. This project is not affiliated with or endorsed by the game's authors.
 MinHook is under BSD-2-Clause.

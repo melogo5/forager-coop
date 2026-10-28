@@ -18,7 +18,11 @@
 
 ## Видео
 
-[![Forager Co-op Mod — обзор](https://img.youtube.com/vi/apy2HmzMUoY/maxresdefault.jpg)](https://www.youtube.com/watch?v=apy2HmzMUoY)
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=apy2HmzMUoY"><img src="docs/images/showcase.jpg" alt="Смотреть обзор Forager Co-op Mod на YouTube" width="720"></a>
+  <br>
+  <a href="https://www.youtube.com/watch?v=apy2HmzMUoY"><b>▶ Смотреть видео на YouTube</b></a>
+</p>
 
 ## Возможности
 
@@ -115,15 +119,12 @@ Forager собран GameMaker YYC (GML скомпилирован в машин
 |---|---|
 | [`native/`](native/) | исходники `version.dll` |
 | [`docs/coop/`](docs/coop/) | спецификация, архитектура, статус, разборы плейтестов |
-| [`decompiled/`](decompiled/) | заметки о внутреннем устройстве игры и скрипты Ghidra для их получения |
 | [`tools/gametest/`](tools/gametest/) | автоматизация тестов: два окна игры, клики, скриншоты |
 | [`mods/CoopTest/`](mods/CoopTest/) | первый прототип на Mod API (заморожен) |
 
 ## Правовое
 
-Код и заметки в репозитории — под [лицензией MIT](LICENSE). Декомпиляции игры в репозитории нет:
-`decompiled/code`, `decompiled/data` и `decompiled/symbols` — производные от кода HopFrog, они не публикуются,
-их можно получить заново из своей копии игры ([decompiled/README.md](decompiled/README.md)).
+Код и заметки в репозитории — под [лицензией MIT](LICENSE). Кода и ресурсов игры в репозитории нет.
 Для игры нужна купленная копия Forager.
 
 Forager © HopFrog / Humble Games. Проект не связан с авторами игры и не одобрен ими.

@@ -125,5 +125,4 @@
 ## Тестирование
 
 Автотесты на двух окнах игры — `tools/gametest/` (`gamectl.ps1` управляет окном через сообщения
-Windows и делает скриншоты, `coopsession.ps1` поднимает сессию в тестовом слоте 1). Разбор игры —
-`decompiled/` (см. `decompiled/README.md` и `decompiled/FINDINGS.md`).
+Windows и делает скриншоты, `coopsession.ps1` поднимает сессию в тестовом слоте 1).

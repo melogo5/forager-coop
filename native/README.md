@@ -1,8 +1,7 @@
 # Forager Coop — нативный патч
 
 `version.dll` для папки Forager: передаёт вызовы системной `version.dll` и через MinHook перехватывает
-функции игры. Что строим — [docs/coop/SPEC.md](../docs/coop/SPEC.md); как устроен рантайм —
-[decompiled/RUNTIME.md](../decompiled/RUNTIME.md).
+функции игры. Что строим — [docs/coop/SPEC.md](../docs/coop/SPEC.md).
 
 ## Сборка и установка
 
