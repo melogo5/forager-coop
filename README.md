@@ -32,7 +32,12 @@ Forager собран YYC (GML скомпилирован в машинный к�
 - Windows, оба игрока в одной сети (LAN или VPN вроде Hamachi/Radmin). Порты: TCP 7790, UDP 7791.
 - Моды игры (Mod API) не поддерживаются.
 
-## Сборка и установка
+## Установка
+
+Скачайте `version.dll` из последнего [релиза](https://github.com/melogo5/forager-coop/releases/latest)
+и положите в папку игры рядом с `Forager.exe` (обоим игрокам).
+
+## Сборка из исходников
 
 Нужны Visual Studio Build Tools с C++ (x86). MinHook — подмодуль:
 
@@ -44,6 +49,10 @@ powershell -File native\build.ps1 -Install -GameDir "C:\Program Files (x86)\Stea
 
 `-Install` копирует собранную `native\build\version.dll` в папку игры (`-GameDir` — ваша папка Forager).
 Тестовые скрипты в `tools/gametest/` рассчитаны на машину разработчика (пути внутри).
+
+Релиз: `git tag v0.1.0; git push origin v0.1.0` — GitHub Actions
+([.github/workflows/release.yml](.github/workflows/release.yml)) соберёт DLL и опубликует релиз.
+Тег с дефисом (`v0.2.0-beta1`) публикуется как pre-release.
 
 Удаление — стереть `version.dll` из папки игры. Как играть — [native/README.md](native/README.md#как-играть).
 

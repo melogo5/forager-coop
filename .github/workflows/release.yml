@@ -1,0 +1,48 @@
+# Builds native\build\version.dll. A pushed tag v* publishes it as a GitHub release (a tag with a '-', like
+# v0.2.0-beta1, becomes a pre-release); a manual run only builds and keeps the DLL as a workflow artifact.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build version.dll
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File native\build.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: version.dll
+          path: native/build/version.dll
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          $notes = @'
+          ## Установка
+          1. Скачайте `version.dll` ниже и положите в папку игры, рядом с `Forager.exe`
+             (Steam → Forager → Управление → Просмотреть локальные файлы).
+          2. Нужно обоим игрокам. Поддерживается только Steam-версия 4.1.9 (билд 2021-01-29).
+          3. В главном меню появится пункт **COOP**. Подробно — в README.
+
+          Удаление — удалить `version.dll` из папки игры.
+          '@
+          $flags = @('--generate-notes', '--notes', $notes, '--title', $env:TAG)
+          if ($env:TAG.Contains('-')) { $flags += '--prerelease' }
+          gh release create $env:TAG native/build/version.dll @flags
