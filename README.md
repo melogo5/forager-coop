@@ -1,45 +1,94 @@
-# forager-coop
+<p align="center">
+  <img src="docs/images/logo.png" alt="Forager Co-op Mod" width="560">
+</p>
 
-Кооператив на двоих для [Forager](https://store.steampowered.com/app/751780/Forager/) как нативный
-патч: одна `version.dll` в папке игры. Игра по LAN, Hamachi или Radmin, подключение через новый пункт
-главного меню **COOP**.
+<p align="center">
+  <b>Online co-op for <a href="https://store.steampowered.com/app/751780/Forager/">Forager</a> — up to 4 players, one DLL, no game files changed.</b>
+</p>
 
-> **Статус: прототип, разработка продолжается.** Основная игра вдвоём работает
-> (мир, добыча, мобы, постройки, сундуки, покупка островов), но есть известные рассинхроны —
-> см. [docs/coop/STATUS.md](docs/coop/STATUS.md).
+<p align="center">
+  <a href="https://github.com/melogo5/forager-coop/releases/latest"><img src="https://img.shields.io/github/v/release/melogo5/forager-coop?include_prereleases&label=download" alt="Download"></a>
+  <a href="https://discord.gg/BjsubWefm4"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT license"></a>
+</p>
 
-## Как это устроено
+<p align="center">
+  English · <a href="README.ru.md">Русский</a>
+</p>
 
-Forager собран YYC (GML скомпилирован в машинный код), поэтому кооп встроен через перехват функций
-игры: `version.dll` проксирует системную библиотеку и ставит хуки
-([MinHook](https://github.com/TsudaKageyu/minhook)) на функции `Forager.exe`.
+## Showcase
 
-- **Хост авторитетен:** мир живёт и сохраняется только у хоста; гость получает снимок сейва при
-  подключении и дальше — изменения (появление/уничтожение объектов, удары, мобы, острова).
-- **Напарник** — второй `objPlayer` с отключённой логикой («марионетка»); действия гостя хост
-  исполняет от его имени.
-- **Персонаж гостя** (инвентарь, уровень, навыки) хранится у хоста под именем гостя.
-- Смерть — возрождение на стартовом острове, без game over.
+[![Forager Co-op Mod showcase](https://img.youtube.com/vi/apy2HmzMUoY/maxresdefault.jpg)](https://www.youtube.com/watch?v=apy2HmzMUoY)
 
-Подробно: [docs/coop/SPEC.md](docs/coop/SPEC.md) (что строим),
-[docs/coop/ARCHITECTURE.md](docs/coop/ARCHITECTURE.md) (как),
-[decompiled/RUNTIME.md](decompiled/RUNTIME.md) (рантайм GameMaker изнутри).
+## Features
 
-## Требования
+- **Up to 4 players** in one world: a host and up to three guests.
+- **Steam invites** — the host presses **F2** in the world and invites friends; no IP addresses or VPN needed.
+  LAN, Hamachi and Radmin work too.
+- **A COOP button in the main menu** — create a world or join one from a list of servers on your network.
+- **Shared world:** resources, mobs, buildings, chests, storage, bridges, islands bought by the host, time of day
+  and weather.
+- **Shared progress:** one level and XP bar, shared coins, one skill tree (a skill learned by anyone is learned for
+  everyone, skill points are personal), shared museum and NPC quests.
+- **Your own character:** each guest keeps their inventory, gear, familiars and costume — the host stores them by
+  the guest's name, so you come back as yourself.
+- **Dungeons together:** everyone goes in and out together; puzzles, lanterns, keys and chests are synced.
+- **No game over:** a dead player gets back up on the starting island (or at the dungeon entrance).
 
-- У каждого игрока своя копия Forager из Steam. Поддерживается только билд с PE timestamp
-  `0x60148428` (Steam-версия 2021-01-29, в меню — 4.1.9); на другом билде DLL ничего не перехватывает.
-- Windows, оба игрока в одной сети (LAN или VPN вроде Hamachi/Radmin). Порты: TCP 7790, UDP 7791.
-- Моды игры (Mod API) не поддерживаются.
+> **Status: beta.** Most of the game plays fine together, but some things can still go out of sync.
+> Please report bugs on [Discord](https://discord.gg/BjsubWefm4) or in [Issues](https://github.com/melogo5/forager-coop/issues).
 
-## Установка
+## Requirements
 
-Скачайте `version.dll` из последнего [релиза](https://github.com/melogo5/forager-coop/releases/latest)
-и положите в папку игры рядом с `Forager.exe` (обоим игрокам).
+- Every player needs their own copy of **Forager on Steam, version 4.1.9** (the current Steam build, 2021-01-29).
+  On any other build the DLL does nothing.
+- Windows.
+- Only **Classic** worlds can be played in co-op.
+- Forager's own Mod API mods are not supported.
 
-## Сборка из исходников
+## Installation
 
-Нужны Visual Studio Build Tools с C++ (x86). MinHook — подмодуль:
+1. Download `version.dll` from the [latest release](https://github.com/melogo5/forager-coop/releases/latest).
+2. Put it in the game folder, next to `Forager.exe`
+   (Steam → Forager → Manage → Browse local files).
+3. Every player has to do this.
+
+A **COOP** button appears in the main menu. To uninstall, delete `version.dll` from the game folder.
+
+## How to play
+
+**Host**
+
+1. Main menu → **COOP** → **CREATE** → choose a save or **+** for a new Classic world.
+2. In the world press **F2** to invite friends through Steam.
+
+**Guest**
+
+- **Through Steam:** accept the host's invite in Steam — the game connects by itself (if Forager isn't running,
+  Steam starts it).
+- **On the same network (LAN, Hamachi, Radmin):** main menu → **COOP** → type your name in **NAME** → pick the
+  host's server → **JOIN**. If the server isn't listed, type the host's IP in **IP** → **CONNECT**.
+
+The host's world loads on the guest's side automatically; the guest's own saves are not touched.
+
+**Good to know**
+
+- Allow Forager through the Windows Firewall when asked. For LAN/VPN play the ports are TCP 7790 and UDP 7791.
+- Only the host buys islands (the BUY LAND tab), and only the host gets Steam achievements.
+- To leave, use **Save and exit to menu**. When the host leaves, the guests go back to the main menu.
+  A guest can rejoin without restarting the game.
+- Put an empty `coop_skip_intro.txt` next to `Forager.exe` to skip the publisher logos at startup.
+
+## Known issues
+
+- The **Void** trial isn't supported in co-op yet.
+- Occasionally a guest loads a slightly different world (extra or missing trees); the mod corrects it within a few
+  seconds.
+- If something breaks, the log is in the game folder: `coop_native_<number>.log`. Attach it to your bug report.
+
+## Building from source
+
+You need Visual Studio Build Tools with C++ (x86 toolset).
 
 ```powershell
 git clone --recursive https://github.com/melogo5/forager-coop.git
@@ -47,31 +96,34 @@ cd forager-coop
 powershell -File native\build.ps1 -Install -GameDir "C:\Program Files (x86)\Steam\steamapps\common\Forager"
 ```
 
-`-Install` копирует собранную `native\build\version.dll` в папку игры (`-GameDir` — ваша папка Forager).
-Тестовые скрипты в `tools/gametest/` рассчитаны на машину разработчика (пути внутри).
+The DLL is built to `native\build\version.dll`; `-Install` also copies it to the game folder.
+Pushing a `v*` tag builds the DLL on GitHub Actions and publishes a release (a tag with a `-`, like `v0.2.0-beta1`,
+becomes a pre-release).
 
-Релиз: `git tag v0.1.0; git push origin v0.1.0` — GitHub Actions
-([.github/workflows/release.yml](.github/workflows/release.yml)) соберёт DLL и опубликует релиз.
-Тег с дефисом (`v0.2.0-beta1`) публикуется как pre-release.
+### How it works
 
-Удаление — стереть `version.dll` из папки игры. Как играть — [native/README.md](native/README.md#как-играть).
+Forager is built with GameMaker YYC (GML compiled to machine code), so there are no scripts to edit. Instead
+`version.dll` proxies the Windows system library of the same name and hooks the game's functions with
+[MinHook](https://github.com/TsudaKageyu/minhook). The host is authoritative: the world lives and is saved only on
+the host; guests get a snapshot of it when they join and then a stream of changes. Each other player is a second
+`objPlayer` with its own logic switched off (a "puppet"), and the host performs a guest's actions on their behalf.
 
-## Структура
+The developer documentation is in Russian:
 
-| Папка | Что внутри |
+| Folder | Contents |
 |---|---|
-| `native/` | исходники `version.dll` |
-| `docs/coop/` | спецификация, архитектура, статус, решения и известные проблемы |
-| `decompiled/` | заметки о внутреннем устройстве игры и скрипты Ghidra для их получения |
-| `tools/gametest/` | автоматизация тестов: два окна игры, клики, скриншоты, проверенные сценарии |
-| `mods/CoopTest/` | первый прототип на Mod API (заморожен) |
+| [`native/`](native/) | source of `version.dll` |
+| [`docs/coop/`](docs/coop/) | spec, architecture, status, playtest notes |
+| [`decompiled/`](decompiled/) | notes on the game's internals and the Ghidra scripts that produced them |
+| [`tools/gametest/`](tools/gametest/) | test automation: two game windows, clicks, screenshots |
+| [`mods/CoopTest/`](mods/CoopTest/) | the first prototype on the Mod API (frozen) |
 
-## Правовое
+## Legal
 
-Наш код и заметки — под лицензией MIT ([LICENSE](LICENSE)). Декомпиляции игры в репозитории нет:
-`decompiled/code`, `decompiled/data` и `decompiled/symbols` — производные от кода HopFrog, они не
-публикуются, их можно получить заново из своей копии игры ([decompiled/README.md](decompiled/README.md)).
-Для работы патча нужна купленная копия Forager. Ссылки в документации на `decompiled/code/…`
-указывают на эту локальную выгрузку.
-Forager © HopFrog / Humble Games. Проект не связан с авторами игры.
-MinHook — BSD-2-Clause.
+The code and notes in this repository are under the [MIT license](LICENSE). The repository contains no decompiled
+game code: `decompiled/code`, `decompiled/data` and `decompiled/symbols` are derived from HopFrog's code and are
+not published — you can regenerate them from your own copy of the game ([decompiled/README.md](decompiled/README.md)).
+You need a purchased copy of Forager to play.
+
+Forager © HopFrog / Humble Games. This project is not affiliated with or endorsed by the game's authors.
+MinHook is under BSD-2-Clause.

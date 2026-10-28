@@ -251,7 +251,11 @@ void ApplyLandfill(yyc::CInstance* localPlayer, net::PeerId from, const Landfill
     yyc::RValue result{};
     ++g_applying;
     puppet::BeginActing(from);
+    // Guest: removed land drops a Landfill item - the host's own drop comes through the object sync, and a land map
+    // fix-up after a purchase must drop nothing at all.
+    sync::BeginSuppressSpawns();
     (msg.remove != 0 ? g_origRemoveLandfill : g_origPlaceLandfill)(localPlayer, localPlayer, &result, 2, args);
+    sync::EndSuppressSpawns(localPlayer);
     puppet::EndActing();
     --g_applying;
     yyc::Free(&result);
