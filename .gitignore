@@ -4,3 +4,9 @@ native/build/
 tools/gametest/shots/
 .claude/
 __pycache__/
+# Derived from HopFrog's proprietary code: kept locally, never published (see decompiled/README.md)
+decompiled/code/
+decompiled/data/
+decompiled/symbols/
+# Personal save worlds
+saves/

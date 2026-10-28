@@ -59,7 +59,10 @@ powershell -File native\build.ps1 -Install -GameDir "C:\Program Files (x86)\Stea
 
 ## Правовое
 
-Репозиторий приватный: в `decompiled/code`, `decompiled/data` и `decompiled/symbols` лежит декомпиляция
-игры (код HopFrog), публиковать её нельзя. Остальное — наш код и заметки.
+Наш код и заметки — под лицензией MIT ([LICENSE](LICENSE)). Декомпиляции игры в репозитории нет:
+`decompiled/code`, `decompiled/data` и `decompiled/symbols` — производные от кода HopFrog, они не
+публикуются, их можно получить заново из своей копии игры ([decompiled/README.md](decompiled/README.md)).
+Для работы патча нужна купленная копия Forager. Ссылки в документации на `decompiled/code/…`
+указывают на эту локальную выгрузку.
 Forager © HopFrog / Humble Games. Проект не связан с авторами игры.
 MinHook — BSD-2-Clause.
