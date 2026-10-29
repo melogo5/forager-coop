@@ -260,10 +260,27 @@ Callback<LobbyCreated> g_onLobbyCreatedResult(kLobbyCreated, &OnLobbyCreated);
 Callback<P2PSessionRequest> g_onP2PRequest(kP2PSessionRequest, &OnP2PSessionRequest);
 Callback<P2PSessionConnectFail> g_onP2PFail(kP2PSessionConnectFail, &OnP2PSessionConnectFail);
 
+// Real Steam's steam_api.dll loads steamclient.dll from the Steam folder, next to steam.exe. A Steam emulator
+// (non-Steam copies) has no such client and answers the flat API with its own interface layouts: hosting crashed
+// there right after the lobby was made. Without the real client the coop goes over LAN/IP only.
+bool RealSteamClient() {
+    const HMODULE client = GetModuleHandleA("steamclient.dll");
+    wchar_t path[MAX_PATH] = {};
+    const DWORD length = client != nullptr ? GetModuleFileNameW(client, path, MAX_PATH) : 0;
+    if (length == 0 || length >= MAX_PATH) return false;
+    wchar_t* const slash = wcsrchr(path, L'\\');
+    if (slash == nullptr || wcscpy_s(slash + 1, MAX_PATH - (slash + 1 - path), L"steam.exe") != 0) return false;
+    return GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES;
+}
+
 bool Connect() {
     const HMODULE module = GetModuleHandleA("steam_api.dll");
     if (module == nullptr) {
         Log("steam: steam_api.dll is not loaded - Steam invites off");
+        return false;
+    }
+    if (!RealSteamClient()) {
+        Log("steam: no Steam client next to steam.exe (a Steam emulator?) - Steam invites off");
         return false;
     }
     bool ok = true;
