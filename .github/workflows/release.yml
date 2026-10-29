@@ -35,13 +35,13 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           $notes = @'
-          ## Установка
-          1. Скачайте `version.dll` ниже и положите в папку игры, рядом с `Forager.exe`
-             (Steam → Forager → Управление → Просмотреть локальные файлы).
-          2. Нужно обоим игрокам. Поддерживается только Steam-версия 4.1.9 (билд 2021-01-29).
-          3. В главном меню появится пункт **COOP**. Подробно — в README.
+          ## Installation
+          1. Download `version.dll` below and put it in the game folder, next to `Forager.exe`
+             (Steam → Forager → Manage → Browse local files).
+          2. Every player needs it. Only the Steam version 4.1.9 (build 2021-01-29) is supported.
+          3. The main menu gets a **COOP** item. Details are in the README.
 
-          Удаление — удалить `version.dll` из папки игры.
+          To uninstall, delete `version.dll` from the game folder.
           '@
           $flags = @('--generate-notes', '--notes', $notes, '--title', $env:TAG)
           if ($env:TAG.Contains('-')) { $flags += '--prerelease' }
