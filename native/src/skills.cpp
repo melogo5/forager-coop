@@ -14,6 +14,7 @@
 #include "MinHook.h"
 #include "character.h"
 #include "files.h"
+#include "interiors.h"
 #include "log.h"
 #include "mutant.h"
 #include "skilltab.h"
@@ -51,6 +52,20 @@ constexpr uint8_t kStructureEdit = 1;
 constexpr int kMaxEffectArgs = 4;
 constexpr int kEffectArgs = 3;
 constexpr size_t kMaxEffects = 256;  // pending, between two sends
+// What skills do outside ItemEdit/StructureEdit, so not in a purchase's recorded calls:
+// - 33 gathering: objSkill Step_0 adds 4 to PlayerFind().inventorySize - the buyer's player only. The character save
+//   keeps the size (ApplyPatches adds the 4 again only to saves older than 2.25).
+// - 35 pet: no purchase code at all. ApplyPatches makes the pet as the world loads (HasSkill(35), global.petType 0,
+//   no objPet: petType = irandom_range(1, 5), objPet at PlayerFind() with owner = PlayerFind()); in its own room
+//   the tree is left by loading the world. Opened over the world (skilltab.cpp) nothing loads.
+constexpr int kSkillGathering = 33;
+constexpr int kSkillPet = 35;
+constexpr int kSlotInventorySize = 0x5A6;  // objPlayer.inventorySize (var_slots.tsv)
+constexpr double kGatheringSlots = 4;
+constexpr int kObjPet = 79;                // decompiled/data/objects.tsv
+constexpr int kSlotPetType = 0x6E8;        // global.petType: which pet (1-5), 0 before the first one
+constexpr double kPetTypes = 5;
+constexpr int kSlotOwner = yyc::slot::owner;
 
 struct State {
     uint32_t earned = 0;   // skill points ever got: one per shared level-up
@@ -73,6 +88,7 @@ std::vector<Effect> g_effects;  // made by purchases here since the tree was las
 // Both sides.
 std::vector<int8_t> g_tree;  // the tree both this side and the others know of: what to send is what differs
 unsigned g_steps = 0;
+bool g_petPending = false;  // the pet skill is learned here: make the pet once the player is out in the world
 
 // Guest.
 bool g_answered = false;
@@ -149,6 +165,53 @@ std::string NewlyLearned(const std::vector<int8_t>& before, const std::vector<in
         if (now[i] == kLearned && (i >= before.size() || before[i] != kLearned)) text += std::to_string(i) + " ";
     }
     return text;
+}
+
+bool IsLearned(const std::vector<int8_t>& values, int skill) {
+    return skill < static_cast<int>(values.size()) && values[skill] == kLearned;
+}
+
+// A skill learned here by another player's purchase (or while this guest was away): what the purchase did to the
+// buyer's own player is done to ours.
+void GainOwnEffects(yyc::CInstance* localPlayer, const std::vector<int8_t>& before, const std::vector<int8_t>& now) {
+    if (IsLearned(now, kSkillPet) && !IsLearned(before, kSkillPet)) g_petPending = true;
+    if (!IsLearned(now, kSkillGathering) || IsLearned(before, kSkillGathering)) return;
+    const int player = static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_id));
+    const double size = ReadNumber(player, kSlotInventorySize);
+    if (size <= 0) {
+        Log("skills: gathering learned, but the player has no inventory size - no slots added");
+        return;
+    }
+    WriteNumber(player, kSlotInventorySize, size + kGatheringSlots);
+    Log("skills: gathering learned - inventory %g -> %g slots", size, size + kGatheringSlots);
+}
+
+// The pet, made as ApplyPatches makes it - only out in the world: inside a building the world sleeps (its pet is not
+// seen to exist), and back from a dungeon the world loads and ApplyPatches makes it (a second one would make it
+// destroy both).
+void MakePet(yyc::CInstance* localPlayer) {
+    if (static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_room)) != yyc::kRoomGame ||
+        interiors::IsInside() || skilltab::IsOpen()) {
+        return;  // still pending
+    }
+    g_petPending = false;
+    if (yyc::CallReal(localPlayer, "instance_exists", {double(kObjPet)}) != 0) return;
+    const yyc::RValue* petType = yyc::GlobalVar(kSlotPetType);
+    if (petType == nullptr || !yyc::IsNumber(*petType)) {
+        Log("skills: no global.petType - no pet made");
+        return;
+    }
+    if (yyc::ToReal(*petType) == 0) WriteGlobal(kSlotPetType, yyc::CallReal(localPlayer, "irandom_range", {1, kPetTypes}));
+    const double x = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_x);
+    const double y = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_y);
+    const double depth = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_depth);
+    const int pet = static_cast<int>(yyc::CallReal(localPlayer, "instance_create_depth", {x, y, depth, double(kObjPet)}));
+    if (yyc::FindInstance(pet) == nullptr) {
+        Log("skills: the pet was not made");
+        return;
+    }
+    WriteNumber(pet, kSlotOwner, yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_id));
+    Log("skills: pet %d made (type %g)", pet, ReadGlobal(kSlotPetType));
 }
 
 void Put(std::vector<uint8_t>* out, const void* data, size_t size) {
@@ -289,6 +352,7 @@ void TakeTree(const std::vector<uint8_t>& payload, yyc::CInstance* localPlayer) 
         skilltab::RefreshStates(localPlayer);
     }
     Replay(localPlayer, effects);
+    GainOwnEffects(localPlayer, here, merged);
     g_tree = Merge(g_tree.size() == theirs.size() ? g_tree : here, theirs);  // a purchase here not sent yet still is
     Log("skills: the shared tree: newly learned here %s(%d learned, %zu purchase calls made)",
         NewlyLearned(here, merged).c_str(), Learned(merged), effects.size());
@@ -304,6 +368,8 @@ void ShareTree(yyc::CInstance* localPlayer) {
         return;
     }
     if (now == g_tree) return;
+    // Bought here: the purchase gave our player its slots; the pet is ours to make.
+    if (IsLearned(now, kSkillPet) && !IsLearned(g_tree, kSkillPet)) g_petPending = true;
     const std::vector<uint8_t> payload = EncodeTree(now, g_effects);
     if (!net::Send(kSkills, payload.data(), payload.size())) return;
     Log("skills: sent the tree: learned here %s(%d learned, %zu purchase calls)", NewlyLearned(g_tree, now).c_str(),
@@ -326,6 +392,10 @@ void Apply(yyc::CInstance* localPlayer) {
     g_effects.clear();
     Log("skills: in the shared tree (%d learned); own points: %u earned, %u spent, level %.0f", Learned(g_tree),
         own.earned, own.learned, level);
+    // Learned by the others while this guest was away (a new guest: all of the tree) - its character never got
+    // what those purchases gave the buyer. own.skills is the tree as this guest last uploaded it.
+    GainOwnEffects(localPlayer, own.skills, g_tree);
+    if (IsLearned(g_tree, kSkillPet)) g_petPending = true;  // made only if the world brought none
     for (const std::vector<uint8_t>& payload : g_early) TakeTree(payload, localPlayer);
     g_early.clear();
 }
@@ -424,6 +494,7 @@ void HostOnGuest(const std::string& name, net::PeerId peer, yyc::CInstance* loca
 
 void Tick(yyc::CInstance* localPlayer, bool host) {
     if (host || g_applied) DebugLearn(localPlayer);
+    if (g_petPending) MakePet(localPlayer);
     if (++g_steps % kEverySteps != 0) return;
     if (!host) {
         if (!g_answered) return;
@@ -481,6 +552,7 @@ void Reset() {
     g_effects.clear();
     g_tree.clear();
     g_steps = 0;
+    g_petPending = false;
     g_answered = false;
     g_applied = false;
     g_newGuest = false;
