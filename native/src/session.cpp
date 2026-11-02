@@ -60,7 +60,8 @@ namespace coop {
 
 namespace {
 
-constexpr uint32_t kProtocolVersion = 16;  // 16: item unlocks; 15: a guest greets first (net.cpp); 14: the tool swing
+constexpr uint32_t kProtocolVersion = 17;  // 17: puzzle pieces by the host's id and spot; 16: item unlocks; 15: a guest
+                                           // greets first (net.cpp); 14: the tool swing
 constexpr unsigned kSendEverySteps = 3;       // 60 fps game step -> 20 updates/s
 constexpr unsigned kAnnounceEverySteps = 30;  // refresh the LAN announcement twice a second
 constexpr int kSlotGodMode = 0x54C;           // global.godMode (decompiled/code/var_slots.tsv)
@@ -706,7 +707,7 @@ void Tick(yyc::CInstance* localPlayer) {
     if (g_role == Role::kHost) SteamInvites(localPlayer);
     sync::Tick(localPlayer);
     dungeons::Tick(localPlayer);
-    if (!inWorld) puzzles::Tick(localPlayer);  // the shared room is a dungeon
+    puzzles::Tick(localPlayer);  // a dungeon's pieces, and the world's (the desert's pillars to push down)
     storage::DebugTick(localPlayer);
     land::Tick(localPlayer);
     land::DebugTick(localPlayer);

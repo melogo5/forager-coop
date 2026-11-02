@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <iterator>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -344,6 +345,32 @@ void CloseDenied(yyc::CInstance* localPlayer, int chestId) {
     Log("storage: chest %d was opened by someone else first; closed", chestId);
 }
 
+// parResource Other_10 sends a drop (picked up or crafted) to the vault whose cell holds or is locked to its item only
+// in the world and while none of these is there: one left behind stops it for good (playtest 10: after a while the
+// guest's crafts and drops no longer went to the vaults). Logged, to find which one stays.
+constexpr int kVaultBlockers[] = {289, 287, 265};  // objItemGet, objTransition, objSpiritOrbAllocation
+constexpr unsigned kBlockerLogAfterWatches = 30;   // ~30 s: longer than any of them lasts in play
+unsigned g_blockerWatches[std::size(kVaultBlockers)] = {};
+
+void WatchVaultBlockers(yyc::CInstance* self) {
+    const bool inWorld = yyc::GetBuiltinReal(self, yyc::va::YYVar_room) == yyc::kRoomGame;
+    for (size_t i = 0; i < std::size(kVaultBlockers); ++i) {
+        const int object = kVaultBlockers[i];
+        const bool there = inWorld && CallReal(self, "instance_number", {yyc::Real(object)}) > 0;
+        if (!there) {
+            if (g_blockerWatches[i] >= kBlockerLogAfterWatches) {
+                Log("storage: object %d is gone - drops go to vaults again", object);
+            }
+            g_blockerWatches[i] = 0;
+            continue;
+        }
+        if (++g_blockerWatches[i] != kBlockerLogAfterWatches) continue;
+        const int id = static_cast<int>(CallReal(self, "instance_find", {yyc::Real(object), yyc::Real(0)}));
+        Log("storage: object %d (instance %d) has been here for %u s - no drop goes to a vault meanwhile", object, id,
+            kBlockerLogAfterWatches);
+    }
+}
+
 }  // namespace
 
 void DebugTick(yyc::CInstance* localPlayer) {
@@ -358,7 +385,10 @@ void DebugTick(yyc::CInstance* localPlayer) {
     constexpr unsigned kOpenAt = 420;
     constexpr unsigned kCloseAt = 480;
     constexpr unsigned kChangeAt = 660;
-    if (++g_steps % kWatchEverySteps == 0 && net::IsConnected()) WatchVaults(localPlayer);
+    if (++g_steps % kWatchEverySteps == 0 && net::IsConnected()) {
+        WatchVaults(localPlayer);
+        WatchVaultBlockers(localPlayer);
+    }
     if (!enabled) return;
     ++steps;
     if (steps == kOpenAt) {
@@ -481,6 +511,7 @@ void Reset() {
     g_steps = 0;
     g_peerSlots.clear();
     g_sentSlots = 0;
+    std::fill(std::begin(g_blockerWatches), std::end(g_blockerWatches), 0u);
 }
 
 }  // namespace coop::storage

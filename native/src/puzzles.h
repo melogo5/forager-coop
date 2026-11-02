@@ -1,4 +1,5 @@
-// Dungeon puzzles in coop (PLAYTEST8.md #18). The host's dungeon is the real one:
+// Puzzles in coop (PLAYTEST8.md #18): a dungeon's, and the world's pieces (the desert's pillars to push down). The
+// host's pieces are the real ones:
 //  - a guest's E on a puzzle piece (push a cube, turn a mirror, a runic pillar, a brazier, a terminal, a pillar to
 //    push down) is not done at the guest: the host does it as the guest's puppet;
 //  - a gem socket takes the gem from the inventory and the blood altar opens a choice of boons, so there the guest's
@@ -19,7 +20,7 @@ namespace coop::puzzles {
 // Creates the hooks (enabled by the caller).
 bool InstallHooks(bool (*isHost)(), bool (*isGuest)());
 
-// Game thread, every local player step in a dungeon the session is played in.
+// Game thread, every local player step in the shared room (the world or a dungeon).
 void Tick(yyc::CInstance* localPlayer);
 
 // Game thread: applies a puzzle message; false if `message` is not one.

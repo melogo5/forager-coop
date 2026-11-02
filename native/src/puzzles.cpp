@@ -9,6 +9,7 @@
 #include "MinHook.h"
 #include "log.h"
 #include "puppet.h"
+#include "sync.h"
 
 namespace coop::puzzles {
 
@@ -73,16 +74,22 @@ const std::vector<Kind> kKinds = {
 constexpr size_t kHookCount = 10;  // kinds with an Other_11 hook, in kKinds order
 
 #pragma pack(push, 1)
+// A piece is told by the sender's id of it, the host's id of it and its spot (Locate): world pieces have other ids
+// at every player.
 struct StateEntry {
     int32_t id;
+    int32_t hostId;
     int16_t object;
     int16_t slot;
     float value;
+    float x, y;
 };
 struct UseMsg {
     int32_t id;
+    int32_t hostId;
     int16_t object;
     int16_t pad;
+    float x, y;
 };
 #pragma pack(pop)
 
@@ -107,6 +114,38 @@ int ObjectOf(yyc::CInstance* instance) {
     return static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_object_index));
 }
 int IdOf(yyc::CInstance* instance) { return static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_id)); }
+
+// The host's id of piece `id` here (-1 if unknown) and its spot, for a message about it.
+void Locate(int id, int32_t* hostId, float* x, float* y) {
+    *hostId = sync::HostIdOf(id);
+    yyc::CInstance* piece = yyc::FindInstance(id);
+    *x = piece != nullptr ? static_cast<float>(yyc::GetBuiltinReal(piece, yyc::va::YYVar_x)) : 0;
+    *y = piece != nullptr ? static_cast<float>(yyc::GetBuiltinReal(piece, yyc::va::YYVar_y)) : 0;
+}
+
+StateEntry Entry(int id, int object, int slot, float value) {
+    StateEntry entry{id, 0, static_cast<int16_t>(object), static_cast<int16_t>(slot), value, 0, 0};
+    Locate(id, &entry.hostId, &entry.x, &entry.y);
+    return entry;
+}
+
+UseMsg UseOf(int id, int object) {
+    UseMsg msg{id, 0, static_cast<int16_t>(object), 0, 0, 0};
+    Locate(id, &msg.hostId, &msg.x, &msg.y);
+    return msg;
+}
+
+// The sender's piece here, 0 if none. A world piece (the desert's pillars to push down) has other ids at every
+// player - it came from the host's save or its spawn - so it is found by the host's id or its spot: by the sender's
+// id the host found nothing, and the guest's E did nothing (playtest 10). A dungeon room makes its pieces with the
+// same ids everywhere: a cube the host pushed or a boss key following its player is not on the sender's spot.
+int LocalPiece(yyc::CInstance* self, int senderId, int hostId, int object, float x, float y) {
+    if (!std::isfinite(x) || !std::isfinite(y)) return 0;
+    const int found = sync::Resolve(self, hostId, object, x, y);
+    if (found != 0) return found;
+    yyc::CInstance* same = yyc::FindInstance(senderId);
+    return same != nullptr && ObjectOf(same) == object ? senderId : 0;
+}
 
 uint32_t Builtin(int slot) {
     return slot == kSlotX ? yyc::va::YYVar_x : slot == kSlotY ? yyc::va::YYVar_y : yyc::va::YYVar_image_index;
@@ -143,6 +182,11 @@ void WriteNumber(int id, int slot, float value) {
 bool FromAnyone(const Kind& kind) { return kind.use == Use::kOwn || kind.use == Use::kMirror; }
 bool Sends(const Kind& kind) { return IsHost() || FromAnyone(kind); }
 
+// In the world only the pieces the host does (the desert's pillars): there ice and chests go with the world's own
+// sync (sync.cpp), and a guest's own pieces stay as they were before the world's puzzles were played together.
+bool InWorld(yyc::CInstance* self) { return yyc::GetBuiltinReal(self, yyc::va::YYVar_room) == yyc::kRoomGame; }
+bool SharedHere(const Kind& kind, bool inWorld) { return !inWorld || kind.use == Use::kAtHost; }
+
 int PuzzleFlagCount(yyc::CInstance* self) {
     const yyc::RValue* flags = yyc::GlobalVar(kSlotGlobalPuzzle);
     if (flags == nullptr || (flags->kind & yyc::kKindMask) != yyc::kArray) return 0;
@@ -165,7 +209,7 @@ void AddPuzzleFlags(yyc::CInstance* self, std::vector<StateEntry>& changes) {
         const auto known = g_known.find(key);
         if (known != g_known.end() && known->second == value) continue;
         g_known[key] = value;
-        changes.push_back({0, kGlobalPuzzle, static_cast<int16_t>(i), value});
+        changes.push_back({0, 0, kGlobalPuzzle, static_cast<int16_t>(i), value, 0, 0});
     }
 }
 
@@ -181,8 +225,9 @@ void SetPuzzleFlag(yyc::CInstance* self, int index, float value) {
 void SendChanges(yyc::CInstance* self) {
     std::vector<StateEntry> changes;
     if (IsHost()) AddPuzzleFlags(self, changes);
+    const bool inWorld = InWorld(self);
     for (const Kind& kind : kKinds) {
-        if (!Sends(kind)) continue;
+        if (!Sends(kind) || !SharedHere(kind, inWorld)) continue;
         const int count = static_cast<int>(yyc::CallReal(self, "instance_number", {double(kind.object)}));
         for (int i = 0; i < count && changes.size() < kMaxEntries; ++i) {
             const int id = static_cast<int>(yyc::CallReal(self, "instance_find", {double(kind.object), double(i)}));
@@ -198,7 +243,7 @@ void SendChanges(yyc::CInstance* self) {
                 const auto known = g_known.find(key);
                 if (known != g_known.end() && known->second == value) continue;
                 g_known[key] = value;
-                changes.push_back({id, static_cast<int16_t>(kind.object), static_cast<int16_t>(slot), value});
+                changes.push_back(Entry(id, kind.object, slot, value));
             }
         }
     }
@@ -208,6 +253,7 @@ void SendChanges(yyc::CInstance* self) {
 void ApplyState(const net::Message& message, yyc::CInstance* localPlayer) {
     const size_t count = message.payload.size() / sizeof(StateEntry);
     if (message.payload.size() % sizeof(StateEntry) != 0 || count > kMaxEntries) return;
+    const bool inWorld = InWorld(localPlayer);
     for (size_t i = 0; i < count; ++i) {
         StateEntry entry{};
         memcpy(&entry, message.payload.data() + i * sizeof(StateEntry), sizeof(entry));
@@ -215,21 +261,22 @@ void ApplyState(const net::Message& message, yyc::CInstance* localPlayer) {
             if (IsGuest() && std::isfinite(entry.value)) SetPuzzleFlag(localPlayer, entry.slot, entry.value);
             continue;
         }
-        yyc::CInstance* piece = yyc::FindInstance(entry.id);
         const Kind* kind = KindOf(entry.object);
-        if (piece == nullptr || kind == nullptr || ObjectOf(piece) != entry.object || !std::isfinite(entry.value)) continue;
+        if (kind == nullptr || !std::isfinite(entry.value) || !SharedHere(*kind, inWorld)) continue;
         if (!IsGuest() && !FromAnyone(*kind)) continue;  // the host takes from a guest only what is its own too
-        WriteNumber(entry.id, entry.slot, entry.value);
+        const int piece = LocalPiece(localPlayer, entry.id, entry.hostId, entry.object, entry.x, entry.y);
+        if (piece == 0) continue;
+        WriteNumber(piece, entry.slot, entry.value);
         if (kind->moves && entry.slot == kSlotX) {  // the host moves it: no sliding of its own here
-            WriteNumber(entry.id, kH, 0);
-            WriteNumber(entry.id, kV, 0);
+            WriteNumber(piece, kH, 0);
+            WriteNumber(piece, kV, 0);
         }
-        g_known[std::make_pair(entry.id, static_cast<int>(entry.slot))] = entry.value;  // not news to send back
+        g_known[std::make_pair(piece, static_cast<int>(entry.slot))] = entry.value;  // not news to send back
     }
 }
 
 void ApplyUse(yyc::CInstance* localPlayer, net::PeerId from, const UseMsg& msg) {
-    yyc::CInstance* piece = yyc::FindInstance(msg.id);
+    yyc::CInstance* piece = yyc::FindInstance(LocalPiece(localPlayer, msg.id, msg.hostId, msg.object, msg.x, msg.y));
     yyc::CInstance* puppet = puppet::Instance(from);
     const Kind* kind = KindOf(msg.object);
     if (piece == nullptr || puppet == nullptr || kind == nullptr || ObjectOf(piece) != msg.object) {
@@ -246,7 +293,7 @@ void ApplyUse(yyc::CInstance* localPlayer, net::PeerId from, const UseMsg& msg) 
 
 // Another player's E on a kMirror piece: ours does the same, as the local player.
 void ApplyMirror(yyc::CInstance* localPlayer, net::PeerId from, const UseMsg& msg) {
-    yyc::CInstance* piece = yyc::FindInstance(msg.id);
+    yyc::CInstance* piece = yyc::FindInstance(LocalPiece(localPlayer, msg.id, msg.hostId, msg.object, msg.x, msg.y));
     const Kind* kind = KindOf(msg.object);
     if (piece == nullptr || kind == nullptr || kind->use != Use::kMirror || ObjectOf(piece) != msg.object) {
         Log("puzzles: player %u used piece %d (object %d) - not here", from, msg.id, msg.object);
@@ -263,7 +310,7 @@ template <size_t N>
 void __cdecl InteractHook(yyc::CInstance* self, yyc::CInstance* other) {
     const Kind* kind = KindOf(ObjectOf(self));
     const bool ours = kind != nullptr && net::IsConnected() && g_applying == 0;
-    const UseMsg msg{IdOf(self), static_cast<int16_t>(kind != nullptr ? kind->object : 0), 0};
+    const UseMsg msg = UseOf(IdOf(self), kind != nullptr ? kind->object : 0);
     if (ours && kind->use == Use::kAtHost && IsGuest()) {
         net::Send(kPuzzleUse, &msg, sizeof(msg));
         return;
@@ -323,8 +370,7 @@ bool MeltsAtEachSide(int object) { return object == kObjFrozenChest; }
 void OnDestroyed(int id, int object) {
     if (!MeltsAtEachSide(object) || !net::IsConnected()) return;
     // Its last `freeze` may not have gone out: the others' blocks melt now (Approach would raise a lone freeze of 0).
-    const StateEntry melted[2] = {{id, static_cast<int16_t>(object), static_cast<int16_t>(kFreeze), 0},
-                                  {id, static_cast<int16_t>(object), static_cast<int16_t>(kMeltTo), 0}};
+    const StateEntry melted[2] = {Entry(id, object, kFreeze, 0), Entry(id, object, kMeltTo, 0)};
     net::Send(kPuzzleState, melted, sizeof(melted));
     Log("puzzles: ice block %d melted here - melts at the others too", id);
 }
