@@ -1,0 +1,85 @@
+[h1]Forager Co-op — online co-op for up to 4 players[/h1]
+
+[b]Video demo:[/b] [url=https://www.youtube.com/watch?v=apy2HmzMUoY]watch the co-op in action on YouTube[/url]
+
+[h2]How to install[/h2]
+[olist]
+[*]Subscribe to this mod.
+[*]In the game: [b]MODDING[/b] → enable [b]ForagerCoop[/b] → [b]COMPILE[/b].
+[*]Wait for the notice [i]Ready! Close and reopen Forager from Steam[/i] at the top of the screen.
+[*]Close the game and start it again from Steam. A [b]COOP[/b] button appears in the main menu.
+[*]Every player has to do this.
+[/olist]
+After a mod update the notice appears again: restart the game once more. If it does not appear, press COMPILE again.
+
+[h2]What it does to your files[/h2]
+The official Modding API has no networking and unloads every mod when you go back to the main menu, so the co-op itself is a native patch. This mod unpacks it into the Forager profile folder ([b]%LOCALAPPDATA%\Forager[/b]): the co-op DLL, a small [b]catch_error.dll[/b] loader that starts it, and a few marker files. Game files are not changed.
+[list]
+[*]To turn the co-op off: unsubscribe, or create an empty [b]ForagerCoop-disabled.txt[/b] in that folder.
+[*]To remove everything: delete [b]catch_error.dll[/b] and the [b]ForagerCoop-*[/b] files from that folder.
+[*]Already installed [b]version.dll[/b] by hand? It keeps working and takes priority; you do not need both.
+[/list]
+
+[h2]Open source[/h2]
+Everything is open source: the co-op patch, the loader and this mod. Anyone can read the code and build it themselves: [url=https://github.com/melogo5/forager-coop]github.com/melogo5/forager-coop[/url]. Thanks to [b]voidk 22[/b] ([url=https://github.com/justberlim]justberlim[/url] on GitHub) for the idea and code of the bridge between the co-op patch and Steam Workshop.
+
+[h2]Requirements[/h2]
+[list]
+[*]Forager on Steam, version 4.1.9 (the current Steam build), Windows.
+[*]Only Classic worlds can be played in co-op.
+[/list]
+
+[h2]Features[/h2]
+[list]
+[*]Up to 4 players in one world, Steam invites (F2), LAN / Hamachi / Radmin.
+[*]Shared world, level, coins, skill tree, museum and quests.
+[*]Each guest keeps their own inventory and gear.
+[*]Dungeons together.
+[/list]
+
+Status: beta. Bugs and questions — [url=https://discord.gg/BjsubWefm4]Discord[/url] or [url=https://github.com/melogo5/forager-coop/issues]GitHub Issues[/url].
+
+-----
+
+[h1]Forager Co-op — онлайн-кооператив до 4 игроков[/h1]
+
+[b]Этот мод сам устанавливает кооператив.[/b] Подпишитесь, один раз скомпилируйте мод, перезапустите игру — в главном меню появится пункт [b]COOP[/b].
+
+[b]Видео-демонстрация:[/b] [url=https://www.youtube.com/watch?v=apy2HmzMUoY]посмотреть кооператив на YouTube[/url]
+
+[h2]Как установить[/h2]
+[olist]
+[*]Подпишитесь на мод.
+[*]В игре: [b]MODDING[/b] → включить [b]ForagerCoop[/b] → [b]COMPILE[/b].
+[*]Дождитесь надписи [i]Ready! Close and reopen Forager from Steam[/i] вверху экрана.
+[*]Закройте игру и запустите её снова через Steam. В главном меню появится пункт [b]COOP[/b].
+[*]Это нужно сделать каждому игроку.
+[/olist]
+После обновления мода надпись появится снова — перезапустите игру ещё раз. Если не появилась, нажмите COMPILE ещё раз.
+
+[h2]Что мод делает с файлами[/h2]
+В официальном Modding API нет сети, а при выходе в главное меню игра выгружает все моды, поэтому сам кооператив — нативный патч. Мод распаковывает его в папку профиля Forager ([b]%LOCALAPPDATA%\Forager[/b]): DLL кооператива, маленький загрузчик [b]catch_error.dll[/b], который её запускает, и несколько файлов-меток. Файлы игры не меняются.
+[list]
+[*]Выключить кооператив: отписаться от мода или создать в этой папке пустой файл [b]ForagerCoop-disabled.txt[/b].
+[*]Удалить всё: стереть в этой папке [b]catch_error.dll[/b] и файлы [b]ForagerCoop-*[/b].
+[*]Уже поставили [b]version.dll[/b] вручную? Он продолжит работать и важнее мода; ставить оба не нужно.
+[/list]
+
+[h2]Открытый код[/h2]
+Всё открыто: патч кооператива, загрузчик и этот мод. Любой может посмотреть код и собрать его сам: [url=https://github.com/melogo5/forager-coop]github.com/melogo5/forager-coop[/url]. Спасибо [b]voidk 22[/b] ([url=https://github.com/justberlim]justberlim[/url] на GitHub) за идею и код моста между патчем кооператива и Steam Workshop.
+
+[h2]Требования[/h2]
+[list]
+[*]Forager в Steam, версия 4.1.9 (текущая сборка Steam), Windows.
+[*]В кооперативе играются только миры Classic.
+[/list]
+
+[h2]Возможности[/h2]
+[list]
+[*]До 4 игроков в одном мире, приглашения через Steam (F2), LAN / Hamachi / Radmin.
+[*]Общие мир, уровень, монеты, дерево навыков, музей и квесты.
+[*]У каждого гостя свой инвентарь и снаряжение.
+[*]Подземелья вместе.
+[/list]
+
+Статус: бета. Баги и вопросы — [url=https://discord.gg/BjsubWefm4]Discord[/url] или [url=https://github.com/melogo5/forager-coop/issues]GitHub Issues[/url].
