@@ -119,7 +119,7 @@ The developer documentation is in Russian:
 | [`native/`](native/) | source of `version.dll` |
 | [`docs/coop/`](docs/coop/) | spec, architecture, status, playtest notes |
 | [`tools/gametest/`](tools/gametest/) | test automation: two game windows, clicks, screenshots |
-| [`mods/CoopTest/`](mods/CoopTest/) | the first prototype on the Mod API (frozen) |
+| [`mods/ForagerCoop/`](mods/ForagerCoop/) | the Steam Workshop package: installs `version.dll` through the Mod API |
 
 ## Legal
 
