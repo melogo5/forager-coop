@@ -46,10 +46,21 @@ jobs:
         run: |
           $notes = @'
           ## Installation
+          Every player needs the co-op. Only the Steam version 4.1.9 (build 2021-01-29) is supported.
+
+          ### Option 1: Steam Workshop (recommended)
+          1. Subscribe to [ForagerCoop on Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3831217775).
+          2. In the game: **MODDING** → enable **ForagerCoop** → **COMPILE**.
+          3. Wait for the notice *Ready! Close and reopen Forager from Steam* at the top of the screen.
+          4. Close the game and start it again from Steam. The main menu gets a **COOP** item.
+
+          After a mod update the notice appears again: restart the game once more.
+          To turn the co-op off, unsubscribe from the mod.
+
+          ### Option 2: version.dll by hand
           1. Download `version.dll` below and put it in the game folder, next to `Forager.exe`
              (Steam → Forager → Manage → Browse local files).
-          2. Every player needs it. Only the Steam version 4.1.9 (build 2021-01-29) is supported.
-          3. The main menu gets a **COOP** item. Details are in the README.
+          2. The main menu gets a **COOP** item. Details are in the README.
 
           To uninstall, delete `version.dll` from the game folder.
 
