@@ -1,6 +1,7 @@
 # Ghidra project with the analyzed Forager.exe (~440 MB, binary, regenerable)
 ghidra/
 native/build/
+mods/ForagerCoop/build/
 tools/gametest/shots/
 .claude/
 __pycache__/

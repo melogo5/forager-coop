@@ -1,0 +1,25 @@
+LIBRARY catch_error
+EXPORTS
+ catch_error_clear=proxy_0
+ catch_error_dequeue=proxy_1
+ catch_error_fatal_force_raw=proxy_2
+ catch_error_get_dump_path=proxy_3
+ catch_error_get_exec_params=proxy_4
+ catch_error_get_exec_path=proxy_5
+ catch_error_get_fatal=proxy_6
+ catch_error_get_newer=proxy_7
+ catch_error_get_normal=proxy_8
+ catch_error_get_prompt_flags=proxy_9
+ catch_error_get_prompt_kind=proxy_10
+ catch_error_get_prompt_text=proxy_11
+ catch_error_get_prompt_title=proxy_12
+ catch_error_init_raw=proxy_13
+ catch_error_is_loaded=proxy_14
+ catch_error_is_ready=proxy_15
+ catch_error_set_dump_path_raw=proxy_16
+ catch_error_set_exec_raw=proxy_17
+ catch_error_set_fatal=proxy_18
+ catch_error_set_newer_raw=proxy_19
+ catch_error_set_normal=proxy_20
+ catch_error_set_prompt_raw=proxy_21
+ catch_error_size=proxy_22

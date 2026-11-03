@@ -1,5 +1,6 @@
-# Builds native\build\version.dll. A pushed tag v* publishes it as a GitHub release (a tag with a '-', like
-# v0.2.0-beta1, becomes a pre-release); a manual run only builds and keeps the DLL as a workflow artifact.
+# Builds native\build\version.dll and the Steam Workshop package zip (mods\ForagerCoop\build.ps1; uploaded to Steam
+# by hand). A pushed tag v* publishes both as a GitHub release (a tag with a '-', like v0.2.0-beta1, becomes a
+# pre-release); a manual run only builds and keeps both as workflow artifacts.
 name: release
 
 on:
@@ -22,10 +23,19 @@ jobs:
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File native\build.ps1
 
+      - name: Build Workshop package
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File mods\ForagerCoop\build.ps1 -Version ${{ github.ref_name }}
+
       - uses: actions/upload-artifact@v4
         with:
           name: version.dll
           path: native/build/version.dll
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workshop
+          path: mods/ForagerCoop/build/ForagerCoop-Workshop-*.zip
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -42,7 +52,9 @@ jobs:
           3. The main menu gets a **COOP** item. Details are in the README.
 
           To uninstall, delete `version.dll` from the game folder.
+
+          `ForagerCoop-Workshop-*.zip` is the Steam Workshop package of the same build; players do not need it.
           '@
           $flags = @('--generate-notes', '--notes', $notes, '--title', $env:TAG)
           if ($env:TAG.Contains('-')) { $flags += '--prerelease' }
-          gh release create $env:TAG native/build/version.dll @flags
+          gh release create $env:TAG native/build/version.dll "mods/ForagerCoop/build/ForagerCoop-Workshop-$env:TAG.zip" @flags

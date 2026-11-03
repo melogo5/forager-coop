@@ -120,7 +120,7 @@ Forager собран GameMaker YYC (GML скомпилирован в машин
 | [`native/`](native/) | исходники `version.dll` |
 | [`docs/coop/`](docs/coop/) | спецификация, архитектура, статус, разборы плейтестов |
 | [`tools/gametest/`](tools/gametest/) | автоматизация тестов: два окна игры, клики, скриншоты |
-| [`mods/CoopTest/`](mods/CoopTest/) | первый прототип на Mod API (заморожен) |
+| [`mods/ForagerCoop/`](mods/ForagerCoop/) | пакет для Steam Workshop: ставит `version.dll` через Mod API |
 
 ## Правовое
 
