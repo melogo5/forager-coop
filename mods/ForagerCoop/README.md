@@ -1,7 +1,7 @@
 # Forager Coop — Steam Workshop package
 
 A Mod API mod (`ForagerCoop`) that installs the co-op by itself, without copying `version.dll` into the game
-folder. Based on the Workshop integration for v0.1.2 by [justberlim](https://github.com/justberlim) (MIT).
+folder. Based on the Workshop integration for v0.1.2 by voidk 22 ([justberlim](https://github.com/justberlim) on GitHub, MIT).
 
 ## Build
 
