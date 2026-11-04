@@ -14,6 +14,7 @@
 #include "MinHook.h"
 #include "chests.h"
 #include "bombs.h"
+#include "shots.h"
 #include "dungeons.h"
 #include "familiars.h"
 #include "log.h"
@@ -40,6 +41,8 @@ constexpr int kSlotStack = 0x80E;    // a drop's `stack`: how many of its item i
 constexpr float kMaxStack = 10000;  // sanity bound for a stack from the network
 constexpr int kObjSkeleton = 30;
 constexpr int kSlotBigSkeleton = 0xB3;
+// What objNewBuilding sets on a structure after creating it (var_slots.tsv); see ObjectMsg::built.
+constexpr int kSlotStructure = 0x836, kSlotPlaced = 0x6EF, kSlotBuiltType = 0x8C0;
 
 // Parents of the objects that make up the world (decompiled/data/objects.tsv).
 constexpr int kSyncedParents[] = {
@@ -140,6 +143,43 @@ unsigned g_applied[16] = {};
 unsigned g_steps = 0;
 constexpr unsigned kStatsEverySteps = 600;
 
+bool ReadNumber(int id, int slot, float* out) {
+    yyc::RValue value{};
+    const bool number = yyc::GetVar(id, slot, &value) && yyc::IsNumber(value);
+    if (number) *out = static_cast<float>(yyc::ToReal(value));
+    yyc::Free(&value);
+    return number;
+}
+
+bool IsKind(yyc::CInstance* self, yyc::CInstance* instance, int object);
+
+// A structure the build menu made (it has a `structure`): its build-list entry, `type` and `placed` go along.
+void DescribeBuilt(int id, ObjectMsg* msg) {
+    yyc::CInstance* instance = yyc::FindInstance(id);
+    if (instance == nullptr || !IsKind(instance, instance, yyc::obj::parStructure) ||
+        !ReadNumber(id, kSlotStructure, &msg->structure)) {
+        return;
+    }
+    msg->built = 1;
+    if (!ReadNumber(id, kSlotBuiltType, &msg->variant)) msg->variant = -1;
+    if (!ReadNumber(id, kSlotPlaced, &msg->placed)) msg->placed = -1;
+}
+
+// The copy of a built structure takes what the builder's objNewBuilding set (after its Create, as there).
+void ApplyBuilt(int id, const ObjectMsg& msg) {
+    if (msg.built == 0 || !std::isfinite(msg.structure) || yyc::FindInstance(id) == nullptr) return;
+    yyc::RValue structure = yyc::Real(msg.structure);
+    yyc::SetVar(id, kSlotStructure, &structure);
+    if (std::isfinite(msg.variant) && msg.variant >= 0) {
+        yyc::RValue variant = yyc::Real(msg.variant);
+        yyc::SetVar(id, kSlotBuiltType, &variant);
+    }
+    if (std::isfinite(msg.placed) && msg.placed >= 0) {
+        yyc::RValue placed = yyc::Real(msg.placed);
+        yyc::SetVar(id, kSlotPlaced, &placed);
+    }
+}
+
 ObjectMsg MakeObjectMsg(MessageType type, const InstanceInfo& info, int id, int32_t item, int32_t owner) {
     ObjectMsg msg{id, info.object, static_cast<float>(info.x), static_cast<float>(info.y),
                   static_cast<float>(info.depth), item, owner, -1, 0};
@@ -151,6 +191,7 @@ ObjectMsg MakeObjectMsg(MessageType type, const InstanceInfo& info, int id, int3
         if (item != kNoItem) msg.stack = ReadVar(id, kSlotStack);
         if (info.object == kObjSkeleton) msg.big = ReadVar(id, kSlotBigSkeleton);
     }
+    if (type == kSpawn || type == kGuestSpawn) DescribeBuilt(id, &msg);
     return msg;
 }
 
@@ -333,6 +374,26 @@ void SendScrollSpawners() {
     g_scrollSpawners.clear();
 }
 
+// The build menu's placement (objNewBuilding) sets the structure's `structure`, `type` and `placed` right after
+// creating it: the guest sends it a step later, with them (ObjectMsg::built).
+bool CreatedByBuildMenu() {
+    const StackFrame* top = yyc::TopFrame();
+    return top != nullptr && top->name != nullptr && strcmp(top->name, "gml_Object_objNewBuilding_Step_0") == 0;
+}
+
+std::vector<int> g_builtStructures;  // guest
+
+void SendBuiltStructures() {
+    for (const int id : g_builtStructures) {
+        yyc::CInstance* built = yyc::FindInstance(id);
+        if (built == nullptr) continue;
+        const InstanceInfo info = Describe(built);
+        Send(kGuestSpawn, info, info.id);
+        Log("sync: built object %d at (%.0f, %.0f), sent to the host", info.object, info.x, info.y);
+    }
+    g_builtStructures.clear();
+}
+
 bool CreatedByScroll() {
     const StackFrame* top = yyc::TopFrame();
     return top != nullptr && top->name != nullptr && strcmp(top->name, "gml_Script_UseScroll") == 0;
@@ -392,6 +453,7 @@ void __cdecl CreateHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstanc
     const int object = static_cast<int>(yyc::GetBuiltinReal(created, yyc::va::YYVar_object_index));
     if (IsGuest()) familiars::OnCreated(self, id, object);
     bombs::OnCreated(self, id, object);
+    shots::OnCreated(self, id, object);
     if (IsGuest() && IsScrollSpawner(object) && CreatedByScroll()) {
         // Its spawns would be the guest's own (skipped here): the host runs the spawner (playtest 4, bug 4).
         g_scrollSpawners.push_back(id);
@@ -414,6 +476,8 @@ void __cdecl CreateHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstanc
         if (puppet::IsActing()) g_guestDrops[id] = puppet::ActingPlayer();
     } else if (IsGuest() && g_suppressing > 0) {
         g_suppressed.push_back(id);
+    } else if (IsGuest() && CreatedByBuildMenu()) {
+        g_builtStructures.push_back(id);  // sent next step, once objNewBuilding has said what it is
     } else if (IsGuest() && (CreatedByGuestAction() || (CreatedByNpcReward(self) && !IsDrop(self, object)))) {
         const InstanceInfo info = Describe(created);
         Send(kGuestSpawn, info, info.id);
@@ -637,6 +701,7 @@ void ApplySpawn(yyc::CInstance* self, const ObjectMsg& msg) {
         }
     }
     if (id != 0) ApplyBig(id, msg);
+    if (id != 0) ApplyBuilt(id, msg);
     if (id != 0 && msg.sprite >= 0) {
         if (yyc::CInstance* replica = yyc::FindInstance(id)) {
             yyc::SetBuiltinReal(replica, yyc::va::YYVar_sprite_index, msg.sprite);
@@ -759,6 +824,7 @@ void ApplyGuestSpawn(yyc::CInstance* self, net::PeerId from, const ObjectMsg& ms
         yyc::RValue type = yyc::Real(msg.item);
         yyc::SetVar(id, kSlotType, &type);
     }
+    ApplyBuilt(id, msg);
     const ObjectMsg ack{id, msg.object, msg.x, msg.y, msg.depth, msg.id};
     net::SendTo(from, kGuestSpawnAck, &ack, sizeof(ack));
     SendToOtherGuests(from, kSpawn, Describe(built), id);
@@ -833,6 +899,7 @@ void Tick(yyc::CInstance* localPlayer) {
     if (IsGuest()) RetryDestroys(localPlayer, true);
     if (IsGuest()) CollectCrafted(localPlayer);
     if (IsGuest()) SendScrollSpawners();
+    if (IsGuest()) SendBuiltStructures();
     if (++g_steps % kStatsEverySteps == 0) {
         Log("sync: sent spawn %u destroy %u hit %u gone %u | applied spawn %u destroy %u hit %u gone %u",
             g_sent[kSpawn], g_sent[kDestroy], g_sent[kHit], g_sent[kGuestDestroyed], g_applied[kSpawn],
@@ -964,6 +1031,7 @@ void Reset() {
     g_craftedDrops.clear();
     g_localDrops.clear();
     g_scrollSpawners.clear();
+    g_builtStructures.clear();
     ForgetAfterWake();
 }
 

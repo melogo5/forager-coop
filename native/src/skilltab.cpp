@@ -283,11 +283,13 @@ void DrawOpenTree(yyc::CInstance* control) {
     }
 }
 
-// The world's last GUI draw (level-up banner, fades...): the tree goes over all of it, as its own room would.
+// The world's last GUI draw: the tree goes over everything drawn before it (level-up banner, fades...), as its own
+// room would. WorldControl's own Draw GUI End comes after the tree: it draws the mouse cursor (sprMouseCursor) and
+// the chat, which the tree's opaque backdrop would hide.
 void __cdecl WorldGuiEndHook(yyc::CInstance* self, yyc::CInstance* other) {
-    g_origWorldGuiEnd(self, other);
     yyc::CInstance* control = g_open ? yyc::FindInstance(g_control) : nullptr;
     if (control != nullptr) DrawOpenTree(control);
+    g_origWorldGuiEnd(self, other);
 }
 
 bool Hook(uint32_t va, void* detour, void* original) {

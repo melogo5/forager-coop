@@ -61,7 +61,9 @@ const std::vector<Kind> kKinds = {
     {188, 0x00CF1090, Use::kOwn, false, {kSolved, kNumber, kUsable}},            // objGemSocketPillar
     {180, 0x00CD1410, Use::kAtHost, false, {kSlotImage, kUsable}},  // objComputerTerminal: E turns the symbol
     {182, 0x00CE0920, Use::kAtHost, false, {kDown, kSolved, kUsable}},  // objVolcanoPushDownPillar
-    {164, 0x00C96CF0, Use::kAtHost, false, {kUsable}},                           // objPushDownPillar
+    // objPushDownPillar is down when its animation is (Step_0: usable = image_index == 0): its frame goes along - sent
+    // `usable` was undone the next step, the guest never saw its pillar go down and could not do the puzzle.
+    {164, 0x00C96CF0, Use::kAtHost, false, {kSlotImage}},                        // objPushDownPillar
     // The boss door opens for a key that follows PlayerFind() - the local player - so everyone's key follows them.
     // Frozen in ice (rmCrystalCave): a guest's fire thawed its own key only, the host could not take it (playtest 9).
     {75, 0x00B3F510, Use::kMirror, false, {kFreeze, kBurn}},  // objBossKey

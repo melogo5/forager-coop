@@ -149,7 +149,8 @@ void __cdecl EventUserHook(yyc::CInstance* self, yyc::CInstance* other, int n) {
     }
     SendHit(info);
     Log("sync: hit object %d at (%.0f, %.0f) sent to the host", info.object, info.x, info.y);
-    if (!IsEnemy(self, info.object)) DryHit(self, other);
+    // Enemies too: their hit event is the sound, flash and squash of the hit - the guest's sword was silent on them.
+    DryHit(self, other);
 }
 
 // Guest: a repair kit (UseRepairKit: every structure near the player back to hpMax) mends the host's structures,
@@ -219,7 +220,7 @@ namespace internal {
 void Hit(yyc::CInstance* localPlayer, yyc::CInstance* target) {
     const InstanceInfo info = sync::Describe(target);
     SendHit(info);
-    if (!sync::IsEnemy(localPlayer, info.object)) DryHit(target, localPlayer);  // as a real tool hit shows it
+    DryHit(target, localPlayer);  // as a real tool hit shows it
 }
 
 }  // namespace internal

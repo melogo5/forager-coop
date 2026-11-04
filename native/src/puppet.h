@@ -34,6 +34,7 @@ struct State {
     char name[16];  // shown over the puppet, with its hearts; not 0-terminated when all 16 are used
     look::Look look;  // what the player wears
     Swing swing;
+    int blend = 0xFFFFFF;  // image_blend (c_white: none)
 };
 
 using LocalStepFn = void (*)(yyc::CInstance* localPlayer);

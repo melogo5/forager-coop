@@ -129,6 +129,31 @@ bool IsPuppetInstance(const yyc::CInstance* instance) {
     return false;
 }
 
+// PlayerFind(n) is ds_list_find_value(global.players, n): undefined while the list is empty. Something reading
+// "the player" then dies on it - the game stopped loading a world after coop play with objFurnace's Create
+// (`PlayerFind().dmg`: "I32 argument is undefined"), a fairy once when a guest went back to the menu
+// (QUESTIONS.md). If the local player is there all the same, it is the answer; else the call stays undefined.
+void RecoverPlayer(yyc::CInstance* self, yyc::RValue* result) {
+    if (self == nullptr) return;
+    const int count = static_cast<int>(yyc::CallReal(self, "instance_number", {kObjPlayer}));
+    for (int i = 0; i < count; ++i) {
+        const int id = static_cast<int>(yyc::CallReal(self, "instance_find", {kObjPlayer, double(i)}));
+        yyc::CInstance* player = yyc::FindInstance(id);
+        if (player == nullptr || IsPuppetInstance(player)) continue;
+        yyc::Free(result);
+        *result = yyc::Real(id);
+        static unsigned told = 0;
+        if (told++ < 3) Log("puppet: PlayerFind found no player listed - the local player %d stands in", id);
+        return;
+    }
+    static unsigned toldNone = 0;
+    if (toldNone++ < 3) {
+        const yyc::StackFrame* top = yyc::TopFrame();
+        Log("puppet: PlayerFind found no player at all (called from %s)",
+            top != nullptr && top->name != nullptr ? top->name : "?");
+    }
+}
+
 const char* CallerName() {
     const StackFrame* top = yyc::TopFrame();
     return top != nullptr ? top->name : nullptr;
@@ -209,7 +234,11 @@ yyc::RValue* __cdecl PlayerFindHook(yyc::CInstance* self, yyc::CInstance* other,
         if (!told) Log("puppet: an enemy goes for a guest (nearer than the host)");
         told = true;
     }
-    if (id == 0) return g_origPlayerFind(self, other, result, argc, args);
+    if (id == 0) {
+        g_origPlayerFind(self, other, result, argc, args);
+        if ((result->kind & yyc::kKindMask) == yyc::kUndefined) RecoverPlayer(self, result);
+        return result;
+    }
     yyc::Free(result);
     *result = yyc::Real(id);
     return result;
@@ -550,6 +579,22 @@ void ResumeActing(const Acting& acting) {
     g_actorId = acting.depth > 0 && yyc::FindInstance(acting.actorId) != nullptr ? acting.actorId : 0;
 }
 
+constexpr uint32_t kYYVarImageBlend = 0x01AD8768;      // decompiled/code/yyvar_map.tsv
+constexpr uint32_t kScriptGetCosmeticItems = 0x00836BD0;  // decompiled/code/index.tsv
+
+// The hat, backpack and wings are drawn from sprHat*/sprBack*/sprWings*, which GetCosmeticItems sets on PlayerFind()
+// from its `cosmetic` - in objPlayer's Step_2, which a puppet does not run: only the body (its sprite_index comes
+// with the state) showed the other player's costume.
+void RefreshCosmetics(const Puppet& puppet) {
+    yyc::CInstance* instance = yyc::FindInstance(puppet.id);
+    if (instance == nullptr) return;
+    yyc::RValue result{};
+    BeginActing(puppet.player);
+    yyc::At<yyc::ScriptFn>(kScriptGetCosmeticItems)(instance, instance, &result, 0, nullptr);
+    EndActing();
+    yyc::Free(&result);
+}
+
 void Update(yyc::CInstance* localPlayer, net::PeerId player, const State& target) {
     Prune();
     Puppet* puppet = Find(player);
@@ -580,9 +625,11 @@ void Update(yyc::CInstance* localPlayer, net::PeerId player, const State& target
     puppet->name.assign(target.name, strnlen(target.name, sizeof(target.name)));
     puppet->hp = target.hp;
     puppet->hpMax = target.hpMax;
+    yyc::SetBuiltinReal(instance, kYYVarImageBlend, target.blend);
     if (target.look.count > 0 && target.look != puppet->look) {
         look::Apply(instance, target.look);
         puppet->look = target.look;
+        RefreshCosmetics(*puppet);
     }
 }
 

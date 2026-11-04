@@ -53,6 +53,13 @@ struct ObjectMsg {
     float stack;
     // kSpawn of a skeleton: its bigSkeleton (a bone pile's, PLAYTEST8.md #4); the guest's replica was small.
     float big;
+    // kSpawn/kGuestSpawn of a built structure: what objNewBuilding sets after creating it - `structure` (which entry
+    // of the build list: stone wall vs wooden wall share objFence), `type`, `placed`. Without them the copy kept its
+    // Create defaults: stone, iron... walls and gates came out wooden at the other player. 0 = not a structure.
+    int32_t built;
+    float structure;
+    float variant;  // `type`
+    float placed;
 };
 #pragma pack(pop)
 

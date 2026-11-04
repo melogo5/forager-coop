@@ -57,6 +57,18 @@ struct LandfillMsg {
 constexpr uint32_t kScriptCreateDirt = 0x0077C0E0;  // CreateDirt(x, y, kind)
 constexpr const char* kDirtCallers[] = {"gml_Script_UseShovel", "gml_Script_UseBottledWater"};
 yyc::ScriptFn g_origCreateDirt = nullptr;
+// Floors, roads and rails are placeable items laid as tiles (UsePlaceableItem -> CreateTile(tile, x, y)) and
+// taken up with the pickaxe (UsePickaxe -> RemoveTile(x, y), which drops the item): not objects, so the peer repeats
+// the call - they stayed only at the player who laid them. CreateTile/RemoveTile call themselves for the neighbours
+// (autotiling): only the player's own call is sent, the peer's repeats it in full.
+constexpr uint8_t kTile = 55;        // either way: CreateTile's arguments (see EncodeCall)
+constexpr uint8_t kTileRemove = 56;  // either way: RemoveTile's arguments
+constexpr uint32_t kScriptCreateTile = 0x00752B90;
+constexpr uint32_t kScriptRemoveTile = 0x00753620;
+constexpr char kTileLayer[] = "gml_Script_UsePlaceableItem";
+constexpr char kTileTaker[] = "gml_Script_UsePickaxe";
+yyc::ScriptFn g_origCreateTile = nullptr;
+yyc::ScriptFn g_origRemoveTile = nullptr;
 yyc::EventFn g_origSignStep = nullptr;
 bool (*g_isHost)() = nullptr;
 bool (*g_isGuest)() = nullptr;
@@ -167,17 +179,21 @@ yyc::RValue* __cdecl RemoveLandfillHook(yyc::CInstance* self, yyc::CInstance* ot
     return ShareLandfill(g_origRemoveLandfill, true, self, other, result, argc, args);
 }
 
-bool DugByPlayer() {
+bool CalledBy(const char* caller) {
     const StackFrame* top = yyc::TopFrame();
-    if (top == nullptr || top->name == nullptr) return false;
+    return top != nullptr && top->name != nullptr && strcmp(top->name, caller) == 0;
+}
+
+bool DugByPlayer() {
     for (const char* caller : kDirtCallers) {
-        if (strcmp(top->name, caller) == 0) return true;
+        if (CalledBy(caller)) return true;
     }
     return false;
 }
 
-// Payload: x, y (f64), u8 kind of the third argument (0 none, 1 number, 2 string), then f64 or the string's bytes.
-void SendDirt(int argc, yyc::RValue** args) {
+// A script call (a, b[, c]) as a payload - CreateDirt(x, y, kind), CreateTile(tile, x, y), RemoveTile(x, y): a, b
+// (f64), u8 kind of the third argument (0 none, 1 number, 2 string), then f64 or the string's bytes.
+std::vector<uint8_t> EncodeCall(int argc, yyc::RValue** args) {
     std::vector<uint8_t> out(2 * sizeof(double));
     const double xy[2] = {yyc::ToReal(*args[0]), yyc::ToReal(*args[1])};
     memcpy(out.data(), xy, sizeof(xy));
@@ -193,46 +209,120 @@ void SendDirt(int argc, yyc::RValue** args) {
         const std::string text = yyc::ToString(*args[2]);
         out.insert(out.end(), text.begin(), text.end());
     }
-    net::Send(kDirt, out.data(), out.size());
+    return out;
+}
+
+// A call decoded from EncodeCall's payload; Free() releases a string third argument.
+struct DecodedCall {
+    yyc::RValue values[3] = {};
+    yyc::RValue* args[3] = {&values[0], &values[1], &values[2]};
+    int argc = 0;  // 0: the payload was not a call
+    double x() const { return yyc::ToReal(values[0]); }
+    double y() const { return yyc::ToReal(values[1]); }
+    void Free() {
+        if (argc == 3) yyc::Free(&values[2]);
+    }
+};
+
+bool DecodeCall(const std::vector<uint8_t>& p, DecodedCall* call) {
+    constexpr size_t kHead = 2 * sizeof(double) + 1, kMaxText = 64;
+    if (p.size() < kHead || p.size() > kHead + kMaxText) return false;
+    double xy[2] = {};
+    memcpy(xy, p.data(), sizeof(xy));
+    if (!std::isfinite(xy[0]) || !std::isfinite(xy[1])) return false;
+    call->values[0] = yyc::Real(xy[0]);
+    call->values[1] = yyc::Real(xy[1]);
+    call->argc = 2;
+    const uint8_t kind = p[2 * sizeof(double)];
+    if (kind == 1 && p.size() == kHead + sizeof(double)) {
+        double v = 0;
+        memcpy(&v, p.data() + kHead, sizeof(v));
+        if (!std::isfinite(v)) return false;
+        call->values[2] = yyc::Real(v);
+        call->argc = 3;
+    } else if (kind == 2) {
+        call->values[2] = yyc::String(std::string(p.begin() + kHead, p.end()).c_str());
+        call->argc = 3;
+    }
+    return true;
+}
+
+// Repeats a peer's call as its puppet (energy, drops: the puppet's). `suppress`: what it creates here is the host's
+// to send (a guest drops its own copy).
+void ApplyCall(yyc::ScriptFn script, yyc::CInstance* localPlayer, net::PeerId from, DecodedCall* call, bool suppress) {
+    yyc::RValue result{};
+    ++g_applying;
+    puppet::BeginActing(from);
+    if (suppress) sync::BeginSuppressSpawns();
+    script(localPlayer, localPlayer, &result, call->argc, call->args);
+    if (suppress) sync::EndSuppressSpawns(localPlayer);
+    puppet::EndActing();
+    --g_applying;
+    yyc::Free(&result);
+    call->Free();
 }
 
 yyc::RValue* __cdecl CreateDirtHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                     yyc::RValue** args) {
     const bool share = g_applying == 0 && argc >= 2 && net::IsConnected() && DugByPlayer();
     yyc::RValue* r = g_origCreateDirt(self, other, result, argc, args);
-    if (share) SendDirt(argc, args);
+    if (share) {
+        const std::vector<uint8_t> payload = EncodeCall(argc, args);
+        net::Send(kDirt, payload.data(), payload.size());
+    }
     return r;
 }
 
 void ApplyDirt(yyc::CInstance* localPlayer, net::PeerId from, const std::vector<uint8_t>& p) {
-    if (p.size() < 2 * sizeof(double) + 1) return;
-    double xy[2] = {};
-    memcpy(xy, p.data(), sizeof(xy));
-    constexpr size_t kMaxDirtText = 64;
-    if (!std::isfinite(xy[0]) || !std::isfinite(xy[1]) || p.size() > 2 * sizeof(double) + 1 + kMaxDirtText) return;
-    const uint8_t kind = p[2 * sizeof(double)];
-    const size_t at = 2 * sizeof(double) + 1;
-    yyc::RValue values[3] = {yyc::Real(xy[0]), yyc::Real(xy[1]), {}};
-    int argc = 2;
-    if (kind == 1 && p.size() == at + sizeof(double)) {
-        double v = 0;
-        memcpy(&v, p.data() + at, sizeof(v));
-        values[2] = yyc::Real(v);
-        argc = 3;
-    } else if (kind == 2) {
-        values[2] = yyc::String(std::string(p.begin() + at, p.end()).c_str());
-        argc = 3;
+    DecodedCall call;
+    if (!DecodeCall(p, &call)) return;
+    ApplyCall(g_origCreateDirt, localPlayer, from, &call, false);
+    Log("land: the peer's dirt at (%.0f, %.0f) applied", call.x(), call.y());
+}
+
+yyc::RValue* ShareTileCall(yyc::ScriptFn original, uint8_t type, const char* caller, yyc::CInstance* self,
+                           yyc::CInstance* other, yyc::RValue* result, int argc, yyc::RValue** args) {
+    const bool share = g_applying == 0 && argc >= 2 && net::IsConnected() && CalledBy(caller);
+    // A guest's own RemoveTile drops the floor's item here too: the host's drop (the guest's, collected on arrival)
+    // is the one that counts - kept, ours doubled the item.
+    const bool suppress = share && type == kTileRemove && g_isGuest != nullptr && g_isGuest();
+    if (suppress) sync::BeginSuppressSpawns();
+    yyc::RValue* r = original(self, other, result, argc, args);
+    if (suppress) sync::EndSuppressSpawns(self);
+    if (share) {
+        const std::vector<uint8_t> payload = EncodeCall(argc, args);
+        net::Send(type, payload.data(), payload.size());
+        Log("land: %s (%g, %g%s) sent", type == kTile ? "tile" : "tile removal", yyc::ToReal(*args[0]),
+            yyc::ToReal(*args[1]), argc >= 3 ? (", " + std::to_string(yyc::ToReal(*args[2]))).c_str() : "");
     }
-    yyc::RValue* args[3] = {&values[0], &values[1], &values[2]};
-    yyc::RValue result{};
-    ++g_applying;
-    puppet::BeginActing(from);
-    g_origCreateDirt(localPlayer, localPlayer, &result, argc, args);
-    puppet::EndActing();
-    --g_applying;
-    yyc::Free(&result);
-    if (argc == 3) yyc::Free(&values[2]);
-    Log("land: the peer's dirt at (%.0f, %.0f) applied", xy[0], xy[1]);
+    return r;
+}
+
+yyc::RValue* __cdecl CreateTileHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
+                                    yyc::RValue** args) {
+    return ShareTileCall(g_origCreateTile, kTile, kTileLayer, self, other, result, argc, args);
+}
+
+yyc::RValue* __cdecl RemoveTileHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
+                                    yyc::RValue** args) {
+    return ShareTileCall(g_origRemoveTile, kTileRemove, kTileTaker, self, other, result, argc, args);
+}
+
+// RemoveTile drops the floor's item: at the host as the remover (sync sends it on, to the remover), at a guest
+// suppressed - the host's drop comes through the object sync.
+void ApplyTile(yyc::CInstance* localPlayer, const net::Message& message) {
+    DecodedCall call;
+    if (!DecodeCall(message.payload, &call)) return;
+    const bool remove = message.type == kTileRemove;
+    // CreateTile reads three arguments, RemoveTile two: a call short of them would stop the game (argument index
+    // out of range).
+    if (call.argc != (remove ? 2 : 3)) {
+        call.Free();
+        return;
+    }
+    ApplyCall(remove ? g_origRemoveTile : g_origCreateTile, localPlayer, message.from, &call,
+              remove && g_isGuest != nullptr && g_isGuest());
+    Log("land: the peer's %s (%g, %g) applied", remove ? "tile removal" : "tile", call.x(), call.y());
 }
 
 bool IsWater(yyc::CInstance* self, double x, double y) {
@@ -245,10 +335,39 @@ bool IsWater(yyc::CInstance* self, double x, double y) {
     return water;
 }
 
+// PlaceLandfill shakes the screen (with (WorldControl) shake = ...) for the player who fills: the other players'
+// screens shook as well when they repeated it. Their camera keeps the shake it had.
+class KeepScreenStill {
+public:
+    explicit KeepScreenStill(yyc::CInstance* self) {
+        constexpr int kObjWorldControl = 3;  // decompiled/data/objects.tsv
+        control_ = static_cast<int>(yyc::CallReal(self, "instance_find", {kObjWorldControl, 0}));
+        if (control_ == yyc::kNoOne || yyc::FindInstance(control_) == nullptr) return;
+        yyc::RValue shake{};
+        kept_ = yyc::GetVar(control_, kSlotShake, &shake) && yyc::IsNumber(shake);
+        if (kept_) shake_ = yyc::ToReal(shake);
+        yyc::Free(&shake);
+    }
+    ~KeepScreenStill() {
+        if (!kept_ || yyc::FindInstance(control_) == nullptr) return;
+        yyc::RValue shake = yyc::Real(shake_);
+        yyc::SetVar(control_, kSlotShake, &shake);
+    }
+    KeepScreenStill(const KeepScreenStill&) = delete;
+    KeepScreenStill& operator=(const KeepScreenStill&) = delete;
+
+private:
+    static constexpr int kSlotShake = 0x7A8;  // WorldControl.shake (var_slots.tsv)
+    int control_ = yyc::kNoOne;
+    double shake_ = 0;
+    bool kept_ = false;
+};
+
 void ApplyLandfill(yyc::CInstance* localPlayer, net::PeerId from, const LandfillMsg& msg) {
     yyc::RValue values[2] = {yyc::Real(msg.x), yyc::Real(msg.y)};
     yyc::RValue* args[2] = {&values[0], &values[1]};
     yyc::RValue result{};
+    const KeepScreenStill still(localPlayer);
     ++g_applying;
     puppet::BeginActing(from);
     // Guest: removed land drops a Landfill item - the host's own drop comes through the object sync, and a land map
@@ -368,7 +487,11 @@ bool InstallHooks(bool (*isHost)(), bool (*isGuest)()) {
                     MH_CreateHook(yyc::At<void*>(kScriptRemoveLandfill), reinterpret_cast<void*>(&RemoveLandfillHook),
                                   reinterpret_cast<void**>(&g_origRemoveLandfill)) == MH_OK &&
                     MH_CreateHook(yyc::At<void*>(kScriptCreateDirt), reinterpret_cast<void*>(&CreateDirtHook),
-                                  reinterpret_cast<void**>(&g_origCreateDirt)) == MH_OK;
+                                  reinterpret_cast<void**>(&g_origCreateDirt)) == MH_OK &&
+                    MH_CreateHook(yyc::At<void*>(kScriptCreateTile), reinterpret_cast<void*>(&CreateTileHook),
+                                  reinterpret_cast<void**>(&g_origCreateTile)) == MH_OK &&
+                    MH_CreateHook(yyc::At<void*>(kScriptRemoveTile), reinterpret_cast<void*>(&RemoveTileHook),
+                                  reinterpret_cast<void**>(&g_origRemoveTile)) == MH_OK;
     if (!ok) Log("land: hooks failed");
     return ok;
 }
@@ -383,6 +506,10 @@ void Tick(yyc::CInstance* localPlayer) {
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     if (message.type == kDirt) {
         ApplyDirt(localPlayer, message.from, message.payload);
+        return true;
+    }
+    if (message.type == kTile || message.type == kTileRemove) {
+        ApplyTile(localPlayer, message);
         return true;
     }
     if (message.type == kLandfill) {
