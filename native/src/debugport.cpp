@@ -21,6 +21,7 @@
 #include "gui.h"
 #include "log.h"
 #include "mobs.h"
+#include "puppet.h"
 #include "reconcile.h"
 #include "sync.h"
 
@@ -152,6 +153,54 @@ std::string Call(yyc::CInstance* self, const std::vector<std::string>& w) {
     return text;
 }
 
+// The camera's view in room coordinates: x, y, width, height (width 0 when there is no camera).
+struct View {
+    double x = 0, y = 0, width = 0, height = 0;
+};
+
+View CameraView() {
+    const double camera = gui::Call("view_get_camera", {0});
+    if (camera < 0) return {};
+    return {gui::Call("camera_get_view_x", {camera}), gui::Call("camera_get_view_y", {camera}),
+            gui::Call("camera_get_view_width", {camera}), gui::Call("camera_get_view_height", {camera})};
+}
+
+// Every droid as the player would see it: "id x y drawn D screen S whom W at N; ..." - D: its Draw_0 ran in the last
+// second; S: inside the camera's view (-1: no camera); W: whom it follows - self (the local player), puppet (another
+// player's), none or other; N: pixels from that one.
+std::string Droids(yyc::CInstance* self) {
+    constexpr int kObjDroid = 78, kSlotFollowing = 0x435;  // decompiled/data/objects.tsv, var_slots.tsv
+    constexpr unsigned kDrawnWithinMs = 1000;
+    const View view = CameraView();
+    const int localId = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
+    std::string out;
+    for (const Found& droid : Instances(kObjDroid, false, 0, 0, 0)) {
+        yyc::RValue value{};
+        const int following = yyc::GetVar(droid.id, kSlotFollowing, &value) && yyc::IsNumber(value)
+                                  ? static_cast<int>(yyc::ToReal(value))
+                                  : kNoOne;
+        yyc::Free(&value);
+        yyc::CInstance* target = following > 0 ? yyc::FindInstance(following) : nullptr;
+        const char* whom = target == nullptr          ? "none"
+                           : following == localId     ? "self"
+                           : puppet::IsPuppet(target) ? "puppet"
+                                                      : "other";
+        const double distance = target == nullptr ? -1
+                                                  : std::hypot(yyc::GetBuiltinReal(target, yyc::va::YYVar_x) - droid.x,
+                                                               yyc::GetBuiltinReal(target, yyc::va::YYVar_y) - droid.y);
+        const int onScreen = view.width <= 0 ? -1
+                             : droid.x >= view.x && droid.x < view.x + view.width && droid.y >= view.y &&
+                                       droid.y < view.y + view.height
+                                 ? 1
+                                 : 0;
+        char text[160] = {};
+        snprintf(text, sizeof(text), "%d %.0f %.0f drawn %d screen %d whom %s at %.0f; ", droid.id, droid.x, droid.y,
+                 puppet::DroidDrawnWithin(droid.id, kDrawnWithinMs) ? 1 : 0, onScreen, whom, distance);
+        out += text;
+    }
+    return out.empty() ? "none" : out;
+}
+
 std::string Answer(yyc::CInstance* self, const std::string& line) {
     std::istringstream in(line);
     std::vector<std::string> w;
@@ -272,6 +321,14 @@ std::string Answer(yyc::CInstance* self, const std::string& line) {
                  yyc::GetBuiltinReal(instance, yyc::va::YYVar_depth));
         return text;
     }
+    if (c == "droids") return Droids(self);
+    if (c == "moveto" && w.size() == 4) {  // puts an instance (the local player: the camera follows) at a spot
+        yyc::CInstance* instance = yyc::FindInstance(Slot(w[1]));
+        if (instance == nullptr) return "no such instance";
+        yyc::SetBuiltinReal(instance, yyc::va::YYVar_x, Number(w[2]));
+        yyc::SetBuiltinReal(instance, yyc::va::YYVar_y, Number(w[3]));
+        return "ok";
+    }
     if (c == "obj" && w.size() == 2) {  // what an instance id is: object, name, place, asleep or not
         yyc::CInstance* instance = yyc::FindInstance(Slot(w[1]));
         if (instance == nullptr) return "no such instance";
@@ -286,7 +343,7 @@ std::string Answer(yyc::CInstance* self, const std::string& line) {
         yyc::Free(&name);
         return text;
     }
-    return "unknown command (ping, player, count, list, at, var, set, event, global, call, dump)";
+    return "unknown command (ping, player, count, list, at, var, set, event, global, call, dump, droids, moveto)";
 }
 
 bool LooksLikeHttp(const std::string& line) {

@@ -65,6 +65,9 @@ constexpr int kOwnSelf = -1;
 constexpr int kNoOwner = -2;
 void SetFamiliarOwner(int familiarId, int owner);
 
+// Debug port: whether droid `droidInstanceId` was drawn (its Draw_0 ran, not skipped) in the last `milliseconds`.
+bool DroidDrawnWithin(int droidInstanceId, unsigned milliseconds);
+
 // Player `player`'s puppet, or nullptr when there is none.
 yyc::CInstance* Instance(net::PeerId player);
 // Every puppet there is, in the order they were created.

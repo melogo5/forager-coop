@@ -3,7 +3,7 @@
 #    the guest's case takes it; the guest takes it out (noone), the host's case is empty again.
 # 2. An arrow the host fires (objArrow made by the local player) shows at the guest as a copy, and the copy breaks
 #    nothing there (no GML error, no arrow item dropped where it ends).
-# 3. A droid either player crafts (GainItem) is seen by the other as a copy next to its puppet.
+# Droids: droids.ps1.
 # Walls/floors need the build menu and the placement cursor (objNewBuilding, UsePlaceableItem): see SCENARIOS.md.
 # Run on a test slot. Prints PASS/FAIL per check. Usage: sharedthings.ps1 [-HostSlot 5]
 param([int]$HostSlot = 5)
@@ -11,7 +11,7 @@ $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path (Split-Path $PSScriptRoot))
 . (Join-Path $PSScriptRoot 'lib.ps1')
 
-$ObjDisplayCase = 145; $ObjArrow = 303; $ObjDroid = 78
+$ObjDisplayCase = 145; $ObjArrow = 303
 $SlotSocket = '0x7D0'
 $NoOne = -4
 
@@ -50,20 +50,6 @@ Start-Sleep 1
 $arrowsAfter = [int](Ask $g "count $ObjArrow")
 Check "the host's arrow shows at the guest ($arrowsBefore -> $arrowsAfter)" ($arrowsAfter -gt $arrowsBefore)
 Start-Sleep 6  # the copy flies on and ends like the shot (its collisions and Destroy_0 are skipped: shots.cpp)
-
-# ---- 3. droids: each player's own is seen by the other (familiars.cpp) ----
-$ScriptGainItem = '6ac690'; $ItemDroid = 113  # decompiled/code/index.tsv; the droid item (PLAYTEST9.md #4)
-$hostBefore = [int](Ask $h "count $ObjDroid"); $guestBefore = [int](Ask $g "count $ObjDroid")
-Ask $h "script $ScriptGainItem $ItemDroid" | Out-Null
-Start-Sleep 4  # sent at the host's next check (1 s), copied at the guest's
-$guestAfter = [int](Ask $g "count $ObjDroid")
-Check "the host's new droid shows at the guest ($guestBefore -> $guestAfter)" ($guestAfter -eq $guestBefore + 1)
-Ask $g "script $ScriptGainItem $ItemDroid" | Out-Null
-Start-Sleep 4
-$hostAfter = [int](Ask $h "count $ObjDroid")
-Check "the guest's new droid shows at the host ($hostBefore -> $hostAfter)" ($hostAfter -eq $hostBefore + 2)
-Check "the guest has its own and the host's, no more ($(Ask $g "count $ObjDroid"))" ([int](Ask $g "count $ObjDroid") -eq $guestBefore + 2)
-Check 'the guest says its droid is its own' (WaitLog $g 'familiars: own familiar' 5)
 
 Check 'no GML errors' (NoErrors)
 Done

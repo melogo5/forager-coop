@@ -101,6 +101,8 @@ yyc::EventFn g_origSkipped[kSkippedCount] = {};
 yyc::ScriptFn g_origPlayerFind = nullptr;
 yyc::ScriptFn g_origDmgPlayer = nullptr;
 yyc::EventFn g_origDroidDraw = nullptr;
+std::unordered_map<int, DWORD> g_droidDrawn;  // droid id -> when its Draw_0 last ran (the debug port asks)
+constexpr size_t kMaxDroidsDrawn = 256;        // ids of droids made again at each room start: forgotten
 DrawSpriteExtFn g_origDrawSpriteExt = nullptr;
 bool g_drawingPuppet = false;
 
@@ -375,6 +377,8 @@ void __cdecl DroidDrawHook(yyc::CInstance* self, yyc::CInstance* other) {
     // Its look is global.droidNames[droidId]: a droid of the other player's world may have none here.
     if (!familiars::HasDroidLook(self, static_cast<int>(ReadReal(id, kSlotDroidId)))) return;
     g_origDroidDraw(self, other);
+    if (g_droidDrawn.size() >= kMaxDroidsDrawn) g_droidDrawn.clear();
+    g_droidDrawn[id] = GetTickCount();
 }
 
 bool Hook(uint32_t va, void* detour, void* original) {
@@ -520,6 +524,11 @@ void SetInert(yyc::CInstance* instance, bool inert) {
 }
 
 void SetFamiliarsFollowHost(bool on) { g_familiarsFollowHost = on; }
+
+bool DroidDrawnWithin(int droidInstanceId, unsigned milliseconds) {
+    const auto it = g_droidDrawn.find(droidInstanceId);
+    return it != g_droidDrawn.end() && GetTickCount() - it->second <= milliseconds;
+}
 
 bool IsCreatingPuppet() { return g_creating; }
 
