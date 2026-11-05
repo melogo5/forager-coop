@@ -26,6 +26,9 @@ namespace coop {
 
 namespace {
 
+// MULTIPLAYER_VERSION_LABEL: edit only this text to update the main-menu label.
+constexpr char kMultiplayerVersionLabel[] = "Multiplayer Coop 0.1.4";
+
 constexpr unsigned kGuestLeaveSettleSteps = 60;  // SaveGame is asynchronous
 unsigned g_guestLeaveSteps = 0;
 
@@ -621,8 +624,15 @@ void __cdecl ControlStepHook(yyc::CInstance* self, yyc::CInstance* other) {
 void __cdecl ControlDrawGuiHook(yyc::CInstance* self, yyc::CInstance* other) {
     g_origControlDrawGui(self, other);
     DumpSprites(self);
-    if (!g_open) return;
     __try {
+        if (!g_open) {
+            gui::Begin(self);
+            gui::Call("draw_set_alpha", {1});
+            gui::Text(gui::GuiWidth() - 7, 80, kMultiplayerVersionLabel, 1,
+                      color::kText, gui::kAlignRight);
+            gui::End();
+            return;
+        }
         Draw(self);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         Log("menu: draw crashed (code 0x%08lX)", GetExceptionCode());
