@@ -440,8 +440,6 @@ void __cdecl SignStepHook(yyc::CInstance* self, yyc::CInstance* other) {
     g_origSignStep(self, other);
 }
 
-void DebugBuy(yyc::CInstance* localPlayer);
-
 // Testing aid: COOP_DEBUG_BUYLAND=1 (host) buys the island of the nearest sale sign ~7 s into the world;
 // =<seconds> does it that late. Sale signs exist only while the BUY LAND tab of the player menu is open.
 void DebugTick(yyc::CInstance* localPlayer) {

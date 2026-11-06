@@ -34,8 +34,15 @@ yyc::ScriptFn g_origUnlockAchievement = nullptr;
 constexpr int kProgressSlots[] = {0x603, 0x90E, 0x910, 0x912};  // decompiled/code/var_slots.tsv
 constexpr unsigned kProgressEverySteps = 30;
 
+// Every player gets a skill point on each shared level-up, so the shared XP is divided by the number of players:
+// two players level up as fast as one alone. Only the host divides (all XP ends up there).
+double SharedXp(double amount) {
+    if (!IsHost()) return amount;
+    return amount / static_cast<double>(1 + net::Peers().size());
+}
+
 // Host: XP earned while the puppet acts goes to the host's own player. Guest: XP is not added here but sent to the
-// host; the shared progress comes back as kProgress.
+// host (undivided); the shared progress comes back as kProgress.
 yyc::RValue* __cdecl GainXpHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                 yyc::RValue** args) {
     if (g_dryHit) return result;  // the hit's XP comes from the host
@@ -47,10 +54,19 @@ yyc::RValue* __cdecl GainXpHook(yyc::CInstance* self, yyc::CInstance* other, yyc
         net::Send(kXp, &msg, sizeof(msg));
         return result;
     }
-    if (!IsHost() || !puppet::IsActing()) return g_origGainXp(self, other, result, argc, args);
-    const puppet::Acting acting = puppet::PauseActing();
-    yyc::RValue* r = g_origGainXp(self, other, result, argc, args);
-    puppet::ResumeActing(acting);
+    if (!IsHost() || argc < 1) return g_origGainXp(self, other, result, argc, args);
+    yyc::RValue divided = yyc::Real(SharedXp(yyc::ToReal(*args[0])));
+    yyc::RValue* const original = args[0];
+    args[0] = &divided;
+    yyc::RValue* r = nullptr;
+    if (puppet::IsActing()) {
+        const puppet::Acting acting = puppet::PauseActing();
+        r = g_origGainXp(self, other, result, argc, args);
+        puppet::ResumeActing(acting);
+    } else {
+        r = g_origGainXp(self, other, result, argc, args);
+    }
+    args[0] = original;
     return r;
 }
 
@@ -73,8 +89,9 @@ void GiveXp(yyc::CInstance* localPlayer, double amount) {
 void ApplyXp(yyc::CInstance* localPlayer, const XpMsg& msg) {
     constexpr float kMaxXpAtOnce = 1e6f;
     if (!(msg.amount >= 0 && msg.amount <= kMaxXpAtOnce)) return;  // NaN fails both
-    Log("sync: +%.1f XP from the guest", msg.amount);
-    GiveXp(localPlayer, msg.amount);
+    const double amount = SharedXp(msg.amount);
+    Log("sync: +%.1f XP from the guest (+%.1f shared)", msg.amount, amount);
+    GiveXp(localPlayer, amount);
 }
 
 void ApplyProgress(yyc::CInstance* localPlayer, const ProgressMsg& msg) {

@@ -14,6 +14,10 @@
 //   event <id> <type> <number>   -> ok: runs the instance's event with the local player as `other`
 //                                   (7 11 = Other_11, what interacting with E does)
 //   global <slot> [index]        -> a global variable
+//   globalarr <slot>             -> a global array written out, "[a, [b, c]]" (nested arrays: 3 levels)
+//   vararr <id> <slot> [index]   -> an instance's array written out (e.g. Data.spawns)
+//   peek <hex address>           -> a constant RValue in the game's data (an address from the decompile)
+//   buyland                      -> the host buys the nearest sale sign's island (BUY LAND tab open; use woken 229)
 //   call <builtin> [numbers...]  -> a builtin's result, called as the local player
 //   woken <object> <command>     -> the command, run once that kind is awake (far objects sleep: culled)
 //   script <hex address> [n...]  -> a GML script's result (address from decompiled/code/index.tsv)

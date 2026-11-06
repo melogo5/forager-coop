@@ -33,7 +33,7 @@
 - **Shared world:** resources, mobs, buildings, chests, storage, bridges, islands bought by the host, time of day
   and weather.
 - **Shared progress:** one level and XP bar, shared coins, one skill tree (a skill learned by anyone is learned for
-  everyone, skill points are personal), shared museum and NPC quests.
+  everyone, skill points are personal; XP is divided by the number of players), shared museum and NPC quests.
 - **Your own character:** each guest keeps their inventory, gear, familiars and costume — the host stores them by
   the guest's name, so you come back as yourself.
 - **Dungeons together:** everyone goes in and out together; puzzles, lanterns, keys and chests are synced.

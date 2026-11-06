@@ -17,6 +17,10 @@ void Tick(yyc::CInstance* localPlayer);
 // Game thread, every local player step (testing aid, see land.cpp).
 void DebugTick(yyc::CInstance* localPlayer);
 
+// Testing aid (debug port `buyland`): the host buys the island of the nearest sale sign now (the BUY LAND tab must
+// be open: the signs exist only then).
+void DebugBuy(yyc::CInstance* localPlayer);
+
 // Game thread: applies a land message; false if `message` is not one.
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer);
 

@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "gui.h"
+#include "land.h"
 #include "log.h"
 #include "mobs.h"
 #include "puppet.h"
@@ -76,6 +77,22 @@ std::string FormatAt(yyc::CInstance* self, yyc::RValue value, const std::vector<
     const int index = Slot(words[indexWord]);
     if (index < 0 || index >= n) return "out of bounds (length " + std::to_string(n) + ")";
     return Format(yyc::ArrayElement(&value, index));
+}
+
+// value with its arrays written out, "[a, b, [c, d]]" (nested arrays up to `depth` levels, then "array").
+std::string FormatDeep(yyc::CInstance* self, const yyc::RValue& value, int depth) {
+    if ((value.kind & yyc::kKindMask) != yyc::kArray || depth <= 0) return Format(value);
+    yyc::RValue arg = value;
+    yyc::RValue length{};
+    yyc::CallBuiltin("array_length_1d", self, 1, &arg, &length);
+    const int n = static_cast<int>(yyc::ToReal(length));
+    yyc::Free(&length);
+    std::string out = "[";
+    for (int i = 0; i < n; ++i) {
+        if (i > 0) out += ", ";
+        out += FormatDeep(self, yyc::ArrayElement(&arg, i), depth - 1);
+    }
+    return out + "]";
 }
 
 std::string Player(yyc::CInstance* self) {
@@ -229,6 +246,31 @@ std::string Answer(yyc::CInstance* self, const std::string& line) {
     if (c == "global" && (w.size() == 2 || w.size() == 3)) {
         const yyc::RValue* value = yyc::GlobalVar(Slot(w[1]));
         return value != nullptr ? FormatAt(self, *value, w, 2) : "no globals";
+    }
+    if (c == "buyland") {  // the host buys the nearest sale sign's island (BUY LAND tab open)
+        land::DebugBuy(self);
+        return "ok";
+    }
+    if (c == "peek" && w.size() == 2) {  // a constant RValue in the game's data (an address from the decompile)
+        return Format(*yyc::At<yyc::RValue*>(static_cast<uint32_t>(std::strtoul(w[1].c_str(), nullptr, 16))));
+    }
+    if (c == "globalarr" && w.size() == 2) {  // a global array written out (nested: 3 levels)
+        yyc::RValue* value = yyc::GlobalVar(Slot(w[1]));
+        return value != nullptr ? FormatDeep(self, *value, 3) : "no globals";
+    }
+    if (c == "vararr" && (w.size() == 3 || w.size() == 4)) {  // an instance's array written out (nested: 3 levels)
+        yyc::RValue value{};
+        if (!yyc::GetVar(Slot(w[1]), Slot(w[2]), &value)) return "no such instance";
+        std::string text;
+        if (w.size() == 3) {
+            text = FormatDeep(self, value, 3);
+        } else if ((value.kind & yyc::kKindMask) != yyc::kArray) {
+            text = "not an array";
+        } else {
+            text = FormatDeep(self, yyc::ArrayElement(&value, Slot(w[3])), 3);
+        }
+        yyc::Free(&value);
+        return text;
     }
     if (c == "set" && (w.size() == 4 || w.size() == 5)) {
         if (yyc::FindInstance(Slot(w[1])) == nullptr) return "no such instance";

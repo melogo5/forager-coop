@@ -226,6 +226,10 @@ bool IsDrop(yyc::CInstance* self, int object) {
 yyc::EventFn g_origCollect = nullptr;  // parResource Other_10: `other` collects the drop
 
 std::vector<int> g_suppressed;  // guest: world objects created meanwhile
+// Guest: replicas of host objects the replay destroyed meanwhile (host id, what it was). The host's copy of a new
+// island's special (museum, pillars, rainbow) often arrives before the replay, which clears the spot for its own
+// one; they come back after it.
+std::vector<std::pair<int, InstanceInfo>> g_replayLost;
 
 // The game's own pickup, run right away for `player` (no flying-to-the-player phase on the ground).
 void CollectNow(yyc::CInstance* drop, yyc::CInstance* player) {
@@ -525,7 +529,14 @@ void __cdecl DestroyHook(yyc::CInstance* self, yyc::CInstance* other, int id, in
     } else if (IsGuest()) {
         if (g_localDrops.erase(info.id) > 0) return;
         const auto host = g_localToHost.find(info.id);
-        Send(kGuestDestroyed, info, host != g_localToHost.end() ? host->second : -1);
+        // The guest's replay of world code the host runs too (SpawnLand for a bought island) destroys what that
+        // code destroys at the host as well; the host does it there. Reported, it took the host's own copy found
+        // at that spot: the museum, rainbow, pillars... of a new island were gone for everyone.
+        if (g_suppressing == 0) {
+            Send(kGuestDestroyed, info, host != g_localToHost.end() ? host->second : -1);
+        } else if (host != g_localToHost.end()) {
+            g_replayLost.emplace_back(host->second, info);
+        }
         if (host != g_localToHost.end()) {
             g_hostToLocal.erase(host->second);
             g_localToHost.erase(host);
@@ -952,6 +963,13 @@ void EndSuppressSpawns(yyc::CInstance* self) {
     }
     if (!g_suppressed.empty()) Log("sync: removed %zu locally generated objects", g_suppressed.size());
     g_suppressed.clear();
+    int restored = 0;
+    for (const auto& [hostId, info] : g_replayLost) {
+        if (WasDestroyed(hostId) || ReplicaOf(hostId) != 0) continue;  // gone at the host too / already back
+        if (CreateReplica(self, hostId, info.object, info.x, info.y, info.depth) != 0) ++restored;
+    }
+    if (restored > 0) Log("sync: %d of the host's objects the replay removed are back", restored);
+    g_replayLost.clear();
 }
 
 void StopLoopsOfGone(yyc::CInstance* self, int object) {
@@ -1024,6 +1042,7 @@ void Reset() {
     g_destroyedOrder.clear();
     g_suppressing = 0;
     g_suppressed.clear();
+    g_replayLost.clear();
     g_guestDrops.clear();
     g_hostOwnedDrops.clear();
     g_pendingSpawns.clear();
