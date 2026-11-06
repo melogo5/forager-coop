@@ -1,10 +1,20 @@
 # Builds native\build\version.dll (x86, static CRT) with the MSVC x86 toolset.
-# Usage: powershell -File native\build.ps1 [-Install]   (-Install copies it next to Forager.exe)
+# Usage: powershell -File native\build.ps1 [-Install] [-Version v0.1.5]   (-Install copies it next to Forager.exe)
+# The version shown on the main menu comes from -Version, else from `git describe --tags` (0.1.4-4-g6c94793 between
+# releases, plus -dirty with uncommitted changes), else 'dev'.
 param(
     [switch]$Install,
-    [string]$GameDir = 'Z:\SteamLibrary\steamapps\common\Forager'
+    [string]$GameDir = 'Z:\SteamLibrary\steamapps\common\Forager',
+    [string]$Version = ''
 )
 $ErrorActionPreference = 'Stop'
+
+if (-not $Version) {
+    $Version = git -C $PSScriptRoot describe --tags --dirty 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $Version) { $Version = 'dev' }
+}
+$Version = $Version.Trim() -replace '^v', ''
+if ($Version -notmatch '^[0-9A-Za-z.+-]+$') { throw "bad version '$Version'" }  # it goes into a C string literal
 
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
@@ -23,12 +33,12 @@ $sources = @(
     "$mh\src\hook.c", "$mh\src\buffer.c", "$mh\src\trampoline.c", "$mh\src\hde\hde32.c"
 ) | ForEach-Object { "`"$_`"" }
 
-$cl = "cl /nologo /O2 /MT /W3 /EHsc /std:c++17 /DWIN32_LEAN_AND_MEAN /DNDEBUG " +
+$cl = "cl /nologo /O2 /MT /W3 /EHsc /std:c++17 /DWIN32_LEAN_AND_MEAN /DNDEBUG /DCOOP_VERSION=\`"$Version\`" " +
       "/I`"$mh\include`" /Fo`"$out\\`" " + ($sources -join ' ') +
       " /LD /Fe`"$out\version.dll`" /link /DEF:`"$root\src\version.def`" /SAFESEH:NO"
 cmd /c "`"$vcvars`" >nul && $cl"
 if ($LASTEXITCODE -ne 0) { throw "build failed ($LASTEXITCODE)" }
-Write-Host "built $out\version.dll"
+Write-Host "built $out\version.dll ($Version)"
 
 if ($Install) {
     Copy-Item "$out\version.dll" (Join-Path $GameDir 'version.dll') -Force

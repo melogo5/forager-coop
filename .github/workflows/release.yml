@@ -21,7 +21,7 @@ jobs:
 
       - name: Build version.dll
         shell: pwsh
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File native\build.ps1
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File native\build.ps1 -Version ${{ github.ref_name }}
 
       - name: Build Workshop package
         shell: pwsh

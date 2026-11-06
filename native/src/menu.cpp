@@ -26,8 +26,11 @@ namespace coop {
 
 namespace {
 
-// MULTIPLAYER_VERSION_LABEL: edit only this text to update the main-menu label.
-constexpr char kMultiplayerVersionLabel[] = "Multiplayer Coop 0.1.4";
+// COOP_VERSION is set by native\build.ps1 from the git tag (or its -Version); nothing to edit here on release.
+#ifndef COOP_VERSION
+#define COOP_VERSION "dev"
+#endif
+constexpr char kMultiplayerVersionLabel[] = "Multiplayer Coop " COOP_VERSION;
 
 constexpr unsigned kGuestLeaveSettleSteps = 60;  // SaveGame is asynchronous
 unsigned g_guestLeaveSteps = 0;
@@ -621,16 +624,20 @@ void __cdecl ControlStepHook(yyc::CInstance* self, yyc::CInstance* other) {
     }
 }
 
+// A function of its own: gui::Call's initializer_list is an object to destroy, which __try does not allow.
+void DrawVersionLabel(yyc::CInstance* self) {
+    gui::Begin(self);
+    gui::Call("draw_set_alpha", {1});
+    gui::Text(gui::GuiWidth() - 7, 80, kMultiplayerVersionLabel, 1, color::kText, gui::kAlignRight);
+    gui::End();
+}
+
 void __cdecl ControlDrawGuiHook(yyc::CInstance* self, yyc::CInstance* other) {
     g_origControlDrawGui(self, other);
     DumpSprites(self);
     __try {
         if (!g_open) {
-            gui::Begin(self);
-            gui::Call("draw_set_alpha", {1});
-            gui::Text(gui::GuiWidth() - 7, 80, kMultiplayerVersionLabel, 1,
-                      color::kText, gui::kAlignRight);
-            gui::End();
+            DrawVersionLabel(self);
             return;
         }
         Draw(self);
