@@ -7,7 +7,7 @@
   global.fc_at=0;
   global.fc_buffer=-1;
   global.fc_pending=false;
-  global.fc_message="Preparing co-op...";
+  global.fc_message="preparing co-op...";
   global.fc_reported=false;
   global.fc_hide_notice=false;
   global.fc_dispatch=undefined;
@@ -73,14 +73,14 @@
     if(global.fc_stage==0){
       FcPrepare();
       if(FcExists(global.fc_ready_name)){
-        global.fc_hide_notice=true;global.fc_stage=8;global.fc_message="Co-op is ready. Use COOP in the main menu.";
+        global.fc_hide_notice=true;global.fc_stage=8;global.fc_message="co-op is ready. use coop button in the main menu.";
         global.fc_payload=[];global.fc_bridge=[];return;
       }
       // FileExists also searches the game folder, where the game's own catch_error.dll always is, so other
       // bridges are recognized by their markers. Their catch_error.dll is loaded and cannot be replaced.
       if(FcExists("ForagerCoopWorkshop-v1-ready.bin")||FcExists("CoopWorkshopBootstrap-owned-v1.bin")){
         global.fc_stage=9;global.fc_payload=[];global.fc_bridge=[];
-        global.fc_message="Another co-op Workshop integration is installed. Remove it first (see the mod page).";
+        global.fc_message="another co-op workshop integration is installed. remove it first (see the mod page).";
         return;
       }
       global.fc_stage=1;
@@ -106,11 +106,11 @@
     }
     if(global.fc_stage==4){
       if(!FcExists(global.fc_ready_name)){return;}
-      global.fc_stage=8;global.fc_message="Ready! Close and reopen Forager from Steam. COOP will appear in the main menu.";
+      global.fc_stage=8;global.fc_message="ready! close and reopen forager from steam. coop button will appear in the main menu.";
     }
   }catch(_error){
     if(global.fc_buffer>=0){buffer_delete(global.fc_buffer);global.fc_buffer=-1;}
-    global.fc_stage=9;global.fc_message="Co-op setup failed. See the mod console.";
+    global.fc_stage=9;global.fc_message="co-op setup failed. see the mod console.";
     Trace("[ForagerCoop] "+string(_error));
     global.fc_payload=[];global.fc_bridge=[];
   }

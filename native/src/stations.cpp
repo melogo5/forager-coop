@@ -302,7 +302,7 @@ void SayBusy(yyc::CInstance* player) {
     const DWORD now = GetTickCount();
     if (player == nullptr || (last != 0 && now - last < kSayEveryMs)) return;
     last = now;
-    Say(player, "The other player is using this");
+    Say(player, "the other player is using this");
 }
 
 void Say(yyc::CInstance* player, const char* text) {

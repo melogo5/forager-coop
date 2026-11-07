@@ -185,7 +185,7 @@ void DressCoopButton(yyc::CInstance* control) {
     yyc::Free(&text);
     if (!setUp) return;
     yyc::SetBuiltinReal(button, yyc::va::YYVar_sprite_index, g_coopSprite);
-    yyc::RValue word = yyc::String("COOP");
+    yyc::RValue word = yyc::String("coop");  // lowercase: the game font draws it as capitals
     yyc::SetVar(g_coopButtonId, kSlotText, &word);
     yyc::Free(&word);
 }
