@@ -72,6 +72,9 @@ struct Puppet {
     std::string name;
     float hp = 0, hpMax = 0;
     look::Look look;  // the costume it has on
+    // Its player's mouse (room coordinates), eased like the position; what mouse_x/mouse_y read while it is drawn.
+    bool hasAim = false;
+    double aimX = 0, aimY = 0;
 };
 
 LocalStepFn g_onLocalStep = nullptr;
@@ -105,6 +108,9 @@ std::unordered_map<int, DWORD> g_droidDrawn;  // droid id -> when its Draw_0 las
 constexpr size_t kMaxDroidsDrawn = 256;        // ids of droids made again at each room start: forgotten
 DrawSpriteExtFn g_origDrawSpriteExt = nullptr;
 bool g_drawingPuppet = false;
+// The puppet whose Draw_0 runs, while it has an aim: mouse_x/mouse_y give its player's mouse (GetBuiltinHook).
+bool g_drawingAim = false;
+double g_drawAimX = 0, g_drawAimY = 0;
 
 Puppet* Find(net::PeerId player) {
     for (auto& puppet : g_puppets) {
@@ -276,8 +282,17 @@ void __cdecl DrawHook(yyc::CInstance* self, yyc::CInstance* other) {
     }
     const int previous = g_actorId;
     g_actorId = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
+    bool aiming = false;
+    for (const auto& puppet : g_puppets) {
+        if (puppet.instance != self || !puppet.hasAim) continue;
+        aiming = true;
+        g_drawAimX = puppet.aimX;
+        g_drawAimY = puppet.aimY;
+    }
     g_drawingPuppet = true;
+    g_drawingAim = aiming;
     g_origDraw(self, other);
+    g_drawingAim = false;
     g_drawingPuppet = false;
     g_actorId = previous;
 }
@@ -510,6 +525,14 @@ Swing ReadSwing(yyc::CInstance* player) {
                  static_cast<float>(ReadReal(id, kSlotAngle))};
 }
 
+void AfterBuiltinRead(int varId, yyc::RValue* out) {
+    if (!g_drawingAim || out == nullptr) return;
+    const bool isX = varId == yyc::At<yyc::YYVar*>(yyc::va::YYVar_mouse_x)->id;
+    if (!isX && varId != yyc::At<yyc::YYVar*>(yyc::va::YYVar_mouse_y)->id) return;
+    if ((out->kind & yyc::kKindMask) != yyc::kReal) return;  // a number: nothing to free
+    out->real = isX ? g_drawAimX : g_drawAimY;
+}
+
 void SetEnemiesSeeAll(bool on) { g_enemiesSeeAll = on; }
 
 void HoldLocalPlayer(bool hold) { g_holdLocal = hold; }
@@ -631,6 +654,17 @@ void Update(yyc::CInstance* localPlayer, net::PeerId player, const State& target
     yyc::SetBuiltinReal(instance, yyc::va::YYVar_depth, target.depth);
     ShowTool(localPlayer, *puppet, target.tool);
     ShowSwing(puppet->id, target.swing);
+    if (std::isfinite(target.aimX) && std::isfinite(target.aimY)) {
+        const double ax = target.aimX - puppet->aimX, ay = target.aimY - puppet->aimY;
+        if (!puppet->hasAim || std::sqrt(ax * ax + ay * ay) > kSnapDistance) {
+            puppet->aimX = target.aimX;
+            puppet->aimY = target.aimY;
+        } else {
+            puppet->aimX += ax * kFollow;
+            puppet->aimY += ay * kFollow;
+        }
+        puppet->hasAim = true;
+    }
     puppet->name.assign(target.name, strnlen(target.name, sizeof(target.name)));
     puppet->hp = target.hp;
     puppet->hpMax = target.hpMax;
