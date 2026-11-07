@@ -472,7 +472,7 @@ bool InstallHooks() {
 void RecordPurchases(bool on) { g_recording = on; }
 
 void HostOnGuest(const std::string& name, net::PeerId peer, yyc::CInstance* localPlayer) {
-    std::ifstream in(character::GuestDataFile(name, ".skills"), std::ios::binary);
+    std::ifstream in(character::GuestDataFile(name, ".skills").c_str(), std::ios::binary);
     const std::vector<uint8_t> stored((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     State state;
     const bool ok = !stored.empty() && Decode(stored.data(), stored.size(), &state);

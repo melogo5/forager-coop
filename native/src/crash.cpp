@@ -33,7 +33,7 @@ ULONGLONG LastWrite(const std::wstring& path) {
 }
 
 void LogErrorFile(const std::wstring& path) {
-    std::ifstream in(path, std::ios::binary);
+    std::ifstream in(path.c_str(), std::ios::binary);
     std::stringstream text;
     text << in.rdbuf();
     std::istringstream lines(text.str());

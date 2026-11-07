@@ -98,7 +98,7 @@ void PanCamera(yyc::CInstance* self) {
 }
 
 // Hot path (every builtin variable read): one branch unless the tree is being made or is open.
-int __cdecl GetBuiltinHook(yyc::CInstance* self, int varId, int arrayIndex, yyc::RValue* out) {
+int ReadBuiltin(yyc::CInstance* self, int varId, int arrayIndex, yyc::RValue* out) {
     if (!g_open && !g_gridRoom) return g_origGetBuiltin(self, varId, arrayIndex, out);
     if (g_gridRoom && (varId == g_roomWidth || varId == g_roomHeight)) {
         yyc::Free(out);
@@ -114,6 +114,13 @@ int __cdecl GetBuiltinHook(yyc::CInstance* self, int varId, int arrayIndex, yyc:
         return 1;
     }
     return g_origGetBuiltin(self, varId, arrayIndex, out);
+}
+
+// The one hook on Variable_GetBuiltin (MinHook takes one per address): the puppets' aim goes over it too.
+int __cdecl GetBuiltinHook(yyc::CInstance* self, int varId, int arrayIndex, yyc::RValue* out) {
+    const int result = ReadBuiltin(self, varId, arrayIndex, out);
+    puppet::AfterBuiltinRead(varId, out);
+    return result;
 }
 
 yyc::RValue* __cdecl LoadAsyncHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,

@@ -62,7 +62,7 @@ namespace coop {
 
 namespace {
 
-constexpr uint32_t kProtocolVersion = 18;  // 18: floor/road tiles, structure variants, everyone's familiars; 17: puzzle pieces by the host's
+constexpr uint32_t kProtocolVersion = 19;  // 19: the player's aim (mouse) in its state; 18: floor/road tiles, structure variants, everyone's familiars; 17: puzzle pieces by the host's
                                            // id and spot; 16: item unlocks; 15: a guest greets first (net.cpp); 14: the
                                            // tool swing
 constexpr uint32_t kYYVarImageBlend = 0x01AD8768;  // decompiled/code/yyvar_map.tsv
@@ -108,6 +108,7 @@ struct PlayerStateMsg {
     look::Look look;  // the costume, for its puppet
     puppet::Swing swing;  // the biggest since the last update: a hit lasts a step, updates come every few
     int32_t blend;  // image_blend: the rainbow body's colours, made in the player's Step_2 (puppets have none)
+    float aimX, aimY;  // mouse_x/mouse_y (room): where its puppet's tool points (swords, bows)
 };
 struct PeerStateMsg {
     uint8_t player;
@@ -188,6 +189,15 @@ PlayerStateMsg CaptureState(yyc::CInstance* player) {
     s.look = look::Read(player);
     s.swing = g_swing;
     s.blend = static_cast<int32_t>(yyc::GetBuiltinReal(player, kYYVarImageBlend));
+    // While the skill tree is open its hook gives mouse_x/mouse_y in tree coordinates: the last aim in the world goes
+    // instead (sent as the aim, the puppet's sword pointed somewhere odd at the others).
+    static float aimX = 0, aimY = 0;
+    if (!skilltab::IsOpen()) {
+        aimX = static_cast<float>(yyc::GetBuiltinReal(player, yyc::va::YYVar_mouse_x));
+        aimY = static_cast<float>(yyc::GetBuiltinReal(player, yyc::va::YYVar_mouse_y));
+    }
+    s.aimX = aimX;
+    s.aimY = aimY;
     yyc::Free(&tool);
     return s;
 }
@@ -294,6 +304,7 @@ constexpr uint8_t kSharedTypes[] = {
     56,  // land: a floor/road tile taken up
     57,  // displays: what a display case shows
     58,  // shots: an arrow or fireball fired
+    59,  // shots: a fireball went off
     70,  // unlocks
     90,  // progress: museum lists
     91,  // quests
@@ -755,6 +766,8 @@ void Tick(yyc::CInstance* localPlayer) {
         target.look = remote.look;
         target.swing = remote.swing;
         target.blend = remote.blend;
+        target.aimX = remote.aimX;
+        target.aimY = remote.aimY;
         puppet::Update(localPlayer, player, target);
     }
 }

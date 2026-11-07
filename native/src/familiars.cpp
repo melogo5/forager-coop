@@ -389,7 +389,7 @@ void HostOnGuest(const std::string& name, net::PeerId peer) {
     const std::vector<uint8_t> own = OwnersMessage(net::kHostPeer, g_sent);
     net::SendTo(peer, kFamiliarsOf, own.data(), own.size());
 
-    std::ifstream in(character::GuestDataFile(name, kStoreExtension), std::ios::binary);
+    std::ifstream in(character::GuestDataFile(name, kStoreExtension).c_str(), std::ios::binary);
     const std::vector<uint8_t> stored((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     if (stored.empty() || stored.size() % sizeof(FamiliarEntry) != 0) return;
     net::SendTo(peer, kRestore, stored.data(), stored.size());
