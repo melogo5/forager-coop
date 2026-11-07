@@ -3,6 +3,7 @@
 // Puppets are keyed by the player they show (net::PeerId: 0 is the host).
 #pragma once
 
+#include <cmath>
 #include <vector>
 
 #include "look.h"
@@ -35,6 +36,9 @@ struct State {
     look::Look look;  // what the player wears
     Swing swing;
     int blend = 0xFFFFFF;  // image_blend (c_white: none)
+    // Where the player's mouse is (room coordinates): objPlayer's Draw_0 points the tool in hand at mouse_x/mouse_y
+    // (the swords, the bows), so a puppet's tool followed the local player's mouse. NaN: not known.
+    float aimX = NAN, aimY = NAN;
 };
 
 using LocalStepFn = void (*)(yyc::CInstance* localPlayer);
@@ -42,6 +46,11 @@ using LocalStepFn = void (*)(yyc::CInstance* localPlayer);
 // Creates the hooks (enabled by the caller). `onLocalStep` runs after the local player's Step_0,
 // `beforeLocalStep1` before its Step_1 (the begin step that turns hp < 1 into a game over).
 bool InstallHooks(LocalStepFn onLocalStep, LocalStepFn beforeLocalStep1);
+
+// After every builtin variable read (skilltab.cpp's Variable_GetBuiltin hook, hot: one branch when idle): while a
+// puppet is drawn, mouse_x and mouse_y are its player's mouse. objPlayer's Draw_0 turns the tool in hand toward
+// point_direction(x, y, mouse_x, mouse_y) - the sword of the other player's puppet followed our own mouse.
+void AfterBuiltinRead(int varId, yyc::RValue* out);
 
 // Host with guests: an enemy asking for "the player" (PlayerFind) gets the nearest of the local player and the
 // puppets, so it chases and attacks whoever is closest.

@@ -131,7 +131,7 @@ int AddSprite(yyc::CInstance* self, const unsigned char* png, size_t size, const
     if (length == 0 || length >= MAX_PATH) return -1;
     {
         const std::wstring path = std::wstring(local) + L"\\Forager\\" + std::wstring(file, file + strlen(file));
-        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        std::ofstream out(path.c_str(), std::ios::binary | std::ios::trunc);
         out.write(reinterpret_cast<const char*>(png), static_cast<std::streamsize>(size));
         if (!out) {
             Log("menu: cannot write %s", file);

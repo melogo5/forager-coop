@@ -18,6 +18,9 @@ void OnCreated(yyc::CInstance* self, int createdId, int object);
 // Game thread: applies a bomb message; false if `message` is not one.
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer);
 
+// An objExplosion made here to show another player's blast: its step runs with no damage (as a decoy's blast).
+void MakeHarmless(int explosionId);
+
 // Forgets the last session.
 void Reset();
 

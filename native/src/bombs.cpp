@@ -168,6 +168,13 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     return true;
 }
 
+void MakeHarmless(int explosionId) {
+    g_harmless.insert(explosionId);
+    for (auto it = g_harmless.begin(); it != g_harmless.end();) {
+        it = yyc::FindInstance(*it) == nullptr ? g_harmless.erase(it) : std::next(it);
+    }
+}
+
 void Reset() {
     g_decoys.clear();
     g_harmless.clear();

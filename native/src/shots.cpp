@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "MinHook.h"
+#include "bombs.h"
 #include "log.h"
 #include "puppet.h"
 
@@ -13,10 +14,20 @@ namespace coop::shots {
 
 namespace {
 
-constexpr uint8_t kShot = 58;  // either way (the host passes a guest's on): ShotMsg
+constexpr uint8_t kShot = 58;   // either way (the host passes a guest's on): ShotMsg
+constexpr uint8_t kBlast = 59;  // either way: BlastMsg, a fireball went off (ExplosionCreate in its collision)
 constexpr int kObjArrow = 303, kObjFireball = 301;  // decompiled/data/objects.tsv
 // decompiled/code/yyvar_map.tsv
 constexpr uint32_t kYYVarDirection = 0x01AD87A0, kYYVarSpeed = 0x01AD8C10, kYYVarImageAngle = 0x01AD8728;
+// objFireball.owner: UseSword sets it to the player; Create_0 leaves noone. Its Step_0 starts with
+// `if (!instance_exists(owner)) { instance_destroy(); exit }` - a copy (no owner) was gone at its first step, so the
+// sword's fireballs were never seen by the other players.
+constexpr int kSlotFireballOwner = 0x6CA;
+// ExplosionCreate(x, y, a, b) makes the objExplosion of a fireball's hit (its collision events call it; bombs make
+// theirs themselves, bombs.cpp). A copy hits nothing, so the other players saw no blast either.
+constexpr uint32_t kScriptExplosionCreate = 0x0086D1E0;
+constexpr int kBlastArgs = 4;
+constexpr float kBlastMatchDistance = 48;  // a copy flies a little behind its fireball: the one that went off
 
 // What a copy must not do (decompiled/code/index.tsv): hit (the collision events deal the damage) and, for an arrow,
 // Destroy_0 (it drops the arrow item where it lands).
@@ -35,12 +46,17 @@ struct ShotMsg {
     float xscale, yscale;
     float sprite;
 };
+struct BlastMsg {
+    float args[kBlastArgs];  // ExplosionCreate's: x, y and two numbers (only finite reals are sent)
+    float depth;
+};
 #pragma pack(pop)
 
 std::vector<int> g_fired;              // ours, made since the last step
 std::unordered_set<int> g_copies;      // other players' shots shown here
 int g_showing = 0;                     // inside our own instance_create of a copy
 yyc::EventFn g_orig[kHookCount] = {};
+yyc::ScriptFn g_origExplosionCreate = nullptr;
 
 int IdOf(yyc::CInstance* instance) { return static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_id)); }
 
@@ -91,7 +107,7 @@ bool IsSane(const ShotMsg& m) {
            std::fabs(m.yscale) <= kMaxScale;
 }
 
-void Show(yyc::CInstance* self, const ShotMsg& msg) {
+void Show(yyc::CInstance* self, net::PeerId from, const ShotMsg& msg) {
     ++g_showing;
     const int id = static_cast<int>(
         yyc::CallReal(self, "instance_create_depth", {msg.x, msg.y, msg.depth, double(msg.object)}));
@@ -106,10 +122,76 @@ void Show(yyc::CInstance* self, const ShotMsg& msg) {
     yyc::SetBuiltinReal(copy, yyc::va::YYVar_image_xscale, msg.xscale);
     yyc::SetBuiltinReal(copy, yyc::va::YYVar_image_yscale, msg.yscale);
     if (msg.sprite >= 0) yyc::SetBuiltinReal(copy, yyc::va::YYVar_sprite_index, msg.sprite);
+    if (msg.object == kObjFireball) {
+        // The shooter's puppet owns it (a guest hears every shot from the host: then the host's); any player does.
+        yyc::CInstance* shooter = puppet::Instance(from);
+        yyc::RValue owner = yyc::Real(IdOf(shooter != nullptr ? shooter : self));
+        yyc::SetVar(id, kSlotFireballOwner, &owner);
+    }
     // Shots end by themselves (lifetime, outside the room): forget the ids that are gone.
     for (auto it = g_copies.begin(); it != g_copies.end();) {
         it = yyc::FindInstance(*it) == nullptr ? g_copies.erase(it) : std::next(it);
     }
+}
+
+// One of our own fireballs went off: the others see its blast too (and lose their copy of it there).
+yyc::RValue* __cdecl ExplosionCreateHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
+                                         yyc::RValue** args) {
+    yyc::RValue* r = g_origExplosionCreate(self, other, result, argc, args);
+    if (self == nullptr || !net::IsConnected() || argc < 2 || args == nullptr) return r;
+    if (static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_object_index)) != kObjFireball) return r;
+    if (g_copies.count(IdOf(self)) > 0) return r;  // a copy never collides; to be safe all the same
+    BlastMsg msg{};
+    for (int i = 0; i < kBlastArgs; ++i) {
+        const yyc::RValue* a = i < argc ? args[i] : nullptr;
+        msg.args[i] = a != nullptr && yyc::IsNumber(*a) ? static_cast<float>(yyc::ToReal(*a)) : 0.f;
+    }
+    msg.depth = static_cast<float>(yyc::GetBuiltinReal(self, yyc::va::YYVar_depth));
+    net::Send(kBlast, &msg, sizeof(msg));
+    return r;
+}
+
+// Another player's fireball went off: its copy here (the nearest) goes, and the same blast shows - harmless: it is
+// the shooter's blast that breaks and hurts, at the shooter's side (bombs.cpp makes it so).
+void ShowBlast(yyc::CInstance* self, const BlastMsg& msg) {
+    const float x = msg.args[0], y = msg.args[1];
+    int nearest = 0;
+    double best = double(kBlastMatchDistance) * kBlastMatchDistance;
+    for (auto it = g_copies.begin(); it != g_copies.end();) {
+        yyc::CInstance* copy = yyc::FindInstance(*it);
+        if (copy == nullptr) {
+            it = g_copies.erase(it);
+            continue;
+        }
+        const double dx = yyc::GetBuiltinReal(copy, yyc::va::YYVar_x) - x;
+        const double dy = yyc::GetBuiltinReal(copy, yyc::va::YYVar_y) - y;
+        if (static_cast<int>(yyc::GetBuiltinReal(copy, yyc::va::YYVar_object_index)) == kObjFireball &&
+            dx * dx + dy * dy <= best) {
+            best = dx * dx + dy * dy;
+            nearest = *it;
+        }
+        ++it;
+    }
+    if (nearest != 0) {
+        g_copies.erase(nearest);
+        yyc::CallReal(self, "instance_destroy", {double(nearest), 0});
+    }
+    yyc::RValue values[kBlastArgs];
+    yyc::RValue* args[kBlastArgs];
+    for (int i = 0; i < kBlastArgs; ++i) {
+        values[i] = yyc::Real(msg.args[i]);
+        args[i] = &values[i];
+    }
+    yyc::RValue result{};
+    ++g_showing;
+    g_origExplosionCreate(self, self, &result, kBlastArgs, args);
+    --g_showing;
+    const int blast = static_cast<int>(yyc::ToReal(result));
+    yyc::Free(&result);
+    yyc::CInstance* made = yyc::FindInstance(blast);
+    if (made == nullptr) return;
+    bombs::MakeHarmless(blast);
+    yyc::SetBuiltinReal(made, yyc::va::YYVar_depth, msg.depth);  // ExplosionCreate put it by our player's depth
 }
 
 }  // namespace
@@ -120,6 +202,8 @@ bool InstallHooks() {
         ok = MH_CreateHook(yyc::At<void*>(kHarmful[i]), reinterpret_cast<void*>(Hooks::kHooks[i]),
                            reinterpret_cast<void**>(&g_orig[i])) == MH_OK && ok;
     }
+    ok = MH_CreateHook(yyc::At<void*>(kScriptExplosionCreate), reinterpret_cast<void*>(&ExplosionCreateHook),
+                       reinterpret_cast<void**>(&g_origExplosionCreate)) == MH_OK && ok;
     if (!ok) Log("shots: hooks failed");
     return ok;
 }
@@ -143,12 +227,23 @@ void Tick() {
 }
 
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
+    if (message.type == kBlast) {
+        if (message.payload.size() != sizeof(BlastMsg)) return true;
+        BlastMsg msg{};
+        memcpy(&msg, message.payload.data(), sizeof(msg));
+        for (const float v : msg.args) {
+            if (!std::isfinite(v)) return true;
+        }
+        if (!std::isfinite(msg.depth)) return true;
+        ShowBlast(localPlayer, msg);
+        return true;
+    }
     if (message.type != kShot) return false;
     if (message.payload.size() != sizeof(ShotMsg)) return true;
     ShotMsg msg{};
     memcpy(&msg, message.payload.data(), sizeof(msg));
     if (!IsShot(msg.object) || !IsSane(msg)) return true;
-    Show(localPlayer, msg);
+    Show(localPlayer, message.from, msg);
     return true;
 }
 

@@ -54,6 +54,33 @@ bool CalledFromToolUse() {
     return strcmp(top->name, "gml_Script_UsePickaxe") == 0 || strcmp(top->name, "gml_Script_UseSword") == 0;
 }
 
+// The swing's hitbox: UseSword makes an objSwordCollision, and its collision with a rock, tree, bush... runs
+// `with (other) event_user(0)` - the hit has the hitbox as `other`, not the player, and comes from its collision
+// event, not from UseSword. The cosmic sword (also damages resources and plants) hits that way only: the hit was
+// not shown at the other players (the pickaxe's was), they saw the tree just vanish. Only UseSword makes one, and
+// only the local player runs it (puppets have no Step): every hitbox is the local player's.
+constexpr int kObjSwordCollision = 300;  // decompiled/data/objects.tsv
+constexpr int kParCritter = 64;
+
+bool IsSwordHitbox(yyc::CInstance* instance) {
+    return instance != nullptr &&
+           static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_object_index)) == kObjSwordCollision;
+}
+
+// Enemies and critters are streamed by mobs.cpp, which already passes on the damage the sword's hitbox does to them.
+bool IsMob(yyc::CInstance* self, int object) {
+    return IsEnemy(self, object) || object == kParCritter ||
+           CallReal(self, "object_is_ancestor", {double(object), double(kParCritter)}) != 0;
+}
+
+// event_user(n) on `self` (a world object) with `other` is the local player's tool hit.
+bool IsToolHit(yyc::CInstance* self, yyc::CInstance* other, int n) {
+    if (n != 0 || other == nullptr) return false;
+    if (other == g_localPlayer) return CalledFromToolUse();
+    return IsSwordHitbox(other) &&
+           !IsMob(self, static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_object_index)));
+}
+
 // Host: after a hit, the guest's copy shows the same health bar (and the hit itself, when `hitter` is not that guest).
 void SendHp(yyc::CInstance* target, uint8_t hitter = kNoHitter) {
     if (!IsHost() || !Connected() || target == nullptr) return;
@@ -129,7 +156,7 @@ void ShowOthersHit(yyc::CInstance* self, const HpMsg& msg) {
 // Guest: a tool hit is `with (target) event_user(0)` with the player as `other`; the host decides its outcome.
 // Host: its own tool hits are shown on the guest's copy (health bar).
 void __cdecl EventUserHook(yyc::CInstance* self, yyc::CInstance* other, int n) {
-    if (IsHost() && n == 0 && other != nullptr && other == g_localPlayer && Connected() && CalledFromToolUse()) {
+    if (IsHost() && Connected() && IsToolHit(self, other, n)) {
         const int id = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
         g_hitByGuest.erase(id);  // the last hit decides who gets the drop (playtest 4, bug 1)
         const bool synced = IsSynced(self, static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_object_index)));
@@ -137,8 +164,7 @@ void __cdecl EventUserHook(yyc::CInstance* self, yyc::CInstance* other, int n) {
         if (synced) SendHp(yyc::FindInstance(id), net::kHostPeer);
         return;
     }
-    if (n != 0 || !IsGuest() || other == nullptr || other != g_localPlayer || g_applyingRemote > 0 ||
-        !Connected() || !CalledFromToolUse()) {
+    if (!IsGuest() || g_applyingRemote > 0 || !Connected() || !IsToolHit(self, other, n)) {
         g_origEventUser(self, other, n);
         return;
     }
