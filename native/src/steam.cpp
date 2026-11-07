@@ -131,8 +131,15 @@ std::set<uint64_t> g_accepted;  // P2P peers we talk to
 // lays out the same table; steam_api fills in the flags and the callback id.
 class CallbackBase {
 public:
+#if defined(__MINGW32__)
+    // MSVC puts overloaded virtuals in the table in reverse order (steam_api.dll is built with it); GCC/Clang for
+    // MinGW in declaration order: declared reversed, the table matches - else steam_api called the wrong Run.
+    virtual void Run(void* param, bool ioFailure, uint64_t call) = 0;
+    virtual void Run(void* param) = 0;
+#else
     virtual void Run(void* param) = 0;
     virtual void Run(void* param, bool ioFailure, uint64_t call) = 0;
+#endif
     virtual int GetCallbackSizeBytes() = 0;
     int Id() const { return callback_; }
 
