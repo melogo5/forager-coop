@@ -33,6 +33,9 @@ bool MeltsAtEachSide(int object);
 // Game thread: `id` (object `object`) was destroyed here; a melted ice block melts at the others too.
 void OnDestroyed(int id, int object);
 
+// From the instance_create hook, while connected: a guest's puzzle reward chest (the host's reaches it) is removed.
+void OnCreated(int createdId, int object);
+
 // A new room: what was known about the last one's pieces goes.
 void Reset();
 

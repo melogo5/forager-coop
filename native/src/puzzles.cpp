@@ -21,6 +21,7 @@ constexpr uint8_t kPuzzleMirror = 104;  // either way (the host passes it on): U
 constexpr unsigned kEverySteps = 6;   // 10 looks a second
 constexpr int kSlotX = -1, kSlotY = -2;  // StateEntry.slot for the position
 constexpr int kSlotImage = -3;           // ... for image_index (a terminal's symbol)
+constexpr int kSlotImageSpeed = -4;      // ... for image_speed (a skull brazier catching fire)
 constexpr size_t kMaxEntries = 512;
 // global.puzzle: a flag per dungeon puzzle solved (an array of numbers). StateEntry.object kGlobalPuzzle, slot = index.
 constexpr int kSlotGlobalPuzzle = 0x736;
@@ -30,6 +31,8 @@ constexpr int kMaxPuzzleFlags = 64;
 // Variables (decompiled/code/var_slots.tsv) of the pieces.
 constexpr int kSolved = 0x7D8, kElectrified = 0x1D2, kFacing = 0x409, kAngleTo = 0x58, kReflectLaser = 0x745,
               kDown = 0x1A7, kNumber = 0x6AF, kUsable = 0x8CA, kH = 0x553, kV = 0x8D9;
+// objGemSocketPillar.socket: the gem it holds (what its Draw_0 shows; solved is socket == solveableItem).
+constexpr int kSocket = 0x7D0;
 // Ice (objFrozenChest, frozen doors): a fire hit sets `burn`, `freeze` approaches `meltTo` every step, and at 0 the
 // block makes what it holds (the boss key) and goes.
 constexpr int kFreeze = 0x443, kMeltTo = 0x63C, kBurn = 0xD7, kFrozen = 0x447;
@@ -48,6 +51,7 @@ struct Kind {
     Use use;
     bool moves;  // its place is the host's too (pushed cubes)
     std::vector<int> slots;
+    bool inWorld = false;  // a kOwn piece shared in the world as well (see SharedHere)
 };
 
 const std::vector<Kind> kKinds = {
@@ -58,12 +62,18 @@ const std::vector<Kind> kKinds = {
     {181, 0x00CDAFC0, Use::kAtHost, false, {kSlotImage, kUsable}},  // objRunicPillar: its rune (colour, glow: animated)
     {205, 0x00D2EEF0, Use::kAtHost, false, {kSolved}},                           // objFireTempleBrazier
     {183, 0x00CE3C10, Use::kOwn, false, {kUsable}},  // objBloodAltar: E opens the boon choice - the guest's
-    {188, 0x00CF1090, Use::kOwn, false, {kSolved, kNumber, kUsable}},            // objGemSocketPillar
+    // The skull islands' gem puzzle (and the dungeons'): each player puts in gems of their own inventory, and every
+    // socket has to hold its gem. Not shared in the world, each player saw only their own gems and the puzzle never
+    // came out for either (its Step_0 checks every socket's `solved`); `socket` is the gem drawn in it.
+    {188, 0x00CF1090, Use::kOwn, false, {kSocket, kSolved, kNumber, kUsable}, true},  // objGemSocketPillar
     {180, 0x00CD1410, Use::kAtHost, false, {kSlotImage, kUsable}},  // objComputerTerminal: E turns the symbol
     {182, 0x00CE0920, Use::kAtHost, false, {kDown, kSolved, kUsable}},  // objVolcanoPushDownPillar
     // objPushDownPillar is down when its animation is (Step_0: usable = image_index == 0): its frame goes along - sent
     // `usable` was undone the next step, the guest never saw its pillar go down and could not do the puzzle.
     {164, 0x00C96CF0, Use::kAtHost, false, {kSlotImage}},                        // objPushDownPillar
+    // The skull islands' braziers: E lights one (solved; its image_speed plays the fire, Other_7 holds the last
+    // frame); the last one lit makes the reward chest. Each player lit only their own: done at the host.
+    {190, 0x00CF73B0, Use::kAtHost, false, {kSolved, kSlotImage, kSlotImageSpeed}},  // objSkullBrazier
     // The boss door opens for a key that follows PlayerFind() - the local player - so everyone's key follows them.
     // Frozen in ice (rmCrystalCave): a guest's fire thawed its own key only, the host could not take it (playtest 9).
     {75, 0x00B3F510, Use::kMirror, false, {kFreeze, kBurn}},  // objBossKey
@@ -73,7 +83,7 @@ const std::vector<Kind> kKinds = {
     {209, 0, Use::kOwn, false, {kFreeze, kMeltTo, kBurn, kFrozen}},     // objDungeonDoor (a frozen one)
     {153, 0, Use::kOwn, false, {kFreeze, kBurn}},                       // objTreasureChestSmallFrozen
 };
-constexpr size_t kHookCount = 10;  // kinds with an Other_11 hook, in kKinds order
+constexpr size_t kHookCount = 11;  // kinds with an Other_11 hook, in kKinds order
 
 #pragma pack(push, 1)
 // A piece is told by the sender's id of it, the host's id of it and its spot (Locate): world pieces have other ids
@@ -150,7 +160,10 @@ int LocalPiece(yyc::CInstance* self, int senderId, int hostId, int object, float
 }
 
 uint32_t Builtin(int slot) {
-    return slot == kSlotX ? yyc::va::YYVar_x : slot == kSlotY ? yyc::va::YYVar_y : yyc::va::YYVar_image_index;
+    return slot == kSlotX           ? yyc::va::YYVar_x
+           : slot == kSlotY         ? yyc::va::YYVar_y
+           : slot == kSlotImageSpeed ? yyc::va::YYVar_image_speed
+                                     : yyc::va::YYVar_image_index;
 }
 
 bool ReadNumber(int id, int slot, float* out) {
@@ -187,7 +200,22 @@ bool Sends(const Kind& kind) { return IsHost() || FromAnyone(kind); }
 // In the world only the pieces the host does (the desert's pillars): there ice and chests go with the world's own
 // sync (sync.cpp), and a guest's own pieces stay as they were before the world's puzzles were played together.
 bool InWorld(yyc::CInstance* self) { return yyc::GetBuiltinReal(self, yyc::va::YYVar_room) == yyc::kRoomGame; }
-bool SharedHere(const Kind& kind, bool inWorld) { return !inWorld || kind.use == Use::kAtHost; }
+bool SharedHere(const Kind& kind, bool inWorld) { return !inWorld || kind.use == Use::kAtHost || kind.inWorld; }
+
+// A puzzle's reward chest: made by the host's puzzle only (it reaches the guests as any new world object). A guest's
+// copy of the puzzle comes out too, now that it sees every piece: the chest it makes there would be a second one.
+constexpr int kObjTreasureChest = 150, kObjTreasureChestSmall = 151;
+constexpr const char* kRewardMakers[] = {"gml_Object_objGemSocketPillar_Step_0", "gml_Object_objSkullBrazier_Other_11"};
+std::vector<int> g_guestRewards;  // guest: such chests, removed at the next step (the code making one still uses it)
+
+void RemoveGuestRewards(yyc::CInstance* self) {
+    for (const int id : g_guestRewards) {
+        if (yyc::FindInstance(id) == nullptr) continue;
+        yyc::CallReal(self, "instance_destroy", {double(id), 0});  // a treasure chest's destroy is never sent
+        Log("puzzles: the puzzle's reward chest %d made here removed - the host's comes", id);
+    }
+    g_guestRewards.clear();
+}
 
 int PuzzleFlagCount(yyc::CInstance* self) {
     const yyc::RValue* flags = yyc::GlobalVar(kSlotGlobalPuzzle);
@@ -325,7 +353,7 @@ template <size_t... N>
 struct HookTable {
     static constexpr yyc::EventFn kHooks[] = {&InteractHook<N>...};
 };
-using Hooks = HookTable<0, 1, 2, 3, 4, 5, 6, 7, 8, 9>;
+using Hooks = HookTable<0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10>;
 static_assert(sizeof(Hooks::kHooks) / sizeof(Hooks::kHooks[0]) == kHookCount, "one hook per hooked kind");
 
 }  // namespace
@@ -346,6 +374,7 @@ bool InstallHooks(bool (*isHost)(), bool (*isGuest)()) {
 }
 
 void Tick(yyc::CInstance* localPlayer) {
+    if (!g_guestRewards.empty()) RemoveGuestRewards(localPlayer);
     if (!net::IsConnected() || ++g_steps % kEverySteps != 0) return;
     SendChanges(localPlayer);
 }
@@ -369,6 +398,15 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
 
 bool MeltsAtEachSide(int object) { return object == kObjFrozenChest; }
 
+void OnCreated(int createdId, int object) {
+    if (!IsGuest() || !net::IsConnected() || (object != kObjTreasureChest && object != kObjTreasureChestSmall)) return;
+    const yyc::StackFrame* top = yyc::TopFrame();
+    if (top == nullptr || top->name == nullptr) return;
+    for (const char* maker : kRewardMakers) {
+        if (strcmp(top->name, maker) == 0) g_guestRewards.push_back(createdId);
+    }
+}
+
 void OnDestroyed(int id, int object) {
     if (!MeltsAtEachSide(object) || !net::IsConnected()) return;
     // Its last `freeze` may not have gone out: the others' blocks melt now (Approach would raise a lone freeze of 0).
@@ -378,6 +416,7 @@ void OnDestroyed(int id, int object) {
 }
 
 void Reset() {
+    g_guestRewards.clear();
     g_known.clear();
     g_steps = 0;
 }
