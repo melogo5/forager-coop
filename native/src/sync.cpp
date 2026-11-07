@@ -458,6 +458,7 @@ void __cdecl CreateHook(yyc::RValue* result, yyc::CInstance* self, yyc::CInstanc
     if (IsGuest()) familiars::OnCreated(self, id, object);
     bombs::OnCreated(self, id, object);
     shots::OnCreated(self, id, object);
+    puzzles::OnCreated(id, object);
     if (IsGuest() && IsScrollSpawner(object) && CreatedByScroll()) {
         // Its spawns would be the guest's own (skipped here): the host runs the spawner (playtest 4, bug 4).
         g_scrollSpawners.push_back(id);
