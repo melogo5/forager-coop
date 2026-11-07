@@ -23,10 +23,12 @@ constexpr uint32_t kYYVarDirection = 0x01AD87A0, kYYVarSpeed = 0x01AD8C10, kYYVa
 // `if (!instance_exists(owner)) { instance_destroy(); exit }` - a copy (no owner) was gone at its first step, so the
 // sword's fireballs were never seen by the other players.
 constexpr int kSlotFireballOwner = 0x6CA;
-// ExplosionCreate(x, y, a, b) makes the objExplosion of a fireball's hit (its collision events call it; bombs make
-// theirs themselves, bombs.cpp). A copy hits nothing, so the other players saw no blast either.
+// ExplosionCreate(x, y, range, dmgPlayer) makes the objExplosion of a fireball's hit (its collision events call it;
+// bombs make theirs themselves, bombs.cpp) and returns nothing. A copy hits nothing, so the other players saw no blast.
 constexpr uint32_t kScriptExplosionCreate = 0x0086D1E0;
 constexpr int kBlastArgs = 4;
+constexpr int kObjExplosion = 295;   // decompiled/data/objects.tsv
+constexpr int kSlotRange = 0x744;    // objExplosion.range: ExplosionCreate's third argument
 constexpr float kBlastMatchDistance = 48;  // a copy flies a little behind its fireball: the one that went off
 
 // What a copy must not do (decompiled/code/index.tsv): hit (the collision events deal the damage) and, for an arrow,
@@ -47,7 +49,7 @@ struct ShotMsg {
     float sprite;
 };
 struct BlastMsg {
-    float args[kBlastArgs];  // ExplosionCreate's: x, y and two numbers (only finite reals are sent)
+    float args[kBlastArgs];  // ExplosionCreate's: x, y, range, dmgPlayer
     float depth;
 };
 #pragma pack(pop)
@@ -176,22 +178,17 @@ void ShowBlast(yyc::CInstance* self, const BlastMsg& msg) {
         g_copies.erase(nearest);
         yyc::CallReal(self, "instance_destroy", {double(nearest), 0});
     }
-    yyc::RValue values[kBlastArgs];
-    yyc::RValue* args[kBlastArgs];
-    for (int i = 0; i < kBlastArgs; ++i) {
-        values[i] = yyc::Real(msg.args[i]);
-        args[i] = &values[i];
-    }
-    yyc::RValue result{};
+    // Made as ExplosionCreate makes it, but here: ExplosionCreate returns nothing, so its blast could not be told
+    // apart and made harmless - the copy hurt objects, mobs and players a second time (review of PR #4). As
+    // bombs::Blast does: the explosion directly, its range set, harmless before its first step.
     ++g_showing;
-    g_origExplosionCreate(self, self, &result, kBlastArgs, args);
+    const int blast = static_cast<int>(
+        yyc::CallReal(self, "instance_create_depth", {double(x), double(y), double(msg.depth), double(kObjExplosion)}));
     --g_showing;
-    const int blast = static_cast<int>(yyc::ToReal(result));
-    yyc::Free(&result);
-    yyc::CInstance* made = yyc::FindInstance(blast);
-    if (made == nullptr) return;
+    if (yyc::FindInstance(blast) == nullptr) return;
     bombs::MakeHarmless(blast);
-    yyc::SetBuiltinReal(made, yyc::va::YYVar_depth, msg.depth);  // ExplosionCreate put it by our player's depth
+    yyc::RValue range = yyc::Real(msg.args[2]);
+    yyc::SetVar(blast, kSlotRange, &range);  // dmgPlayer is not needed: the harmless step zeroes dmg and dmgPlayer
 }
 
 }  // namespace

@@ -189,8 +189,15 @@ PlayerStateMsg CaptureState(yyc::CInstance* player) {
     s.look = look::Read(player);
     s.swing = g_swing;
     s.blend = static_cast<int32_t>(yyc::GetBuiltinReal(player, kYYVarImageBlend));
-    s.aimX = static_cast<float>(yyc::GetBuiltinReal(player, yyc::va::YYVar_mouse_x));
-    s.aimY = static_cast<float>(yyc::GetBuiltinReal(player, yyc::va::YYVar_mouse_y));
+    // While the skill tree is open its hook gives mouse_x/mouse_y in tree coordinates: the last aim in the world goes
+    // instead (sent as the aim, the puppet's sword pointed somewhere odd at the others).
+    static float aimX = 0, aimY = 0;
+    if (!skilltab::IsOpen()) {
+        aimX = static_cast<float>(yyc::GetBuiltinReal(player, yyc::va::YYVar_mouse_x));
+        aimY = static_cast<float>(yyc::GetBuiltinReal(player, yyc::va::YYVar_mouse_y));
+    }
+    s.aimX = aimX;
+    s.aimY = aimY;
     yyc::Free(&tool);
     return s;
 }

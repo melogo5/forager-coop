@@ -111,6 +111,8 @@ bool g_drawingPuppet = false;
 // The puppet whose Draw_0 runs, while it has an aim: mouse_x/mouse_y give its player's mouse (GetBuiltinHook).
 bool g_drawingAim = false;
 double g_drawAimX = 0, g_drawAimY = 0;
+// mouse_x/mouse_y's builtin variable ids: numbered by the runner after start-up, so read at the first puppet draw.
+int g_mouseXId = -1, g_mouseYId = -1;
 
 Puppet* Find(net::PeerId player) {
     for (auto& puppet : g_puppets) {
@@ -288,6 +290,10 @@ void __cdecl DrawHook(yyc::CInstance* self, yyc::CInstance* other) {
         aiming = true;
         g_drawAimX = puppet.aimX;
         g_drawAimY = puppet.aimY;
+    }
+    if (aiming && (g_mouseXId < 0 || g_mouseYId < 0)) {
+        g_mouseXId = yyc::At<yyc::YYVar*>(yyc::va::YYVar_mouse_x)->id;
+        g_mouseYId = yyc::At<yyc::YYVar*>(yyc::va::YYVar_mouse_y)->id;
     }
     g_drawingPuppet = true;
     g_drawingAim = aiming;
@@ -526,9 +532,8 @@ Swing ReadSwing(yyc::CInstance* player) {
 }
 
 void AfterBuiltinRead(int varId, yyc::RValue* out) {
-    if (!g_drawingAim || out == nullptr) return;
-    const bool isX = varId == yyc::At<yyc::YYVar*>(yyc::va::YYVar_mouse_x)->id;
-    if (!isX && varId != yyc::At<yyc::YYVar*>(yyc::va::YYVar_mouse_y)->id) return;
+    if (!g_drawingAim || out == nullptr || (varId != g_mouseXId && varId != g_mouseYId) || varId < 0) return;
+    const bool isX = varId == g_mouseXId;
     if ((out->kind & yyc::kKindMask) != yyc::kReal) return;  // a number: nothing to free
     out->real = isX ? g_drawAimX : g_drawAimY;
 }
