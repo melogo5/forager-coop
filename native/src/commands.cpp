@@ -42,14 +42,37 @@ bool g_registered = false;
 
 int IdOf(yyc::CInstance* instance) { return static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_id)); }
 
-double Arg(int argc, yyc::RValue** args, int i, double otherwise) {
-    if (i >= argc || args == nullptr || args[i] == nullptr) return otherwise;
-    const yyc::RValue& value = *args[i];
-    if (yyc::IsNumber(value)) return yyc::ToReal(value);
+// A number typed as text ("15"): the whole word has to be one.
+bool ParseNumber(const yyc::RValue& value, double* number) {
+    if (yyc::IsNumber(value)) {
+        *number = yyc::ToReal(value);
+        return true;
+    }
     const std::string text = yyc::ToString(value);
     char* end = nullptr;
-    const double number = std::strtod(text.c_str(), &end);
-    return end != text.c_str() ? number : otherwise;
+    const double parsed = std::strtod(text.c_str(), &end);
+    if (text.empty() || end != text.c_str() + text.size()) return false;
+    *number = parsed;
+    return true;
+}
+
+// The first number a command was typed with. The chat runs a command's script with the typed words as ONE array
+// argument (how __CommandGive reads them: array_length_1d, real(string_digits(...))) - read as a number or a string,
+// that array was 0 and "/puzzlereset 15" reset nothing (playtest 2026-11-08). A plain number or string works too.
+double Arg(yyc::CInstance* self, int argc, yyc::RValue** args, int i, double otherwise) {
+    if (i >= argc || args == nullptr || args[i] == nullptr) return otherwise;
+    yyc::RValue& value = *args[i];
+    double number = 0;
+    if (value.kind != yyc::kArray) return ParseNumber(value, &number) ? number : otherwise;
+    yyc::RValue length{};
+    if (!yyc::CallBuiltin("array_length_1d", self, 1, &value, &length)) return otherwise;
+    const int count = static_cast<int>(yyc::ToReal(length));
+    yyc::Free(&length);
+    for (int k = 0; k < count; ++k) {
+        const yyc::RValue word = yyc::ArrayElement(&value, k);  // a plain copy: read, never freed
+        if (ParseNumber(word, &number)) return number;
+    }
+    return otherwise;
 }
 
 void Register(yyc::CInstance* self, const char* name, double scriptIndex, const char* help) {
@@ -93,7 +116,7 @@ void RemoveChest(yyc::CInstance* self, int id) { yyc::CallReal(self, "instance_d
 
 yyc::RValue* __cdecl PuzzleResetHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                      yyc::RValue** args) {
-    const int number = static_cast<int>(Arg(argc, args, 0, 0));
+    const int number = static_cast<int>(Arg(self, argc, args, 0, 0));
     if (!puzzles::ResetPuzzle(self, number, true)) {
         Log("commands: /puzzlereset %d - no such puzzle, or it cannot be reset yet", number);
     }

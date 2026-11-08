@@ -238,7 +238,10 @@ constexpr int kObjTreasureChest = 150;
 constexpr const char* kRewardMakers[] = {
     "gml_Object_objGemSocketPillar_Step_0", "gml_Object_objSkullBrazier_Other_11", "gml_Object_objSleepingStatue_Step_0",
     // its only chest is the eye statue's (its collision with every other parObject makes none)
-    "gml_Object_objArrow_Collision_d53d5ff2_a0e8_46f2_993b_4e04e7d92f52"};
+    "gml_Object_objArrow_Collision_d53d5ff2_a0e8_46f2_993b_4e04e7d92f52",
+    // The frozen chest island's ice (puzzle 15) melts at every player now; each block makes its chest as it goes, and
+    // the guest got its own besides the host's (playtest 2026-11-08). In a dungeon the block holds the boss key: no chest.
+    "gml_Object_objFrozenChest_Step_2"};
 
 // Host: a guest's arrow solved eye statue `id`: the chest the guest's arrow made there is made here, as objArrow's
 // collision does - instance_create_depth(x, y + 32, depth, objTreasureChest) - and reaches every player.
