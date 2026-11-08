@@ -212,6 +212,12 @@ bool ReadNumber(int id, int slot, float* out) {
     return number;
 }
 
+// A variable set even if the instance has none yet (a chest just made: its Create may not set it).
+void SetNumber(int id, int slot, double value) {
+    yyc::RValue v = yyc::Real(value);
+    yyc::SetVar(id, slot, &v);
+}
+
 void WriteNumber(int id, int slot, float value) {
     yyc::CInstance* instance = yyc::FindInstance(id);
     if (instance == nullptr) return;
@@ -253,6 +259,7 @@ struct MeltSpot {
     DWORD tick;
 };
 std::vector<MeltSpot> g_meltSpots;  // guest: where its own ice made a chest lately (the host's replica comes there)
+std::vector<MeltSpot> g_fireRespawns;  // guest: where the host is making a burning chest again (puzzle 18)
 
 // Host: a guest's arrow solved eye statue `id`: the chest the guest's arrow made there is made here, as objArrow's
 // collision does - instance_create_depth(x, y + 32, depth, objTreasureChest) - and reaches every player.
@@ -464,6 +471,11 @@ struct ResetMsg {
 #pragma pack(pop)
 
 std::map<int, std::pair<double, double>> g_spots;  // host: object -> where its piece stands in this world
+// Puzzle 18, the fire island's burning chests: plain small chests, told from the rest by `onFire` (only these start
+// burning). Noted while burning; a reset makes the four again where they stood, on fire.
+constexpr int kFireChests = 18;
+constexpr double kNearSpot = 8;
+std::vector<std::pair<double, double>> g_fireSpots;  // host: where the fire island's chests stand
 bool g_spotsRead = false;
 unsigned g_spotSteps = 0;
 
@@ -482,8 +494,14 @@ void ReadSpots() {
     std::ifstream in{std::filesystem::path(path)};
     int object = 0;
     double x = 0, y = 0;
+    g_fireSpots.clear();
     while (in >> object >> x >> y) {
-        if (std::isfinite(x) && std::isfinite(y)) g_spots[object] = {x, y};
+        if (!std::isfinite(x) || !std::isfinite(y)) continue;
+        if (object == kObjTreasureChestSmall) {
+            g_fireSpots.push_back({x, y});
+        } else {
+            g_spots[object] = {x, y};
+        }
     }
 }
 
@@ -492,6 +510,7 @@ void WriteSpots() {
     if (path.empty()) return;
     std::ostringstream out;
     for (const auto& [object, spot] : g_spots) out << object << ' ' << spot.first << ' ' << spot.second << '\n';
+    for (const auto& spot : g_fireSpots) out << kObjTreasureChestSmall << ' ' << spot.first << ' ' << spot.second << '\n';
     const std::string text = out.str();
     files::WriteAtomic(std::filesystem::path(path), reinterpret_cast<const uint8_t*>(text.data()), text.size());
 }
@@ -515,6 +534,22 @@ void NoteSpots(yyc::CInstance* localPlayer) {
         g_spots[r.object] = spot;
         changed = true;
         Log("puzzles: puzzle %d's piece (object %d) noted at (%.0f, %.0f)", r.number, r.object, spot.first, spot.second);
+    }
+    // The fire island's chests, while they burn.
+    const int smalls = static_cast<int>(yyc::CallReal(localPlayer, "instance_number", {double(kObjTreasureChestSmall)}));
+    for (int i = 0; i < smalls; ++i) {
+        const int id = static_cast<int>(yyc::CallReal(localPlayer, "instance_find", {double(kObjTreasureChestSmall), double(i)}));
+        yyc::CInstance* chest = yyc::FindInstance(id);
+        float burning = 0;
+        if (chest == nullptr || !ReadNumber(id, kOnFire, &burning) || !(burning > 0)) continue;
+        const double x = yyc::GetBuiltinReal(chest, yyc::va::YYVar_x), y = yyc::GetBuiltinReal(chest, yyc::va::YYVar_y);
+        const bool known = std::any_of(g_fireSpots.begin(), g_fireSpots.end(), [x, y](const auto& f) {
+            return std::hypot(f.first - x, f.second - y) <= kNearSpot;
+        });
+        if (known) continue;
+        g_fireSpots.push_back({x, y});
+        changed = true;
+        Log("puzzles: puzzle 18's burning chest noted at (%.0f, %.0f)", x, y);
     }
     if (changed) WriteSpots();
 }
@@ -592,6 +627,50 @@ void RespawnPiece(yyc::CInstance* self, const Respawn& r, double fromX, double f
     });
 }
 
+// Host (or alone): puzzle 18 - the small chests at its noted spots (else the ones near (fromX, fromY), the player who
+// typed it) are made again there, grounded and burning: made new, as the island made them (a chest whose fire was put
+// out keeps no flames going). The guests are told each spot first: their own chests there go, and the replicas that
+// come there are made grounded and burning (OnReplicaCreated).
+void ResetFireChests(yyc::CInstance* self, double fromX, double fromY) {
+    sync::WakeThen(self, kObjTreasureChestSmall, [self, fromX, fromY] {
+        if (!InWorld(self)) {
+            Log("puzzles: reset 18 - the host is not in the world: nothing made");
+            return;
+        }
+        if (!g_spotsRead) ReadSpots();
+        std::vector<std::pair<double, double>> spots = g_fireSpots;
+        const char* how = "the noted spots";
+        if (spots.empty() && std::isfinite(fromX) && std::isfinite(fromY)) {
+            for (const int id : ChestsNear(self, fromX, fromY, kRewardReach)) {
+                yyc::CInstance* chest = yyc::FindInstance(id);
+                if (chest == nullptr || static_cast<int>(yyc::GetBuiltinReal(chest, yyc::va::YYVar_object_index)) !=
+                                            kObjTreasureChestSmall) continue;
+                spots.push_back({yyc::GetBuiltinReal(chest, yyc::va::YYVar_x), yyc::GetBuiltinReal(chest, yyc::va::YYVar_y)});
+            }
+            how = "the small chests near the player (no spots noted)";
+        }
+        if (spots.empty()) {
+            Log("puzzles: reset 18 - no spot known for the burning chests");
+            return;
+        }
+        for (const auto& [x, y] : spots) {
+            if (net::IsConnected()) {
+                const ResetMsg msg{kFireChests, static_cast<float>(x), static_cast<float>(y), 1};
+                net::Send(kPuzzleReset, &msg, sizeof(msg));
+            }
+            for (const int id : ChestsNear(self, x, y, kSameSpotIce)) yyc::CallReal(self, "instance_destroy", {double(id), 0});
+            const int id = static_cast<int>(
+                yyc::CallReal(self, "instance_create_depth", {x, y, -y, double(kObjTreasureChestSmall)}));
+            if (yyc::FindInstance(id) == nullptr) continue;
+            SetNumber(id, kSlotGrounded, 1);
+            SetNumber(id, kOnFire, 1);
+        }
+        g_fireSpots = spots;
+        WriteSpots();
+        Log("puzzles: puzzle 18 reset - %zu burning chests made again at %s", spots.size(), how);
+    });
+}
+
 }  // namespace
 
 void Tick(yyc::CInstance* localPlayer) {
@@ -610,6 +689,20 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
             ResetPuzzle(localPlayer, number, false);
         } else if (message.payload.size() == sizeof(msg)) {
             memcpy(&msg, message.payload.data(), sizeof(msg));
+            if (msg.number == kFireChests) {
+                if (IsHost() && !msg.fromHost) {
+                    ResetFireChests(localPlayer, msg.x, msg.y);
+                } else if (IsGuest() && msg.fromHost && std::isfinite(msg.x) && std::isfinite(msg.y)) {
+                    int gone = 0;
+                    for (const int id : ChestsNear(localPlayer, msg.x, msg.y, kSameSpotIce)) {
+                        yyc::CallReal(localPlayer, "instance_destroy", {double(id), 0});
+                        ++gone;
+                    }
+                    g_fireRespawns.push_back({msg.x, msg.y, GetTickCount()});
+                    Log("puzzles: the host remade a burning chest at (%.0f, %.0f); %d chest(s) gone here", msg.x, msg.y, gone);
+                }
+                return true;
+            }
             const Respawn* r = FindRespawn(msg.number);
             if (r != nullptr && IsHost() && !msg.fromHost) {
                 RespawnPiece(localPlayer, *r, msg.x, msg.y);  // a guest's /puzzlereset: the host makes the piece
@@ -676,7 +769,7 @@ void ResetPieces(yyc::CInstance* self, const PuzzleReset& reset) {
 }  // namespace
 
 bool ResetPuzzle(yyc::CInstance* self, int number, bool share) {
-    if (const Respawn* r = FindRespawn(number); r != nullptr && share) {  // typed here (a received one is Handle's)
+    if ((FindRespawn(number) != nullptr || number == kFireChests) && share) {  // typed here (a received one is Handle's)
         const int playerId = static_cast<int>(yyc::CallReal(self, "instance_find", {double(yyc::obj::player), 0}));
         yyc::CInstance* player = yyc::FindInstance(playerId);
         const double nan = std::numeric_limits<double>::quiet_NaN();
@@ -688,8 +781,10 @@ bool ResetPuzzle(yyc::CInstance* self, int number, bool share) {
                 net::Send(kPuzzleReset, &msg, sizeof(msg));
             }
             Log("puzzles: /puzzlereset %d asked of the host", number);
+        } else if (number == kFireChests) {
+            ResetFireChests(self, px, py);
         } else {
-            RespawnPiece(self, *r, px, py);
+            RespawnPiece(self, *FindRespawn(number), px, py);
         }
         return true;
     }
@@ -739,6 +834,17 @@ void OnReplicaCreated(yyc::CInstance* self, int id, int object) {
             fromIce = std::hypot(yyc::GetBuiltinReal(ice, yyc::va::YYVar_x) - x,
                                  yyc::GetBuiltinReal(ice, yyc::va::YYVar_y) - y) <= kSameSpotIce;
         }
+    }
+    const auto fire = std::find_if(g_fireRespawns.begin(), g_fireRespawns.end(), [x, y, now](const MeltSpot& m) {
+        return now - m.tick <= kMeltSpotMs && std::hypot(m.x - x, m.y - y) <= kSameSpotIce;
+    });
+    if (fire != g_fireRespawns.end() && object == kObjTreasureChestSmall) {
+        g_fireRespawns.erase(fire);
+        SetNumber(id, kSlotGrounded, 1);
+        SetNumber(id, kOnFire, 1);
+        SetNumber(id, kFreeze, 0);
+        Log("puzzles: the host's remade burning chest %d at (%.0f, %.0f) made on the ground, burning", id, x, y);
+        return;
     }
     if (!fromIce) return;
     yyc::RValue grounded = yyc::Real(1);

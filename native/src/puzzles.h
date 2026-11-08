@@ -45,7 +45,8 @@ void OnReplicaCreated(yyc::CInstance* self, int id, int object);
 // cannot be reset yet. The supported ones: 5 eye statue, 9 skull braziers, 11 gem sockets (colored pedestals),
 // 14 stone princess; and two whose piece leaves the world when solved, made again by the host where it stood (noted in
 // saveDataN/coop_guests/coop_puzzle_spots.txt) with the reward chests around it removed: 15 frozen chest (the ice block),
-// 20 giant crystal (not one of the 19 puzzles: its island's feat).
+// 20 giant crystal (not one of the 19 puzzles: its island's feat); and 18, the fire island's four burning chests, made
+// again where they stood (noted while burning), on fire.
 bool ResetPuzzle(yyc::CInstance* self, int number, bool share);
 
 // A new room: what was known about the last one's pieces goes.
