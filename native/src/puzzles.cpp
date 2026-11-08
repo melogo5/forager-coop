@@ -65,8 +65,11 @@ const std::vector<Kind> kKinds = {
     {183, 0x00CE3C10, Use::kOwn, false, {kUsable}},  // objBloodAltar: E opens the boon choice - the guest's
     // The skull islands' gem puzzle (and the dungeons'): each player puts in gems of their own inventory, and every
     // socket has to hold its gem. Not shared in the world, each player saw only their own gems and the puzzle never
-    // came out for either (its Step_0 checks every socket's `solved`); `socket` is the gem drawn in it.
-    {188, 0x00CF1090, Use::kOwn, false, {kSocket, kSolved, kNumber, kUsable}, true},  // objGemSocketPillar
+    // came out for either; `socket` is the gem drawn in it. `solved` is not shared: a socket's Step_0 sets it when its
+    // `socket` turns into its `solveableItem`, and at that moment checks the others and makes the reward chest. Sent
+    // with the gem, a guest's last `solved` reached the host already set - the host's socket never turned solved
+    // itself and made no chest. Each side's Step_0 solves its sockets from the gems; the host's chest is everyone's.
+    {188, 0x00CF1090, Use::kOwn, false, {kSocket, kNumber, kUsable}, true},  // objGemSocketPillar
     // The sleeping princess (a stone statue): the same socket as a gem's - a player puts in a flower of their own and
     // her Step_0 wakes her when `socket` is the cinderbloom (item 18) and she is not `solved` yet, then makes the reward
     // chest. Not shared, each player saw only their own flower and got a chest of their own (a guest's was the guest's
