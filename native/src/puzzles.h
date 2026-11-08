@@ -46,7 +46,7 @@ void OnReplicaCreated(yyc::CInstance* self, int id, int object);
 // 14 stone princess; and two whose piece leaves the world when solved, made again by the host where it stood (noted in
 // saveDataN/coop_guests/coop_puzzle_spots.txt) with the reward chests around it removed: 15 frozen chest (the ice block),
 // 20 giant crystal (not one of the 19 puzzles: its island's feat); and 18, the fire island's four burning chests, made
-// again where they stood (noted while burning), on fire.
+// again where they stood (noted while burning), on fire; and 10, the three bells (their order kept in global.puzzle[3]).
 bool ResetPuzzle(yyc::CInstance* self, int number, bool share);
 
 // A new room: what was known about the last one's pieces goes.

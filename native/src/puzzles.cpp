@@ -50,6 +50,8 @@ constexpr int kObjTreasureChestSmall = 151;
 constexpr int kOnFire = 0x6B3;  // a small chest of the fire island burning (var_slots.tsv)
 constexpr int kObjEyeStatue = 174;
 constexpr int kObjBattery = 175;      // objReceptorBig
+constexpr int kBellsPuzzle = 10;      // the three bells' puzzle number
+constexpr int kBellsFlag = 3;         // their place in global.puzzle
 constexpr int kHitByWatcher = 0x565;  // objReceptorBig.hitByWatcher: steps it stays charged by a watcher's beam
 constexpr float kGuestChargeSteps = 30;
 
@@ -902,6 +904,22 @@ bool ResetPuzzle(yyc::CInstance* self, int number, bool share) {
         } else {
             RespawnPiece(self, *FindRespawn(number), px, py);
         }
+        return true;
+    }
+    if (number == kBellsPuzzle) {
+        // The three bells keep where the player is in their order, and that it was done, in global.puzzle[3] (their
+        // Other_11 reads ArrayIndex(global.puzzle, 3)): once done, ringing them makes no chest again. The host sets it
+        // back to 0 and sends it (AddPuzzleFlags); a guest asks the host.
+        if (IsGuest()) {
+            if (share && net::IsConnected()) {
+                const int32_t msg = number;
+                net::Send(kPuzzleReset, &msg, sizeof(msg));
+            }
+            return true;
+        }
+        SetPuzzleFlag(self, kBellsFlag, 0);
+        g_known.erase(std::make_pair(-1, kBellsFlag));  // news for the guests
+        Log("puzzles: puzzle 10 reset - global.puzzle[%d] = 0", kBellsFlag);
         return true;
     }
     for (const PuzzleReset& reset : kResets) {
