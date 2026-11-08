@@ -78,7 +78,16 @@ bool FiredByLocalPlayer(yyc::CInstance* self) {
 
 template <size_t N>
 void __cdecl HarmfulHook(yyc::CInstance* self, yyc::CInstance* other) {
-    if (!g_copies.empty() && g_copies.count(IdOf(self)) > 0) return;
+    if (!g_copies.empty() && g_copies.count(IdOf(self)) > 0) {
+        // An ice bolt's copy flew on through what the real one hit (a chest, a rock): it breaks there instead, its
+        // Destroy_0 only showing the shards. Not on a player: it starts on the shooter's puppet.
+        if (static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_object_index)) == kObjIceBolt && other != nullptr &&
+            static_cast<int>(yyc::GetBuiltinReal(other, yyc::va::YYVar_object_index)) != yyc::obj::player) {
+            g_copies.erase(IdOf(self));
+            yyc::CallReal(self, "instance_destroy", {double(IdOf(self))});
+        }
+        return;
+    }
     g_orig[N](self, other);
 }
 
