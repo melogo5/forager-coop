@@ -7,6 +7,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <set>
 #include <sstream>
 #include <vector>
 
@@ -581,6 +582,9 @@ std::map<int, std::pair<double, double>> g_spots;  // host: object -> where its 
 constexpr int kFireChests = 18;
 constexpr double kNearSpot = 8;
 std::vector<std::pair<double, double>> g_fireSpots;  // host: where the fire island's chests stand
+// Small chests made in this session (a puzzle's reward, a reset's): only the world's own burn as the fire island's do.
+// The lights out's four reward chests are made burning on the fire island too, and were noted as its chests.
+std::set<int> g_madeHere;
 bool g_spotsRead = false;
 unsigned g_spotSteps = 0;
 
@@ -646,7 +650,7 @@ void NoteSpots(yyc::CInstance* localPlayer) {
         const int id = static_cast<int>(yyc::CallReal(localPlayer, "instance_find", {double(kObjTreasureChestSmall), double(i)}));
         yyc::CInstance* chest = yyc::FindInstance(id);
         float burning = 0;
-        if (chest == nullptr || !ReadNumber(id, kOnFire, &burning) || !(burning > 0)) continue;
+        if (chest == nullptr || g_madeHere.count(id) > 0 || !ReadNumber(id, kOnFire, &burning) || !(burning > 0)) continue;
         const double x = yyc::GetBuiltinReal(chest, yyc::va::YYVar_x), y = yyc::GetBuiltinReal(chest, yyc::va::YYVar_y);
         const bool known = std::any_of(g_fireSpots.begin(), g_fireSpots.end(), [x, y](const auto& f) {
             return std::hypot(f.first - x, f.second - y) <= kNearSpot;
@@ -913,6 +917,7 @@ bool ResetPuzzle(yyc::CInstance* self, int number, bool share) {
 }
 
 void OnCreated(int createdId, int object) {
+    if (object == kObjTreasureChestSmall) g_madeHere.insert(createdId);  // not one of the island's (NoteSpots)
     if (!IsGuest() || !net::IsConnected() || (object != kObjTreasureChest && object != kObjTreasureChestSmall)) return;
     const yyc::StackFrame* top = yyc::TopFrame();
     if (top == nullptr || top->name == nullptr) return;
@@ -978,6 +983,7 @@ void Reset() {
     g_known.clear();
     g_steps = 0;
     g_spotsRead = false;  // another world maybe: its own spots file
+    g_madeHere.clear();
     g_spotSteps = 0;
 }
 
