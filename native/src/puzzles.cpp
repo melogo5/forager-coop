@@ -37,6 +37,7 @@ constexpr int kSocket = 0x7D0;
 // block makes what it holds (the boss key) and goes.
 constexpr int kFreeze = 0x443, kMeltTo = 0x63C, kBurn = 0xD7, kFrozen = 0x447;
 constexpr int kObjFrozenChest = 178;
+constexpr int kObjEyeStatue = 174;
 
 enum class Use : uint8_t {
     kNone,     // not interacted with (or nothing of ours happens on E)
@@ -70,6 +71,11 @@ const std::vector<Kind> kKinds = {
     // her Step_0 wakes her when `socket` is the cinderbloom (item 18), then makes the reward chest. Not shared, each
     // player saw only their own flower and got a chest of their own (a guest's was the guest's alone).
     {177, 0x00CC3060, Use::kOwn, false, {kSocket, kSolved, kUsable}, true},  // objSleepingStatue
+    // The eye statue: an arrow from the right side solves it (objArrow's collision with parObject sets `solved` and
+    // makes the reward chest right there). Only the shooter's statue was solved: a guest's chest was the guest's
+    // alone, and a guest could solve the host's already solved statue again for a second chest. `solved` is shared;
+    // a guest's solve makes the host's chest (EyeSolvedAtHost).
+    {kObjEyeStatue, 0, Use::kOwn, false, {kSolved}, true},  // objEyeStatue
     {180, 0x00CD1410, Use::kAtHost, false, {kSlotImage, kUsable}},  // objComputerTerminal: E turns the symbol
     {182, 0x00CE0920, Use::kAtHost, false, {kDown, kSolved, kUsable}},  // objVolcanoPushDownPillar
     // objPushDownPillar is down when its animation is (Step_0: usable = image_index == 0): its frame goes along - sent
@@ -209,8 +215,23 @@ bool SharedHere(const Kind& kind, bool inWorld) { return !inWorld || kind.use ==
 // A puzzle's reward chest: made by the host's puzzle only (it reaches the guests as any new world object). A guest's
 // copy of the puzzle comes out too, now that it sees every piece: the chest it makes there would be a second one.
 constexpr int kObjTreasureChest = 150, kObjTreasureChestSmall = 151;
-constexpr const char* kRewardMakers[] = {"gml_Object_objGemSocketPillar_Step_0", "gml_Object_objSkullBrazier_Other_11",
-                                         "gml_Object_objSleepingStatue_Step_0"};
+constexpr const char* kRewardMakers[] = {
+    "gml_Object_objGemSocketPillar_Step_0", "gml_Object_objSkullBrazier_Other_11", "gml_Object_objSleepingStatue_Step_0",
+    // its only chest is the eye statue's (its collision with every other parObject makes none)
+    "gml_Object_objArrow_Collision_d53d5ff2_a0e8_46f2_993b_4e04e7d92f52"};
+
+// Host: a guest's arrow solved eye statue `id`: the chest the guest's arrow made there is made here, as objArrow's
+// collision does - instance_create_depth(x, y + 32, depth, objTreasureChest) - and reaches every player.
+void EyeSolvedAtHost(yyc::CInstance* self, int id) {
+    yyc::CInstance* statue = yyc::FindInstance(id);
+    if (statue == nullptr) return;
+    constexpr double kChestBelow = 32;
+    const double x = yyc::GetBuiltinReal(statue, yyc::va::YYVar_x);
+    const double y = yyc::GetBuiltinReal(statue, yyc::va::YYVar_y) + kChestBelow;
+    const double depth = yyc::GetBuiltinReal(statue, yyc::va::YYVar_depth);
+    yyc::CallReal(self, "instance_create_depth", {x, y, depth, double(kObjTreasureChest)});
+    Log("puzzles: a guest's arrow solved eye statue %d - its chest made here", id);
+}
 std::vector<int> g_guestRewards;  // guest: such chests, removed at the next step (the code making one still uses it)
 
 void RemoveGuestRewards(yyc::CInstance* self) {
@@ -301,7 +322,11 @@ void ApplyState(const net::Message& message, yyc::CInstance* localPlayer) {
         if (!IsGuest() && !FromAnyone(*kind)) continue;  // the host takes from a guest only what is its own too
         const int piece = LocalPiece(localPlayer, entry.id, entry.hostId, entry.object, entry.x, entry.y);
         if (piece == 0) continue;
+        float before = 0;
+        const bool solvedNow = IsHost() && entry.object == kObjEyeStatue && entry.slot == kSolved && entry.value != 0 &&
+                               ReadNumber(piece, kSolved, &before) && before == 0;
         WriteNumber(piece, entry.slot, entry.value);
+        if (solvedNow) EyeSolvedAtHost(localPlayer, piece);
         if (kind->moves && entry.slot == kSlotX) {  // the host moves it: no sliding of its own here
             WriteNumber(piece, kH, 0);
             WriteNumber(piece, kV, 0);
