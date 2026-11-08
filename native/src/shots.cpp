@@ -17,6 +17,9 @@ namespace {
 constexpr uint8_t kShot = 58;   // either way (the host passes a guest's on): ShotMsg
 constexpr uint8_t kBlast = 59;  // either way: BlastMsg, a fireball went off (ExplosionCreate in its collision)
 constexpr int kObjArrow = 303, kObjFireball = 301;  // decompiled/data/objects.tsv
+// The ice rod's shot: the others saw no shot, only what it hit freeze (puzzles.cpp shares the frozen chests'
+// `freeze`). Enemies' ice bolts (the ice wizard's) are theirs, not a player's: FiredByLocalPlayer keeps them out.
+constexpr int kObjIceBolt = 308;
 // decompiled/code/yyvar_map.tsv
 constexpr uint32_t kYYVarDirection = 0x01AD87A0, kYYVarSpeed = 0x01AD8C10, kYYVarImageAngle = 0x01AD8728;
 // objFireball.owner: UseSword sets it to the player; Create_0 leaves noone. Its Step_0 starts with
@@ -37,6 +40,8 @@ constexpr uint32_t kHarmful[] = {
     0x01052DB0, 0x01055320, 0x01057130, 0x010573A0,  // objArrow Collision_80, _23, _271, _64
     0x01051960,                                      // objArrow Destroy_0
     0x01049800, 0x0104A020, 0x0104B5A0,              // objFireball Collision_80, _20, _271
+    0x01067D50, 0x01069130, 0x01069890, 0x01069930,  // objIceBolt's five collisions (they freeze and hurt)
+    0x0106A2C0,
 };
 constexpr size_t kHookCount = sizeof(kHarmful) / sizeof(kHarmful[0]);
 
@@ -62,7 +67,7 @@ yyc::ScriptFn g_origExplosionCreate = nullptr;
 
 int IdOf(yyc::CInstance* instance) { return static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_id)); }
 
-bool IsShot(int object) { return object == kObjArrow || object == kObjFireball; }
+bool IsShot(int object) { return object == kObjArrow || object == kObjFireball || object == kObjIceBolt; }
 
 // The local player fired it: made in its own step or Use script (an enemy's fireball is made by the enemy).
 bool FiredByLocalPlayer(yyc::CInstance* self) {
@@ -81,7 +86,7 @@ template <size_t... N>
 struct HookTable {
     static constexpr yyc::EventFn kHooks[] = {&HarmfulHook<N>...};
 };
-using Hooks = HookTable<0, 1, 2, 3, 4, 5, 6, 7>;
+using Hooks = HookTable<0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12>;
 static_assert(sizeof(Hooks::kHooks) / sizeof(Hooks::kHooks[0]) == kHookCount, "one hook per harmful event");
 
 ShotMsg Describe(yyc::CInstance* shot, int object) {

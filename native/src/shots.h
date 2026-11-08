@@ -1,5 +1,5 @@
-// A player's arrows (objArrow) and the nuclear sword's fireballs (objFireball) are no world objects: they were seen
-// by the shooter only. Each shot goes to the other players, who show a harmless copy of it - it flies the same way,
+// A player's arrows (objArrow), the nuclear sword's fireballs (objFireball) and the ice rod's shots (objIceBolt) are
+// no world objects: they were seen by the shooter only. Each shot goes to the other players, who show a harmless copy of it - it flies the same way,
 // but hits nothing and drops nothing (the shooter's own shot does the damage, as before).
 #pragma once
 
