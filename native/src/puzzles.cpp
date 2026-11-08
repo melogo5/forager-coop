@@ -68,9 +68,12 @@ const std::vector<Kind> kKinds = {
     // came out for either (its Step_0 checks every socket's `solved`); `socket` is the gem drawn in it.
     {188, 0x00CF1090, Use::kOwn, false, {kSocket, kSolved, kNumber, kUsable}, true},  // objGemSocketPillar
     // The sleeping princess (a stone statue): the same socket as a gem's - a player puts in a flower of their own and
-    // her Step_0 wakes her when `socket` is the cinderbloom (item 18), then makes the reward chest. Not shared, each
-    // player saw only their own flower and got a chest of their own (a guest's was the guest's alone).
-    {177, 0x00CC3060, Use::kOwn, false, {kSocket, kSolved, kUsable}, true},  // objSleepingStatue
+    // her Step_0 wakes her when `socket` is the cinderbloom (item 18) and she is not `solved` yet, then makes the reward
+    // chest. Not shared, each player saw only their own flower and got a chest of their own (a guest's was the guest's
+    // alone). Only `socket` is shared: sent with it, a guest's `solved` reached the host first and the host's statue
+    // never made its chest - nobody got one. Each side's Step_0 wakes its statue from the flower; the host's chest is
+    // the one everybody gets.
+    {177, 0x00CC3060, Use::kOwn, false, {kSocket}, true},  // objSleepingStatue
     // The eye statue: an arrow from the right side solves it (objArrow's collision with parObject sets `solved` and
     // makes the reward chest right there). Only the shooter's statue was solved: a guest's chest was the guest's
     // alone, and a guest could solve the host's already solved statue again for a second chest. `solved` is shared;
