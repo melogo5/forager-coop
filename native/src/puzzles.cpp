@@ -101,7 +101,10 @@ const std::vector<Kind> kKinds = {
     // a guest's solve makes the host's chest (EyeSolvedAtHost).
     {kObjEyeStatue, 0, Use::kOwn, false, {kSolved}, true},  // objEyeStatue
     {180, 0x00CD1410, Use::kAtHost, false, {kSlotImage, kUsable}},  // objComputerTerminal: E turns the symbol
-    {182, 0x00CE0920, Use::kAtHost, false, {kDown, kSolved, kUsable}},  // objVolcanoPushDownPillar
+    // The fire island's pillars (lights out, 16 of them): as objPushDownPillar below, `usable` is the animation's
+    // (Step_0: usable from image_index), and its Other_7 at the animation's end sets `down`, checks the others and
+    // makes the chest. Without the frame the guest's pillars never moved: the guest pressed one again and again.
+    {182, 0x00CE0920, Use::kAtHost, false, {kDown, kSolved, kUsable, kSlotImage, kSlotImageSpeed}},  // objVolcanoPushDownPillar
     // objPushDownPillar is down when its animation is (Step_0: usable = image_index == 0): its frame goes along - sent
     // `usable` was undone the next step, the guest never saw its pillar go down and could not do the puzzle.
     {164, 0x00C96CF0, Use::kAtHost, false, {kSlotImage}},                        // objPushDownPillar
@@ -259,7 +262,8 @@ constexpr const char* kRewardMakers[] = {
     // The frozen chest island's ice (puzzle 15) melts at every player now; each block makes its chest as it goes, and
     // the guest got its own besides the host's (playtest 2026-11-08). In a dungeon the block holds the boss key: no chest.
     "gml_Object_objFrozenChest_Step_2",
-    "gml_Object_objReceptorBig_Step_0"};  // the battery's four small chests and its big one
+    "gml_Object_objReceptorBig_Step_0",  // the battery's four small chests and its big one
+    "gml_Object_objVolcanoPushDownPillar_Other_7"};  // the fire island's pillars, as their animation ends at the guest
 constexpr const char* kIceMaker = "gml_Object_objFrozenChest_Step_2";  // sets the chest it makes `grounded`
 constexpr int kSlotGrounded = 0x54D;  // a chest done falling (var_slots.tsv)
 constexpr double kSameSpotIce = 24;
