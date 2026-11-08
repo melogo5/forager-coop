@@ -27,6 +27,10 @@ std::string HostGuestName(net::PeerId peer);
 // Host: <save area>/saveData<current slot>/coop_guests/<name><extension>, for more of the guest's data.
 std::wstring GuestDataFile(const std::string& name, const char* extension);
 
+// Host: <save area>/saveData<current slot>/coop_guests/<name>, for the host's own notes about this world (the folder
+// is never sent to the guests).
+std::wstring WorldNoteFile(const char* name);
+
 // Guest, network thread: right after connecting.
 void GuestOnConnect(net::PeerId host);
 // Guest, network thread: consumes the host's character answer.

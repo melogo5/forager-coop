@@ -3,10 +3,16 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <limits>
 #include <map>
+#include <sstream>
 #include <vector>
 
 #include "MinHook.h"
+#include "character.h"
+#include "files.h"
 #include "log.h"
 #include "puppet.h"
 #include "sync.h"
@@ -38,6 +44,8 @@ constexpr int kSocket = 0x7D0;
 // block makes what it holds (the boss key) and goes.
 constexpr int kFreeze = 0x443, kMeltTo = 0x63C, kBurn = 0xD7, kFrozen = 0x447;
 constexpr int kObjFrozenChest = 178;
+constexpr int kObjTreasureChestSmall = 151;
+constexpr int kOnFire = 0x6B3;  // a small chest of the fire island burning (var_slots.tsv)
 constexpr int kObjEyeStatue = 174;
 
 enum class Use : uint8_t {
@@ -95,10 +103,15 @@ const std::vector<Kind> kKinds = {
     // Frozen in ice (rmCrystalCave): a guest's fire thawed its own key only, the host could not take it (playtest 9).
     {75, 0x00B3F510, Use::kMirror, false, {kFreeze, kBurn}},  // objBossKey
     // Ice melts at every player from the same fire (a guest's fire arrow melted only its own block: the key was the
-    // guest's alone, playtest 9); each block makes its own key (sync.cpp sends no destroy of it).
-    {kObjFrozenChest, 0, Use::kOwn, false, {kFreeze, kMeltTo, kBurn}},  // objFrozenChest
+    // guest's alone, playtest 9); each block makes its own key (sync.cpp sends no destroy of it). In the world too:
+    // the frozen chest island's block (puzzle 15) is this object, and there each player thawed only their own.
+    {kObjFrozenChest, 0, Use::kOwn, false, {kFreeze, kMeltTo, kBurn}, true},  // objFrozenChest
     {209, 0, Use::kOwn, false, {kFreeze, kMeltTo, kBurn, kFrozen}},     // objDungeonDoor (a frozen one)
     {153, 0, Use::kOwn, false, {kFreeze, kBurn}},                       // objTreasureChestSmallFrozen
+    // The fire island's burning chests (puzzle 18): a small chest can't be opened while `onFire`; water or cold puts it
+    // out. Each player put out only their own: the host's chests still burned at the guest, so the host's opening (sent
+    // by chests.cpp) could not open the guest's. Put out by anyone, out at everyone.
+    {kObjTreasureChestSmall, 0, Use::kOwn, false, {kOnFire}, true},  // objTreasureChestSmall
 };
 constexpr size_t kHookCount = 12;  // kinds with an Other_11 hook, in kKinds order
 
@@ -221,7 +234,7 @@ bool SharedHere(const Kind& kind, bool inWorld) { return !inWorld || kind.use ==
 
 // A puzzle's reward chest: made by the host's puzzle only (it reaches the guests as any new world object). A guest's
 // copy of the puzzle comes out too, now that it sees every piece: the chest it makes there would be a second one.
-constexpr int kObjTreasureChest = 150, kObjTreasureChestSmall = 151;
+constexpr int kObjTreasureChest = 150;
 constexpr const char* kRewardMakers[] = {
     "gml_Object_objGemSocketPillar_Step_0", "gml_Object_objSkullBrazier_Other_11", "gml_Object_objSleepingStatue_Step_0",
     // its only chest is the eye statue's (its collision with every other parObject makes none)
@@ -410,8 +423,166 @@ bool InstallHooks(bool (*isHost)(), bool (*isGuest)()) {
     return ok && n == kHookCount;
 }
 
+namespace {
+
+// Puzzles whose solving takes their piece out of the world: the ice melts into its chest (15, frozen chest) and the
+// giant crystal is mined (20: not one of the 19 puzzles, its island gives a feat). A reset makes the piece again where
+// it stood. Only the host makes it; sync.cpp sends a new world object to the guests.
+struct Respawn {
+    int number;
+    int object;
+};
+constexpr int kObjGiantCrystal = 179;
+constexpr Respawn kRespawns[] = {{15, kObjFrozenChest}, {20, kObjGiantCrystal}};
+constexpr char kSpotsFile[] = "coop_puzzle_spots.txt";  // "<object> <x> <y>" lines, in the save's coop_guests folder
+constexpr unsigned kSpotEverySteps = 60;
+constexpr int kLastChest = 153;       // objTreasureChest .. objTreasureChestSmallFrozen
+constexpr double kRewardReach = 160;  // no spot noted: the reward chest this close to the player marks the spot
+constexpr double kChestClear = 40;    // the reward chests this close to the spot go with a reset (they bounce off it)
+constexpr double kTile = 16;
+
+#pragma pack(push, 1)
+struct ResetMsg {
+    int32_t number;
+    float x, y;        // to the host: where the player who typed it stands; from the host: the piece's spot
+    uint8_t fromHost;  // the host passes a guest's message on to the other guests: only the host's own one counts
+};
+#pragma pack(pop)
+
+std::map<int, std::pair<double, double>> g_spots;  // host: object -> where its piece stands in this world
+bool g_spotsRead = false;
+unsigned g_spotSteps = 0;
+
+const Respawn* FindRespawn(int number) {
+    for (const Respawn& r : kRespawns) {
+        if (r.number == number) return &r;
+    }
+    return nullptr;
+}
+
+void ReadSpots() {
+    g_spotsRead = true;
+    g_spots.clear();
+    const std::wstring path = character::WorldNoteFile(kSpotsFile);
+    if (path.empty()) return;
+    std::ifstream in{std::filesystem::path(path)};
+    int object = 0;
+    double x = 0, y = 0;
+    while (in >> object >> x >> y) {
+        if (std::isfinite(x) && std::isfinite(y)) g_spots[object] = {x, y};
+    }
+}
+
+void WriteSpots() {
+    const std::wstring path = character::WorldNoteFile(kSpotsFile);
+    if (path.empty()) return;
+    std::ostringstream out;
+    for (const auto& [object, spot] : g_spots) out << object << ' ' << spot.first << ' ' << spot.second << '\n';
+    const std::string text = out.str();
+    files::WriteAtomic(std::filesystem::path(path), reinterpret_cast<const uint8_t*>(text.data()), text.size());
+}
+
+// Host (or alone), in the world: where each such piece stands, noted while it is there - a save solved before this
+// build has nothing to note (then the reset goes by the reward chest or the player).
+void NoteSpots(yyc::CInstance* localPlayer) {
+    // InWorld: rmGame only - a dungeon's objFrozenChest (the Crystal Cave's boss key) is not one of these.
+    if (IsGuest() || ++g_spotSteps % kSpotEverySteps != 0 || !InWorld(localPlayer)) return;
+    if (!g_spotsRead) ReadSpots();
+    bool changed = false;
+    for (const Respawn& r : kRespawns) {
+        if (yyc::CallReal(localPlayer, "instance_number", {double(r.object)}) < 1) continue;
+        const int id = static_cast<int>(yyc::CallReal(localPlayer, "instance_find", {double(r.object), 0}));
+        yyc::CInstance* piece = yyc::FindInstance(id);
+        if (piece == nullptr) continue;
+        const std::pair<double, double> spot{yyc::GetBuiltinReal(piece, yyc::va::YYVar_x),
+                                             yyc::GetBuiltinReal(piece, yyc::va::YYVar_y)};
+        const auto known = g_spots.find(r.object);
+        if (known != g_spots.end() && known->second == spot) continue;
+        g_spots[r.object] = spot;
+        changed = true;
+        Log("puzzles: puzzle %d's piece (object %d) noted at (%.0f, %.0f)", r.number, r.object, spot.first, spot.second);
+    }
+    if (changed) WriteSpots();
+}
+
+// Treasure chests within `reach` of (x, y): ids, nearest first.
+std::vector<int> ChestsNear(yyc::CInstance* self, double x, double y, double reach) {
+    std::vector<std::pair<double, int>> found;
+    for (int kind = kObjTreasureChest; kind <= kLastChest; ++kind) {
+        const int count = static_cast<int>(yyc::CallReal(self, "instance_number", {double(kind)}));
+        for (int i = 0; i < count; ++i) {
+            const int id = static_cast<int>(yyc::CallReal(self, "instance_find", {double(kind), double(i)}));
+            yyc::CInstance* chest = yyc::FindInstance(id);
+            if (chest == nullptr) continue;
+            const double d = std::hypot(yyc::GetBuiltinReal(chest, yyc::va::YYVar_x) - x,
+                                        yyc::GetBuiltinReal(chest, yyc::va::YYVar_y) - y);
+            if (d <= reach) found.push_back({d, id});
+        }
+    }
+    std::sort(found.begin(), found.end());
+    std::vector<int> ids;
+    for (const auto& f : found) ids.push_back(f.second);
+    return ids;
+}
+
+// The reward chests around a reset piece: each player removes its own, quietly (no loot; never sent, sync.cpp).
+int ClearChests(yyc::CInstance* self, double x, double y) {
+    const std::vector<int> ids = ChestsNear(self, x, y, kChestClear);
+    for (const int id : ids) yyc::CallReal(self, "instance_destroy", {double(id), 0});
+    return static_cast<int>(ids.size());
+}
+
+// Host (or alone): puzzle `r`'s piece made again - at its noted spot; else (a save solved before the spots were
+// noted) where the ice's reward chest lies near (fromX, fromY), the player who typed the reset; else on that player's
+// tile. Then the reward chests around it go, here and (told the spot) at the guests.
+void RespawnPiece(yyc::CInstance* self, const Respawn& r, double fromX, double fromY) {
+    sync::WakeThen(self, r.object, [self, r, fromX, fromY] {
+        if (!InWorld(self)) {
+            Log("puzzles: reset %d - the host is not in the world (a dungeon, a building): nothing made", r.number);
+            return;
+        }
+        if (yyc::CallReal(self, "instance_number", {double(r.object)}) > 0) {
+            Log("puzzles: reset %d - its piece (object %d) is still there: nothing to make", r.number, r.object);
+            return;
+        }
+        if (!g_spotsRead) ReadSpots();
+        double x = 0, y = 0;
+        const char* how = "its noted spot";
+        if (const auto known = g_spots.find(r.object); known != g_spots.end()) {
+            x = known->second.first;
+            y = known->second.second;
+        } else if (std::vector<int> chests; r.object == kObjFrozenChest && std::isfinite(fromX) &&
+                   !(chests = ChestsNear(self, fromX, fromY, kRewardReach)).empty()) {
+            yyc::CInstance* chest = yyc::FindInstance(chests.front());
+            x = yyc::GetBuiltinReal(chest, yyc::va::YYVar_x);
+            y = yyc::GetBuiltinReal(chest, yyc::va::YYVar_y);
+            how = "its reward chest";
+        } else if (std::isfinite(fromX) && std::isfinite(fromY)) {
+            x = std::round(fromX / kTile) * kTile;
+            y = std::round(fromY / kTile) * kTile;
+            how = "the player's tile (no spot noted)";
+        } else {
+            Log("puzzles: reset %d - no spot known for object %d", r.number, r.object);
+            return;
+        }
+        const int id = static_cast<int>(yyc::CallReal(self, "instance_create_depth", {x, y, -y, double(r.object)}));
+        const int cleared = ClearChests(self, x, y);
+        g_spots[r.object] = {x, y};
+        WriteSpots();
+        if (net::IsConnected()) {
+            const ResetMsg msg{r.number, static_cast<float>(x), static_cast<float>(y), 1};
+            net::Send(kPuzzleReset, &msg, sizeof(msg));
+        }
+        Log("puzzles: puzzle %d reset - object %d made again (id %d) at (%.0f, %.0f), %s; %d chest(s) cleared", r.number,
+            r.object, id, x, y, how, cleared);
+    });
+}
+
+}  // namespace
+
 void Tick(yyc::CInstance* localPlayer) {
     if (!g_guestRewards.empty()) RemoveGuestRewards(localPlayer);
+    NoteSpots(localPlayer);
     if (!net::IsConnected() || ++g_steps % kEverySteps != 0) return;
     SendChanges(localPlayer);
 }
@@ -419,9 +590,20 @@ void Tick(yyc::CInstance* localPlayer) {
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     if (message.type == kPuzzleReset) {
         int32_t number = 0;
+        ResetMsg msg{};
         if (message.payload.size() == sizeof(number)) {
             memcpy(&number, message.payload.data(), sizeof(number));
             ResetPuzzle(localPlayer, number, false);
+        } else if (message.payload.size() == sizeof(msg)) {
+            memcpy(&msg, message.payload.data(), sizeof(msg));
+            const Respawn* r = FindRespawn(msg.number);
+            if (r != nullptr && IsHost() && !msg.fromHost) {
+                RespawnPiece(localPlayer, *r, msg.x, msg.y);  // a guest's /puzzlereset: the host makes the piece
+            } else if (r != nullptr && IsGuest() && msg.fromHost && std::isfinite(msg.x) && std::isfinite(msg.y)) {
+                const int cleared = ClearChests(localPlayer, msg.x, msg.y);  // the piece itself comes as a new object
+                Log("puzzles: the host reset puzzle %d at (%.0f, %.0f); %d chest(s) cleared here", msg.number, msg.x,
+                    msg.y, cleared);
+            }
         }
         return true;
     }
@@ -480,6 +662,23 @@ void ResetPieces(yyc::CInstance* self, const PuzzleReset& reset) {
 }  // namespace
 
 bool ResetPuzzle(yyc::CInstance* self, int number, bool share) {
+    if (const Respawn* r = FindRespawn(number); r != nullptr && share) {  // typed here (a received one is Handle's)
+        const int playerId = static_cast<int>(yyc::CallReal(self, "instance_find", {double(yyc::obj::player), 0}));
+        yyc::CInstance* player = yyc::FindInstance(playerId);
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        const double px = player != nullptr ? yyc::GetBuiltinReal(player, yyc::va::YYVar_x) : nan;
+        const double py = player != nullptr ? yyc::GetBuiltinReal(player, yyc::va::YYVar_y) : nan;
+        if (IsGuest()) {
+            if (net::IsConnected()) {
+                const ResetMsg msg{number, static_cast<float>(px), static_cast<float>(py), 0};
+                net::Send(kPuzzleReset, &msg, sizeof(msg));
+            }
+            Log("puzzles: /puzzlereset %d asked of the host", number);
+        } else {
+            RespawnPiece(self, *r, px, py);
+        }
+        return true;
+    }
     for (const PuzzleReset& reset : kResets) {
         if (reset.number != number) continue;
         ResetPieces(self, reset);
@@ -513,6 +712,8 @@ void Reset() {
     g_guestRewards.clear();
     g_known.clear();
     g_steps = 0;
+    g_spotsRead = false;  // another world maybe: its own spots file
+    g_spotSteps = 0;
 }
 
 }  // namespace coop::puzzles

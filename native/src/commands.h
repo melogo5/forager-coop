@@ -1,6 +1,7 @@
 // Chat commands for testing the co-op, typed in the game's own chat (no cheats needed):
 //   /puzzlereset <n>  puts puzzle <n> back as it was, at every player (the numbers of the puzzle list, the wiki's
-//                     order: see puzzles.h ResetPuzzle)
+//                     order: see puzzles.h ResetPuzzle; 15 and 20 make the frozen chest's ice and the giant crystal
+//                     again)
 //   /chestremove      removes the treasure chest nearest to the player, at every player
 // The game's chat runs a command's script through script_execute; each command here borrows a script nothing in the
 // game ever calls (a third-party library's empty one), registered with the game's own CommandCreate.

@@ -39,7 +39,9 @@ void OnCreated(int createdId, int object);
 // /puzzlereset (commands.cpp): puts puzzle `number` (the puzzle list's numbering, the wiki's order) back as it was -
 // pieces empty and unsolved - here, and at every other player when `share`. False if there is no such puzzle or it
 // cannot be reset yet. The supported ones: 5 eye statue, 9 skull braziers, 11 gem sockets (colored pedestals),
-// 14 stone princess.
+// 14 stone princess; and two whose piece leaves the world when solved, made again by the host where it stood (noted in
+// saveDataN/coop_guests/coop_puzzle_spots.txt) with the reward chests around it removed: 15 frozen chest (the ice block),
+// 20 giant crystal (not one of the 19 puzzles: its island's feat).
 bool ResetPuzzle(yyc::CInstance* self, int number, bool share);
 
 // A new room: what was known about the last one's pieces goes.
