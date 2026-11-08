@@ -101,6 +101,11 @@ const std::vector<Kind> kKinds = {
     // a guest's solve makes the host's chest (EyeSolvedAtHost).
     {kObjEyeStatue, 0, Use::kOwn, false, {kSolved}, true},  // objEyeStatue
     {180, 0x00CD1410, Use::kAtHost, false, {kSlotImage, kUsable}},  // objComputerTerminal: E turns the symbol
+    // The skull island's three bells (puzzle 10): E rings one (its note, its sway) and the right order makes the chest
+    // right there, in the E. Each player rang their own: the one who finished got a chest of their own alone. Anyone's
+    // E rings every player's bell, as that player (kMirror): everyone hears the order and the host's chest is
+    // everyone's (the guest's own is removed: kRewardMakers).
+    {191, 0x00CF8D40, Use::kMirror, false, {}, true},  // objBell
     // The fire island's pillars (lights out, 16 of them): as objPushDownPillar below, `usable` is the animation's
     // (Step_0: usable from image_index), and its Other_7 at the animation's end sets `down`, checks the others and
     // makes the chest. Without the frame the guest's pillars never moved: the guest pressed one again and again.
@@ -127,7 +132,7 @@ const std::vector<Kind> kKinds = {
     // the others saw the fire go with no ice. A water bottle (UseBottledWater) only clears `onFire`: no ice is shown.
     {kObjTreasureChestSmall, 0, Use::kOwn, false, {kOnFire, kFreeze}, true},  // objTreasureChestSmall
 };
-constexpr size_t kHookCount = 12;  // kinds with an Other_11 hook, in kKinds order
+constexpr size_t kHookCount = 13;  // kinds with an Other_11 hook, in kKinds order
 
 #pragma pack(push, 1)
 // A piece is told by the sender's id of it, the host's id of it and its spot (Locate): world pieces have other ids
@@ -263,7 +268,8 @@ constexpr const char* kRewardMakers[] = {
     // the guest got its own besides the host's (playtest 2026-11-08). In a dungeon the block holds the boss key: no chest.
     "gml_Object_objFrozenChest_Step_2",
     "gml_Object_objReceptorBig_Step_0",  // the battery's four small chests and its big one
-    "gml_Object_objVolcanoPushDownPillar_Other_7"};  // the fire island's pillars, as their animation ends at the guest
+    "gml_Object_objVolcanoPushDownPillar_Other_7",
+    "gml_Object_objBell_Other_11"};  // the three bells' chest, made by the E that rings the last right note  // the fire island's pillars, as their animation ends at the guest
 constexpr const char* kIceMaker = "gml_Object_objFrozenChest_Step_2";  // sets the chest it makes `grounded`
 constexpr int kSlotGrounded = 0x54D;  // a chest done falling (var_slots.tsv)
 constexpr double kSameSpotIce = 24;
@@ -441,7 +447,7 @@ template <size_t... N>
 struct HookTable {
     static constexpr yyc::EventFn kHooks[] = {&InteractHook<N>...};
 };
-using Hooks = HookTable<0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11>;
+using Hooks = HookTable<0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12>;
 static_assert(sizeof(Hooks::kHooks) / sizeof(Hooks::kHooks[0]) == kHookCount, "one hook per hooked kind");
 
 }  // namespace
