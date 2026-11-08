@@ -66,6 +66,10 @@ const std::vector<Kind> kKinds = {
     // socket has to hold its gem. Not shared in the world, each player saw only their own gems and the puzzle never
     // came out for either (its Step_0 checks every socket's `solved`); `socket` is the gem drawn in it.
     {188, 0x00CF1090, Use::kOwn, false, {kSocket, kSolved, kNumber, kUsable}, true},  // objGemSocketPillar
+    // The sleeping princess (a stone statue): the same socket as a gem's - a player puts in a flower of their own and
+    // her Step_0 wakes her when `socket` is the cinderbloom (item 18), then makes the reward chest. Not shared, each
+    // player saw only their own flower and got a chest of their own (a guest's was the guest's alone).
+    {177, 0x00CC3060, Use::kOwn, false, {kSocket, kSolved, kUsable}, true},  // objSleepingStatue
     {180, 0x00CD1410, Use::kAtHost, false, {kSlotImage, kUsable}},  // objComputerTerminal: E turns the symbol
     {182, 0x00CE0920, Use::kAtHost, false, {kDown, kSolved, kUsable}},  // objVolcanoPushDownPillar
     // objPushDownPillar is down when its animation is (Step_0: usable = image_index == 0): its frame goes along - sent
@@ -83,7 +87,7 @@ const std::vector<Kind> kKinds = {
     {209, 0, Use::kOwn, false, {kFreeze, kMeltTo, kBurn, kFrozen}},     // objDungeonDoor (a frozen one)
     {153, 0, Use::kOwn, false, {kFreeze, kBurn}},                       // objTreasureChestSmallFrozen
 };
-constexpr size_t kHookCount = 11;  // kinds with an Other_11 hook, in kKinds order
+constexpr size_t kHookCount = 12;  // kinds with an Other_11 hook, in kKinds order
 
 #pragma pack(push, 1)
 // A piece is told by the sender's id of it, the host's id of it and its spot (Locate): world pieces have other ids
@@ -205,7 +209,8 @@ bool SharedHere(const Kind& kind, bool inWorld) { return !inWorld || kind.use ==
 // A puzzle's reward chest: made by the host's puzzle only (it reaches the guests as any new world object). A guest's
 // copy of the puzzle comes out too, now that it sees every piece: the chest it makes there would be a second one.
 constexpr int kObjTreasureChest = 150, kObjTreasureChestSmall = 151;
-constexpr const char* kRewardMakers[] = {"gml_Object_objGemSocketPillar_Step_0", "gml_Object_objSkullBrazier_Other_11"};
+constexpr const char* kRewardMakers[] = {"gml_Object_objGemSocketPillar_Step_0", "gml_Object_objSkullBrazier_Other_11",
+                                         "gml_Object_objSleepingStatue_Step_0"};
 std::vector<int> g_guestRewards;  // guest: such chests, removed at the next step (the code making one still uses it)
 
 void RemoveGuestRewards(yyc::CInstance* self) {
@@ -353,7 +358,7 @@ template <size_t... N>
 struct HookTable {
     static constexpr yyc::EventFn kHooks[] = {&InteractHook<N>...};
 };
-using Hooks = HookTable<0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10>;
+using Hooks = HookTable<0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11>;
 static_assert(sizeof(Hooks::kHooks) / sizeof(Hooks::kHooks[0]) == kHookCount, "one hook per hooked kind");
 
 }  // namespace
