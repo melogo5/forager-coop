@@ -110,8 +110,10 @@ const std::vector<Kind> kKinds = {
     {153, 0, Use::kOwn, false, {kFreeze, kBurn}},                       // objTreasureChestSmallFrozen
     // The fire island's burning chests (puzzle 18): a small chest can't be opened while `onFire`; water or cold puts it
     // out. Each player put out only their own: the host's chests still burned at the guest, so the host's opening (sent
-    // by chests.cpp) could not open the guest's. Put out by anyone, out at everyone.
-    {kObjTreasureChestSmall, 0, Use::kOwn, false, {kOnFire}, true},  // objTreasureChestSmall
+    // by chests.cpp) could not open the guest's. Put out by anyone, out at everyone. Its `freeze` goes too: an ice
+    // rod's hit freezes the chest (drawn over it, melting away in its Step_0), and that ice is what put the fire out -
+    // the others saw the fire go with no ice. A water bottle (UseBottledWater) only clears `onFire`: no ice is shown.
+    {kObjTreasureChestSmall, 0, Use::kOwn, false, {kOnFire, kFreeze}, true},  // objTreasureChestSmall
 };
 constexpr size_t kHookCount = 12;  // kinds with an Other_11 hook, in kKinds order
 
