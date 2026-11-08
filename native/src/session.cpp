@@ -49,6 +49,7 @@
 #include "skilltab.h"
 #include "displays.h"
 #include "shots.h"
+#include "signs.h"
 #include "stations.h"
 #include "steam.h"
 #include "storage.h"
@@ -403,7 +404,7 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             banks::Handle(message, localPlayer) || reconcile::Handle(message, localPlayer) || chests::Handle(message, localPlayer) ||
             familiars::Handle(message) || bombs::Handle(message, localPlayer) ||
             puzzles::Handle(message, localPlayer) || commands::Handle(message, localPlayer) ||
-            displays::Handle(message, localPlayer) ||
+            displays::Handle(message, localPlayer) || signs::Handle(message, localPlayer) ||
             shots::Handle(message, localPlayer)) {
             continue;
         }
@@ -721,6 +722,7 @@ void Tick(yyc::CInstance* localPlayer) {
             puzzles::Reset();
             commands::Reset();
             displays::Reset();
+            signs::Reset();
         }
         g_lastSharedRoom = room;
         dungeons::OnRoomEntered(localPlayer, room);
@@ -753,6 +755,7 @@ void Tick(yyc::CInstance* localPlayer) {
     if (g_role == Role::kGuest) coins::GuestTick(localPlayer);
     progress::Tick(localPlayer);
     displays::Tick(localPlayer);
+    signs::Tick(localPlayer, g_role == Role::kHost);
     shots::Tick();
     quests::Tick(localPlayer);
     stations::Tick(localPlayer, g_role == Role::kGuest);
@@ -874,6 +877,7 @@ void Leave() {
     familiars::Reset();
     bombs::Reset();
     shots::Reset();
+    signs::Reset();
     dungeons::Reset();
     puzzles::Reset();
     commands::Reset();
