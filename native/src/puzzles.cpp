@@ -62,12 +62,20 @@ struct Kind {
     bool moves;  // its place is the host's too (pushed cubes)
     std::vector<int> slots;
     bool inWorld = false;  // a kOwn piece shared in the world as well (see SharedHere)
+    // In the world, slots of a host-only piece that a guest sends too (and the host takes): what the guest's own player
+    // did to it there, which the host's piece then plays out itself (its own solve, its own reward).
+    std::vector<int> worldGuestSlots = {};
 };
 
 const std::vector<Kind> kKinds = {
     {193, 0x00D08D00, Use::kAtHost, true, {kElectrified}},                      // objElectricCube
     {194, 0, Use::kNone, false, {kElectrified}},                                 // objReceptor
-    {175, 0, Use::kNone, false, {kElectrified, kSolved}},                        // objReceptorBig
+    // The desert's battery (puzzle 4) is one too: charged by a thunder rod's bolt, a thunder potion's buff next to it or
+    // a watcher's beam - each at the player who did it, so each player charged their own and got their own chests. In
+    // the world a guest's charge goes to the host as well, whose battery then solves and makes the chests (the
+    // guest's own are removed: kRewardMakers). `solved` stays the host's: sent ahead it would keep the host's from
+    // making them, as with the gems.
+    {175, 0, Use::kNone, false, {kElectrified, kSolved}, true, {kElectrified}},  // objReceptorBig
     {200, 0x00D1F4D0, Use::kAtHost, false, {kFacing, kAngleTo, kReflectLaser}},  // objMirror
     {181, 0x00CDAFC0, Use::kAtHost, false, {kSlotImage, kUsable}},  // objRunicPillar: its rune (colour, glow: animated)
     {205, 0x00D2EEF0, Use::kAtHost, false, {kSolved}},                           // objFireTempleBrazier
@@ -249,7 +257,8 @@ constexpr const char* kRewardMakers[] = {
     "gml_Object_objArrow_Collision_d53d5ff2_a0e8_46f2_993b_4e04e7d92f52",
     // The frozen chest island's ice (puzzle 15) melts at every player now; each block makes its chest as it goes, and
     // the guest got its own besides the host's (playtest 2026-11-08). In a dungeon the block holds the boss key: no chest.
-    "gml_Object_objFrozenChest_Step_2"};
+    "gml_Object_objFrozenChest_Step_2",
+    "gml_Object_objReceptorBig_Step_0"};  // the battery's four small chests and its big one
 constexpr const char* kIceMaker = "gml_Object_objFrozenChest_Step_2";  // sets the chest it makes `grounded`
 constexpr int kSlotGrounded = 0x54D;  // a chest done falling (var_slots.tsv)
 constexpr double kSameSpotIce = 24;
@@ -324,11 +333,12 @@ void SendChanges(yyc::CInstance* self) {
     if (IsHost()) AddPuzzleFlags(self, changes);
     const bool inWorld = InWorld(self);
     for (const Kind& kind : kKinds) {
-        if (!Sends(kind) || !SharedHere(kind, inWorld)) continue;
+        const bool guestInWorld = !Sends(kind) && IsGuest() && inWorld && !kind.worldGuestSlots.empty();
+        if ((!Sends(kind) && !guestInWorld) || !SharedHere(kind, inWorld)) continue;
         const int count = static_cast<int>(yyc::CallReal(self, "instance_number", {double(kind.object)}));
         for (int i = 0; i < count && changes.size() < kMaxEntries; ++i) {
             const int id = static_cast<int>(yyc::CallReal(self, "instance_find", {double(kind.object), double(i)}));
-            std::vector<int> slots = kind.slots;
+            std::vector<int> slots = guestInWorld ? kind.worldGuestSlots : kind.slots;
             if (kind.moves && IsHost()) {
                 slots.push_back(kSlotX);
                 slots.push_back(kSlotY);
@@ -360,7 +370,9 @@ void ApplyState(const net::Message& message, yyc::CInstance* localPlayer) {
         }
         const Kind* kind = KindOf(entry.object);
         if (kind == nullptr || !std::isfinite(entry.value) || !SharedHere(*kind, inWorld)) continue;
-        if (!IsGuest() && !FromAnyone(*kind)) continue;  // the host takes from a guest only what is its own too
+        const bool guestSlot = inWorld && std::find(kind->worldGuestSlots.begin(), kind->worldGuestSlots.end(),
+                                                    entry.slot) != kind->worldGuestSlots.end();
+        if (!IsGuest() && !FromAnyone(*kind) && !guestSlot) continue;  // the host takes from a guest only what is its own too
         const int piece = LocalPiece(localPlayer, entry.id, entry.hostId, entry.object, entry.x, entry.y);
         if (piece == 0) continue;
         float before = 0;
