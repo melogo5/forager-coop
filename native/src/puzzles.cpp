@@ -242,6 +242,15 @@ constexpr const char* kRewardMakers[] = {
     // The frozen chest island's ice (puzzle 15) melts at every player now; each block makes its chest as it goes, and
     // the guest got its own besides the host's (playtest 2026-11-08). In a dungeon the block holds the boss key: no chest.
     "gml_Object_objFrozenChest_Step_2"};
+constexpr const char* kIceMaker = "gml_Object_objFrozenChest_Step_2";  // sets the chest it makes `grounded`
+constexpr int kSlotGrounded = 0x54D;  // a chest done falling (var_slots.tsv)
+constexpr double kSameSpotIce = 24;
+constexpr DWORD kMeltSpotMs = 60000;
+struct MeltSpot {
+    double x, y;
+    DWORD tick;
+};
+std::vector<MeltSpot> g_meltSpots;  // guest: where its own ice made a chest lately (the host's replica comes there)
 
 // Host: a guest's arrow solved eye statue `id`: the chest the guest's arrow made there is made here, as objArrow's
 // collision does - instance_create_depth(x, y + 32, depth, objTreasureChest) - and reaches every player.
@@ -701,6 +710,38 @@ void OnCreated(int createdId, int object) {
     for (const char* maker : kRewardMakers) {
         if (strcmp(top->name, maker) == 0) g_guestRewards.push_back(createdId);
     }
+    if (strcmp(top->name, kIceMaker) == 0) {  // where the host's replica of this chest comes: on the ground there
+        if (yyc::CInstance* chest = yyc::FindInstance(createdId)) {
+            g_meltSpots.push_back({yyc::GetBuiltinReal(chest, yyc::va::YYVar_x), yyc::GetBuiltinReal(chest, yyc::va::YYVar_y),
+                                   GetTickCount()});
+        }
+    }
+}
+
+void OnReplicaCreated(yyc::CInstance* self, int id, int object) {
+    if (!IsGuest() || object < kObjTreasureChest || object > kLastChest) return;
+    yyc::CInstance* chest = yyc::FindInstance(id);
+    if (chest == nullptr) return;
+    const double x = yyc::GetBuiltinReal(chest, yyc::va::YYVar_x), y = yyc::GetBuiltinReal(chest, yyc::va::YYVar_y);
+    const DWORD now = GetTickCount();
+    g_meltSpots.erase(std::remove_if(g_meltSpots.begin(), g_meltSpots.end(),
+                                     [now](const MeltSpot& m) { return now - m.tick > kMeltSpotMs; }),
+                      g_meltSpots.end());
+    // Here the ice either melted already (its chest noted above) or is still melting (the host's went first).
+    bool fromIce = std::any_of(g_meltSpots.begin(), g_meltSpots.end(),
+                               [x, y](const MeltSpot& m) { return std::hypot(m.x - x, m.y - y) <= kSameSpotIce; });
+    const int blocks = static_cast<int>(yyc::CallReal(self, "instance_number", {double(kObjFrozenChest)}));
+    for (int i = 0; i < blocks && !fromIce; ++i) {
+        const int block = static_cast<int>(yyc::CallReal(self, "instance_find", {double(kObjFrozenChest), double(i)}));
+        if (yyc::CInstance* ice = yyc::FindInstance(block)) {
+            fromIce = std::hypot(yyc::GetBuiltinReal(ice, yyc::va::YYVar_x) - x,
+                                 yyc::GetBuiltinReal(ice, yyc::va::YYVar_y) - y) <= kSameSpotIce;
+        }
+    }
+    if (!fromIce) return;
+    yyc::RValue grounded = yyc::Real(1);
+    yyc::SetVar(id, kSlotGrounded, &grounded);
+    Log("puzzles: the host's frozen chest reward %d at (%.0f, %.0f) made on the ground here", id, x, y);
 }
 
 void OnDestroyed(int id, int object) {

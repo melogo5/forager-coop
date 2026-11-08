@@ -36,6 +36,10 @@ void OnDestroyed(int id, int object);
 // From the instance_create hook, while connected: a guest's puzzle reward chest (the host's reaches it) is removed.
 void OnCreated(int createdId, int object);
 
+// Guest, from sync.cpp: a replica of the host's object `object` was just made here as `id`. The ice's reward chest is
+// made already `grounded` at the host (objFrozenChest's Step_2): its replica would play the whole fall; so is it here.
+void OnReplicaCreated(yyc::CInstance* self, int id, int object);
+
 // /puzzlereset (commands.cpp): puts puzzle `number` (the puzzle list's numbering, the wiki's order) back as it was -
 // pieces empty and unsolved - here, and at every other player when `share`. False if there is no such puzzle or it
 // cannot be reset yet. The supported ones: 5 eye statue, 9 skull braziers, 11 gem sockets (colored pedestals),
