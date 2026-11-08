@@ -25,6 +25,7 @@ constexpr uint8_t kPuzzleState = 45;  // either way: StateEntry list, what piece
 constexpr uint8_t kPuzzleUse = 46;    // guest -> host: UseMsg, the guest's E on a piece
 constexpr uint8_t kPuzzleMirror = 104;  // either way (the host passes it on): UseMsg, an E done by everyone
 constexpr uint8_t kPuzzleReset = 105;   // either way (the host passes it on): int32 puzzle number, /puzzlereset
+constexpr uint8_t kPuzzleDig = 111;     // either way (the host passes it on): DigMsg, a puzzle dig spot dug here
 constexpr unsigned kEverySteps = 6;   // 10 looks a second
 constexpr int kSlotX = -1, kSlotY = -2;  // StateEntry.slot for the position
 constexpr int kSlotImage = -3;           // ... for image_index (a terminal's symbol)
@@ -441,6 +442,73 @@ static_assert(sizeof(Hooks::kHooks) / sizeof(Hooks::kHooks[0]) == kHookCount, "o
 
 }  // namespace
 
+namespace {
+
+// Puzzle 6, "where flowers don't live": four objDigSpot with `puzzle` set; digging one destroys it, and the last one's
+// Destroy_0 makes the chest. Dig spots are no world objects (no parent): each player's stayed theirs - the digger's
+// were gone and only the digger got a chest. A puzzle spot dug here is told to the others: the host's goes through its
+// own Destroy_0 (the last one makes the chest, which reaches everyone), a guest's quietly (its chest would be a second).
+constexpr uint32_t kDigSpotDestroy = 0x00C8EA90;  // gml_Object_objDigSpot_Destroy_0
+constexpr int kObjDigSpot = 162;
+constexpr int kSlotPuzzleSpot = 0x736;  // objDigSpot.puzzle (the same slot number as global.puzzle)
+constexpr double kDigSameSpot = 8;
+#pragma pack(push, 1)
+struct DigMsg {
+    float x, y;
+};
+#pragma pack(pop)
+yyc::EventFn g_origDigDestroy = nullptr;
+int g_applyingDig = 0;        // destroying a spot another player dug: not news to send back
+bool g_puzzleDigHere = false;  // inside a puzzle spot's Destroy_0 (a guest's chest made there is not the reward)
+
+bool IsPuzzleSpot(int id) {
+    float puzzle = 0;
+    return ReadNumber(id, kSlotPuzzleSpot, &puzzle) && puzzle != 0;
+}
+
+void __cdecl DigDestroyHook(yyc::CInstance* self, yyc::CInstance* other) {
+    const int id = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
+    const bool puzzleSpot = IsPuzzleSpot(id);
+    if (puzzleSpot && g_applyingDig == 0 && net::IsConnected()) {
+        const DigMsg msg{static_cast<float>(yyc::GetBuiltinReal(self, yyc::va::YYVar_x)),
+                         static_cast<float>(yyc::GetBuiltinReal(self, yyc::va::YYVar_y))};
+        net::Send(kPuzzleDig, &msg, sizeof(msg));
+        Log("puzzles: puzzle dig spot dug here at (%.0f, %.0f) - told the others", msg.x, msg.y);
+    }
+    const bool before = g_puzzleDigHere;
+    g_puzzleDigHere = puzzleSpot;
+    g_origDigDestroy(self, other);
+    g_puzzleDigHere = before;
+}
+
+// Another player dug the puzzle spot at (x, y): ours there goes too (asleep ones woken first).
+void ApplyDig(yyc::CInstance* self, float x, float y) {
+    sync::WakeThen(self, kObjDigSpot, [self, x, y] {
+        const int count = static_cast<int>(yyc::CallReal(self, "instance_number", {double(kObjDigSpot)}));
+        for (int i = 0; i < count; ++i) {
+            const int id = static_cast<int>(yyc::CallReal(self, "instance_find", {double(kObjDigSpot), double(i)}));
+            yyc::CInstance* spot = yyc::FindInstance(id);
+            if (spot == nullptr || !IsPuzzleSpot(id) ||
+                std::hypot(yyc::GetBuiltinReal(spot, yyc::va::YYVar_x) - x, yyc::GetBuiltinReal(spot, yyc::va::YYVar_y) - y) >
+                    kDigSameSpot) {
+                continue;
+            }
+            ++g_applyingDig;
+            if (IsHost()) {
+                yyc::CallReal(self, "instance_destroy", {double(id)});  // its Destroy_0: the last one makes the chest
+            } else {
+                yyc::CallReal(self, "instance_destroy", {double(id), 0});
+            }
+            --g_applyingDig;
+            Log("puzzles: the other player dug the puzzle spot at (%.0f, %.0f) - gone here too", x, y);
+            return;
+        }
+        Log("puzzles: the other player dug a puzzle spot at (%.0f, %.0f) - none here", x, y);
+    });
+}
+
+}  // namespace
+
 bool InstallHooks(bool (*isHost)(), bool (*isGuest)()) {
     g_isHost = isHost;
     g_isGuest = isGuest;
@@ -452,6 +520,8 @@ bool InstallHooks(bool (*isHost)(), bool (*isGuest)()) {
                            reinterpret_cast<void**>(&g_orig[n])) == MH_OK && ok;
         ++n;
     }
+    ok = MH_CreateHook(yyc::At<void*>(kDigSpotDestroy), reinterpret_cast<void*>(&DigDestroyHook),
+                       reinterpret_cast<void**>(&g_origDigDestroy)) == MH_OK && ok;
     if (!ok || n != kHookCount) Log("puzzles: hooks failed");
     return ok && n == kHookCount;
 }
@@ -730,6 +800,13 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
         ApplyState(message, localPlayer);
         return true;
     }
+    if (message.type == kPuzzleDig) {
+        DigMsg msg{};
+        if (message.payload.size() != sizeof(msg)) return true;
+        memcpy(&msg, message.payload.data(), sizeof(msg));
+        if (std::isfinite(msg.x) && std::isfinite(msg.y)) ApplyDig(localPlayer, msg.x, msg.y);
+        return true;
+    }
     if (message.type != kPuzzleUse && message.type != kPuzzleMirror) return false;
     UseMsg msg{};
     if (message.payload.size() != sizeof(msg)) return true;
@@ -819,6 +896,7 @@ void OnCreated(int createdId, int object) {
     for (const char* maker : kRewardMakers) {
         if (strcmp(top->name, maker) == 0) g_guestRewards.push_back(createdId);
     }
+    if (g_puzzleDigHere && g_applyingDig == 0) g_guestRewards.push_back(createdId);  // the host's last spot makes it
     if (strcmp(top->name, kIceMaker) == 0) {  // where the host's replica of this chest comes: on the ground there
         if (yyc::CInstance* chest = yyc::FindInstance(createdId)) {
             g_meltSpots.push_back({yyc::GetBuiltinReal(chest, yyc::va::YYVar_x), yyc::GetBuiltinReal(chest, yyc::va::YYVar_y),
