@@ -35,6 +35,7 @@
 #include "bombs.h"
 #include "dungeons.h"
 #include "puzzles.h"
+#include "commands.h"
 #include "familiars.h"
 #include "land.h"
 #include "mobs.h"
@@ -311,6 +312,8 @@ constexpr uint8_t kSharedTypes[] = {
     94,  // stations: craft state
     93,  // chests: a treasure chest opened
     104,  // puzzles: an E everyone does (the boss key)
+    105,  // puzzles: /puzzlereset
+    108,  // commands: /chestremove
 };
 
 // Types only the host sends. One from a guest is a broken or hostile peer: the host drops it (it obeyed before - a
@@ -399,7 +402,8 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             stations::Handle(message, localPlayer) || skills::Handle(message, localPlayer) || traps::Handle(message, localPlayer) ||
             banks::Handle(message, localPlayer) || reconcile::Handle(message, localPlayer) || chests::Handle(message, localPlayer) ||
             familiars::Handle(message) || bombs::Handle(message, localPlayer) ||
-            puzzles::Handle(message, localPlayer) || displays::Handle(message, localPlayer) ||
+            puzzles::Handle(message, localPlayer) || commands::Handle(message, localPlayer) ||
+            displays::Handle(message, localPlayer) ||
             shots::Handle(message, localPlayer)) {
             continue;
         }
@@ -715,6 +719,7 @@ void Tick(yyc::CInstance* localPlayer) {
             sync::Reset();
             reconcile::Reset();
             puzzles::Reset();
+            commands::Reset();
             displays::Reset();
         }
         g_lastSharedRoom = room;
@@ -732,6 +737,7 @@ void Tick(yyc::CInstance* localPlayer) {
     if (g_role == Role::kHost) SteamInvites(localPlayer);
     sync::Tick(localPlayer);
     dungeons::Tick(localPlayer);
+    commands::Tick(localPlayer);
     puzzles::Tick(localPlayer);  // a dungeon's pieces, and the world's (the desert's pillars to push down)
     storage::DebugTick(localPlayer);
     land::Tick(localPlayer);
@@ -870,6 +876,7 @@ void Leave() {
     shots::Reset();
     dungeons::Reset();
     puzzles::Reset();
+    commands::Reset();
     g_deferred.clear();
     g_lastSharedRoom = -1;
     world::Reset();
@@ -923,7 +930,7 @@ bool SessionInstall() {
     if (!sync::InstallHooks(isHost, isGuest) || !mobs::InstallHooks(isHost, isGuest) ||
         !character::InstallHooks(isGuest) || !storage::InstallHooks() || !land::InstallHooks(isHost, isGuest) ||
         !progress::InstallHooks() || !stations::InstallHooks() || !chests::InstallHooks(isHost) ||
-        !traps::InstallHooks(isHost, isGuest) || !bombs::InstallHooks() || !shots::InstallHooks() || !puzzles::InstallHooks(isHost, isGuest) || !banks::InstallHooks(isHost, isGuest) || !skills::InstallHooks()) {
+        !traps::InstallHooks(isHost, isGuest) || !bombs::InstallHooks() || !shots::InstallHooks() || !puzzles::InstallHooks(isHost, isGuest) || !commands::InstallHooks() || !banks::InstallHooks(isHost, isGuest) || !skills::InstallHooks()) {
         return false;
     }
     Role role = Role::kNone;

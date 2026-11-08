@@ -36,6 +36,12 @@ void OnDestroyed(int id, int object);
 // From the instance_create hook, while connected: a guest's puzzle reward chest (the host's reaches it) is removed.
 void OnCreated(int createdId, int object);
 
+// /puzzlereset (commands.cpp): puts puzzle `number` (the puzzle list's numbering, the wiki's order) back as it was -
+// pieces empty and unsolved - here, and at every other player when `share`. False if there is no such puzzle or it
+// cannot be reset yet. The supported ones: 5 eye statue, 9 skull braziers, 11 gem sockets (colored pedestals),
+// 14 stone princess.
+bool ResetPuzzle(yyc::CInstance* self, int number, bool share);
+
 // A new room: what was known about the last one's pieces goes.
 void Reset();
 

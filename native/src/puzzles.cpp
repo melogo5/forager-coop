@@ -18,6 +18,7 @@ namespace {
 constexpr uint8_t kPuzzleState = 45;  // either way: StateEntry list, what pieces are now (see kKinds: who sends)
 constexpr uint8_t kPuzzleUse = 46;    // guest -> host: UseMsg, the guest's E on a piece
 constexpr uint8_t kPuzzleMirror = 104;  // either way (the host passes it on): UseMsg, an E done by everyone
+constexpr uint8_t kPuzzleReset = 105;   // either way (the host passes it on): int32 puzzle number, /puzzlereset
 constexpr unsigned kEverySteps = 6;   // 10 looks a second
 constexpr int kSlotX = -1, kSlotY = -2;  // StateEntry.slot for the position
 constexpr int kSlotImage = -3;           // ... for image_index (a terminal's symbol)
@@ -416,6 +417,14 @@ void Tick(yyc::CInstance* localPlayer) {
 }
 
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
+    if (message.type == kPuzzleReset) {
+        int32_t number = 0;
+        if (message.payload.size() == sizeof(number)) {
+            memcpy(&number, message.payload.data(), sizeof(number));
+            ResetPuzzle(localPlayer, number, false);
+        }
+        return true;
+    }
     if (message.type == kPuzzleState) {
         ApplyState(message, localPlayer);
         return true;
@@ -433,6 +442,55 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
 }
 
 bool MeltsAtEachSide(int object) { return object == kObjFrozenChest; }
+
+namespace {
+
+// What each resettable puzzle's pieces go back to (the puzzle list's numbers: the wiki's order of the puzzles).
+struct ResetSlot {
+    int slot;
+    double value;
+};
+struct PuzzleReset {
+    int number;
+    int object;
+    std::vector<ResetSlot> slots;
+};
+const std::vector<PuzzleReset> kResets = {
+    {5, kObjEyeStatue, {{kSolved, 0}}},                                                  // eye statue
+    {9, 190, {{kSolved, 0}, {kSlotImage, 0}, {kSlotImageSpeed, 0}}},                      // skull braziers: unlit
+    {11, 188, {{kSocket, -4}, {kSolved, 0}, {kUsable, 1}}},                               // colored pedestals: no gem
+    {14, 177, {{kSocket, -4}, {kSolved, 0}, {kUsable, 1}}},                               // stone princess: no flower
+};
+
+// Every piece of the puzzle (asleep ones too: woken first, done right before the game culls again).
+void ResetPieces(yyc::CInstance* self, const PuzzleReset& reset) {
+    sync::WakeThen(self, reset.object, [self, reset] {
+        const int count = static_cast<int>(yyc::CallReal(self, "instance_number", {double(reset.object)}));
+        for (int i = 0; i < count; ++i) {
+            const int id = static_cast<int>(yyc::CallReal(self, "instance_find", {double(reset.object), double(i)}));
+            for (const ResetSlot& s : reset.slots) {
+                WriteNumber(id, s.slot, static_cast<float>(s.value));
+                g_known[std::make_pair(id, s.slot)] = static_cast<float>(s.value);  // not news: everyone resets
+            }
+        }
+        Log("puzzles: puzzle %d reset (%d pieces of object %d)", reset.number, count, reset.object);
+    });
+}
+
+}  // namespace
+
+bool ResetPuzzle(yyc::CInstance* self, int number, bool share) {
+    for (const PuzzleReset& reset : kResets) {
+        if (reset.number != number) continue;
+        ResetPieces(self, reset);
+        if (share && net::IsConnected()) {
+            const int32_t msg = number;
+            net::Send(kPuzzleReset, &msg, sizeof(msg));
+        }
+        return true;
+    }
+    return false;
+}
 
 void OnCreated(int createdId, int object) {
     if (!IsGuest() || !net::IsConnected() || (object != kObjTreasureChest && object != kObjTreasureChestSmall)) return;
