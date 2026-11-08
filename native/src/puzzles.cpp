@@ -48,6 +48,9 @@ constexpr int kObjFrozenChest = 178;
 constexpr int kObjTreasureChestSmall = 151;
 constexpr int kOnFire = 0x6B3;  // a small chest of the fire island burning (var_slots.tsv)
 constexpr int kObjEyeStatue = 174;
+constexpr int kObjBattery = 175;      // objReceptorBig
+constexpr int kHitByWatcher = 0x565;  // objReceptorBig.hitByWatcher: steps it stays charged by a watcher's beam
+constexpr float kGuestChargeSteps = 30;
 
 enum class Use : uint8_t {
     kNone,     // not interacted with (or nothing of ours happens on E)
@@ -73,9 +76,9 @@ const std::vector<Kind> kKinds = {
     {194, 0, Use::kNone, false, {kElectrified}},                                 // objReceptor
     // The desert's battery (puzzle 4) is one too: charged by a thunder rod's bolt, a thunder potion's buff next to it or
     // a watcher's beam - each at the player who did it, so each player charged their own and got their own chests. In
-    // the world a guest's charge goes to the host as well, whose battery then solves and makes the chests (the
-    // guest's own are removed: kRewardMakers). `solved` stays the host's: sent ahead it would keep the host's from
-    // making them, as with the gems.
+    // the world a guest's charge goes to the host as well, where it charges the battery as a watcher's beam would
+    // (ApplyState), so the host's battery solves and makes the chests (the guest's own are removed: kRewardMakers).
+    // `solved` stays the host's: sent ahead it would keep the host's from making them, as with the gems.
     {175, 0, Use::kNone, false, {kElectrified, kSolved}, true, {kElectrified}},  // objReceptorBig
     {200, 0x00D1F4D0, Use::kAtHost, false, {kFacing, kAngleTo, kReflectLaser}},  // objMirror
     {181, 0x00CDAFC0, Use::kAtHost, false, {kSlotImage, kUsable}},  // objRunicPillar: its rune (colour, glow: animated)
@@ -267,7 +270,8 @@ constexpr const char* kRewardMakers[] = {
     // The frozen chest island's ice (puzzle 15) melts at every player now; each block makes its chest as it goes, and
     // the guest got its own besides the host's (playtest 2026-11-08). In a dungeon the block holds the boss key: no chest.
     "gml_Object_objFrozenChest_Step_2",
-    "gml_Object_objReceptorBig_Step_0",  // the battery's four small chests and its big one
+    "gml_Object_objReceptorBig_Step_0",  // the battery's big chest
+    "gml_Object_objReceptorBig_Alarm_0",  // ... and its four small ones, one by one as its alarm goes off
     "gml_Object_objVolcanoPushDownPillar_Other_7",
     "gml_Object_objBell_Other_11"};  // the three bells' chest, made by the E that rings the last right note  // the fire island's pillars, as their animation ends at the guest
 constexpr const char* kIceMaker = "gml_Object_objFrozenChest_Step_2";  // sets the chest it makes `grounded`
@@ -389,6 +393,15 @@ void ApplyState(const net::Message& message, yyc::CInstance* localPlayer) {
         float before = 0;
         const bool solvedNow = IsHost() && entry.object == kObjEyeStatue && entry.slot == kSolved && entry.value != 0 &&
                                ReadNumber(piece, kSolved, &before) && before == 0;
+        if (IsHost() && guestSlot && entry.object == kObjBattery && entry.slot == kElectrified) {
+            // The battery works its charge out every step from what is around it here (a thunder potion's buff next
+            // to it, a bolt that just hit): a guest's charge written in was gone the next step. A watcher's beam keeps
+            // it charged for `hitByWatcher` steps: the guest's charge does that here, and the host's battery solves
+            // and makes the chests itself.
+            if (entry.value != 0) WriteNumber(piece, kHitByWatcher, kGuestChargeSteps);
+            g_known[std::make_pair(piece, static_cast<int>(entry.slot))] = entry.value;
+            continue;
+        }
         WriteNumber(piece, entry.slot, entry.value);
         if (solvedNow) EyeSolvedAtHost(localPlayer, piece);
         if (kind->moves && entry.slot == kSlotX) {  // the host moves it: no sliding of its own here
