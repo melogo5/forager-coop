@@ -313,6 +313,9 @@ constexpr uint8_t kSharedTypes[] = {
     94,  // stations: craft state
     93,  // chests: a treasure chest opened
     104,  // puzzles: an E everyone does (the boss key)
+    109,  // signs: a sign's text
+    110,  // shots: what an ice bolt froze
+    111,  // puzzles: a puzzle dig spot dug
 };
 
 // Types only the host sends. One from a guest is a broken or hostile peer: the host drops it (it obeyed before - a
