@@ -367,7 +367,12 @@ void SendChanges(yyc::CInstance* self) {
                 const auto key = std::make_pair(id, slot);
                 const auto known = g_known.find(key);
                 if (known != g_known.end() && known->second == value) continue;
+                const bool firstSeen = known == g_known.end();
                 g_known[key] = value;
+                // A guest tells what it changed, never what it first sees: a piece's first value here may be its own
+                // copy's, older than the host's (a small chest replicated with onFire 0 would put out the host's
+                // burning one; an eye statue's solved 0 would make the host's solvable again, for a second chest).
+                if (firstSeen && IsGuest()) continue;
                 changes.push_back(Entry(id, kind.object, slot, value));
             }
         }
