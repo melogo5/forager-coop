@@ -271,6 +271,14 @@ std::wstring GuestDataFile(const std::string& name, const char* extension) {
     return path.empty() ? std::wstring() : path.replace_extension(extension).wstring();
 }
 
+std::wstring WorldNoteFile(const char* name) {
+    const yyc::RValue* slot = yyc::GlobalVar(kSlotSaveFile);
+    const fs::path area = SaveArea();
+    if (area.empty() || slot == nullptr) return {};
+    const int slotNumber = static_cast<int>(yyc::ToReal(*slot));
+    return (area / (L"saveData" + std::to_wstring(slotNumber)) / kGuestsDir / fs::u8path(name)).wstring();
+}
+
 std::string SavedGuestName() {
     std::ifstream in(SaveArea() / kNameFile);
     std::string name;
