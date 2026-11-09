@@ -37,6 +37,7 @@ constexpr int kSocket = 0x7D0;
 // block makes what it holds (the boss key) and goes.
 constexpr int kFreeze = 0x443, kMeltTo = 0x63C, kBurn = 0xD7, kFrozen = 0x447;
 constexpr int kObjFrozenChest = 178;
+constexpr int kObjEyeStatue = 174;
 
 enum class Use : uint8_t {
     kNone,     // not interacted with (or nothing of ours happens on E)
@@ -64,8 +65,23 @@ const std::vector<Kind> kKinds = {
     {183, 0x00CE3C10, Use::kOwn, false, {kUsable}},  // objBloodAltar: E opens the boon choice - the guest's
     // The skull islands' gem puzzle (and the dungeons'): each player puts in gems of their own inventory, and every
     // socket has to hold its gem. Not shared in the world, each player saw only their own gems and the puzzle never
-    // came out for either (its Step_0 checks every socket's `solved`); `socket` is the gem drawn in it.
-    {188, 0x00CF1090, Use::kOwn, false, {kSocket, kSolved, kNumber, kUsable}, true},  // objGemSocketPillar
+    // came out for either; `socket` is the gem drawn in it. `solved` is not shared: a socket's Step_0 sets it when its
+    // `socket` turns into its `solveableItem`, and at that moment checks the others and makes the reward chest. Sent
+    // with the gem, a guest's last `solved` reached the host already set - the host's socket never turned solved
+    // itself and made no chest. Each side's Step_0 solves its sockets from the gems; the host's chest is everyone's.
+    {188, 0x00CF1090, Use::kOwn, false, {kSocket, kNumber, kUsable}, true},  // objGemSocketPillar
+    // The sleeping princess (a stone statue): the same socket as a gem's - a player puts in a flower of their own and
+    // her Step_0 wakes her when `socket` is the cinderbloom (item 18) and she is not `solved` yet, then makes the reward
+    // chest. Not shared, each player saw only their own flower and got a chest of their own (a guest's was the guest's
+    // alone). Only `socket` is shared: sent with it, a guest's `solved` reached the host first and the host's statue
+    // never made its chest - nobody got one. Each side's Step_0 wakes its statue from the flower; the host's chest is
+    // the one everybody gets.
+    {177, 0x00CC3060, Use::kOwn, false, {kSocket}, true},  // objSleepingStatue
+    // The eye statue: an arrow from the right side solves it (objArrow's collision with parObject sets `solved` and
+    // makes the reward chest right there). Only the shooter's statue was solved: a guest's chest was the guest's
+    // alone, and a guest could solve the host's already solved statue again for a second chest. `solved` is shared;
+    // a guest's solve makes the host's chest (EyeSolvedAtHost).
+    {kObjEyeStatue, 0, Use::kOwn, false, {kSolved}, true},  // objEyeStatue
     {180, 0x00CD1410, Use::kAtHost, false, {kSlotImage, kUsable}},  // objComputerTerminal: E turns the symbol
     {182, 0x00CE0920, Use::kAtHost, false, {kDown, kSolved, kUsable}},  // objVolcanoPushDownPillar
     // objPushDownPillar is down when its animation is (Step_0: usable = image_index == 0): its frame goes along - sent
@@ -83,7 +99,7 @@ const std::vector<Kind> kKinds = {
     {209, 0, Use::kOwn, false, {kFreeze, kMeltTo, kBurn, kFrozen}},     // objDungeonDoor (a frozen one)
     {153, 0, Use::kOwn, false, {kFreeze, kBurn}},                       // objTreasureChestSmallFrozen
 };
-constexpr size_t kHookCount = 11;  // kinds with an Other_11 hook, in kKinds order
+constexpr size_t kHookCount = 12;  // kinds with an Other_11 hook, in kKinds order
 
 #pragma pack(push, 1)
 // A piece is told by the sender's id of it, the host's id of it and its spot (Locate): world pieces have other ids
@@ -205,7 +221,23 @@ bool SharedHere(const Kind& kind, bool inWorld) { return !inWorld || kind.use ==
 // A puzzle's reward chest: made by the host's puzzle only (it reaches the guests as any new world object). A guest's
 // copy of the puzzle comes out too, now that it sees every piece: the chest it makes there would be a second one.
 constexpr int kObjTreasureChest = 150, kObjTreasureChestSmall = 151;
-constexpr const char* kRewardMakers[] = {"gml_Object_objGemSocketPillar_Step_0", "gml_Object_objSkullBrazier_Other_11"};
+constexpr const char* kRewardMakers[] = {
+    "gml_Object_objGemSocketPillar_Step_0", "gml_Object_objSkullBrazier_Other_11", "gml_Object_objSleepingStatue_Step_0",
+    // its only chest is the eye statue's (its collision with every other parObject makes none)
+    "gml_Object_objArrow_Collision_d53d5ff2_a0e8_46f2_993b_4e04e7d92f52"};
+
+// Host: a guest's arrow solved eye statue `id`: the chest the guest's arrow made there is made here, as objArrow's
+// collision does - instance_create_depth(x, y + 32, depth, objTreasureChest) - and reaches every player.
+void EyeSolvedAtHost(yyc::CInstance* self, int id) {
+    yyc::CInstance* statue = yyc::FindInstance(id);
+    if (statue == nullptr) return;
+    constexpr double kChestBelow = 32;
+    const double x = yyc::GetBuiltinReal(statue, yyc::va::YYVar_x);
+    const double y = yyc::GetBuiltinReal(statue, yyc::va::YYVar_y) + kChestBelow;
+    const double depth = yyc::GetBuiltinReal(statue, yyc::va::YYVar_depth);
+    yyc::CallReal(self, "instance_create_depth", {x, y, depth, double(kObjTreasureChest)});
+    Log("puzzles: a guest's arrow solved eye statue %d - its chest made here", id);
+}
 std::vector<int> g_guestRewards;  // guest: such chests, removed at the next step (the code making one still uses it)
 
 void RemoveGuestRewards(yyc::CInstance* self) {
@@ -296,7 +328,11 @@ void ApplyState(const net::Message& message, yyc::CInstance* localPlayer) {
         if (!IsGuest() && !FromAnyone(*kind)) continue;  // the host takes from a guest only what is its own too
         const int piece = LocalPiece(localPlayer, entry.id, entry.hostId, entry.object, entry.x, entry.y);
         if (piece == 0) continue;
+        float before = 0;
+        const bool solvedNow = IsHost() && entry.object == kObjEyeStatue && entry.slot == kSolved && entry.value != 0 &&
+                               ReadNumber(piece, kSolved, &before) && before == 0;
         WriteNumber(piece, entry.slot, entry.value);
+        if (solvedNow) EyeSolvedAtHost(localPlayer, piece);
         if (kind->moves && entry.slot == kSlotX) {  // the host moves it: no sliding of its own here
             WriteNumber(piece, kH, 0);
             WriteNumber(piece, kV, 0);
@@ -353,7 +389,7 @@ template <size_t... N>
 struct HookTable {
     static constexpr yyc::EventFn kHooks[] = {&InteractHook<N>...};
 };
-using Hooks = HookTable<0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10>;
+using Hooks = HookTable<0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11>;
 static_assert(sizeof(Hooks::kHooks) / sizeof(Hooks::kHooks[0]) == kHookCount, "one hook per hooked kind");
 
 }  // namespace
