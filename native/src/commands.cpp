@@ -14,15 +14,16 @@ namespace {
 
 constexpr uint8_t kChestRemove = 108;  // either way (the host passes it on): ChestMsg, a chest removed with /chestremove
 
-// decompiled/code/index.tsv and the script table (index = entry position): CommandCreate(name, cheat, ScriptWrap(script),
-// help...) is how ForagerCommandsInit registers /give; ScriptWrap(index) makes the script value it takes.
+// decompiled/code/index.tsv and data.win's SCPT list (a script's index = its place there): CommandCreate(name, cheat,
+// ScriptWrap(script), help...) is how ForagerCommandsInit registers /give; ScriptWrap(index) makes the script value it takes.
 constexpr uint32_t kScriptCommandCreate = 0x0087BD70;
 constexpr uint32_t kScriptScriptWrap = 0x006929B0;
-// Scripts no game code calls (only the script table lists them): the commands' scripts.
+// Scripts no game code calls (only the script table lists them): the commands' scripts. The index is the script's
+// place in data.win's SCPT list, what ScriptWrap takes (ForagerCommandsInit wraps __CommandGive as 878, its SCPT place).
 constexpr uint32_t kPuzzleResetScript = 0x0084B830;  // rousr_dissonance_dummy_function
 constexpr double kPuzzleResetIndex = 825;
 constexpr uint32_t kChestRemoveScript = 0x010B7990;  // imguigml_dummy
-constexpr double kChestRemoveIndex = 3266;
+constexpr double kChestRemoveIndex = 962;  // was 3266, past the table's end (2249 scripts): /chestremove never ran
 constexpr int kSlotChatCommands = 0xFC;  // global.chatCommands: the ds_map CommandCreate fills
 
 constexpr int kFirstChest = 150, kLastChest = 153;  // objTreasureChest .. objTreasureChestSmallFrozen
