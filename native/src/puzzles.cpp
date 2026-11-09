@@ -410,6 +410,10 @@ void ApplyState(const net::Message& message, yyc::CInstance* localPlayer) {
             g_known[std::make_pair(piece, static_cast<int>(entry.slot))] = entry.value;
             continue;
         }
+        if (IsHost() && entry.object == kObjEyeStatue && entry.slot == kSolved && entry.value == 0 &&
+            ReadNumber(piece, kSolved, &before) && before != 0) {
+            continue;  // solved stays solved: a guest's 0 is its copy not caught up yet (only /puzzlereset 5 undoes it)
+        }
         WriteNumber(piece, entry.slot, entry.value);
         if (solvedNow) EyeSolvedAtHost(localPlayer, piece);
         if (kind->moves && entry.slot == kSlotX) {  // the host moves it: no sliding of its own here
