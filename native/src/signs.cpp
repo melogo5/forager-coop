@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -11,6 +12,7 @@
 #include <iterator>
 #include <map>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -112,14 +114,14 @@ bool ReadJsonString(const std::string& text, size_t* at, std::string* out) {
     return false;
 }
 
-// Normalized text -> key, from every language's file; read once.
-const std::unordered_map<std::string, std::string>& TextKeys() {
-    static std::unordered_map<std::string, std::string> keys;
-    static bool read = false;
-    if (read) return keys;
-    read = true;
+// Normalized text -> key, from every language's file. Read once on a thread of its own (a few MB of json: a hitch on
+// the game thread); the signs wait for it (Tick) and are written in nothing else meanwhile.
+std::unordered_map<std::string, std::string> g_keys;
+std::atomic<bool> g_keysReady{false};
+
+void ReadTextKeys(std::unordered_map<std::string, std::string>& keys) {
     wchar_t exe[MAX_PATH] = {};
-    if (GetModuleFileNameW(nullptr, exe, MAX_PATH) == 0) return keys;
+    if (GetModuleFileNameW(nullptr, exe, MAX_PATH) == 0) return;
     std::error_code error;
     const std::filesystem::path folder = std::filesystem::path(exe).parent_path() / L"local";
     for (const auto& entry : std::filesystem::directory_iterator(folder, error)) {
@@ -144,13 +146,24 @@ const std::unordered_map<std::string, std::string>& TextKeys() {
         }
     }
     Log("signs: %zu of the game's texts known (every language)", keys.size());
-    return keys;
+}
+
+// Starts reading the texts (once); true when they are read.
+bool TextKeysReady() {
+    static bool started = false;
+    if (!started) {
+        started = true;
+        std::thread([] {
+            ReadTextKeys(g_keys);
+            g_keysReady.store(true, std::memory_order_release);
+        }).detach();
+    }
+    return g_keysReady.load(std::memory_order_acquire);
 }
 
 std::string KeyOf(const std::string& text) {
-    const auto& keys = TextKeys();
-    const auto found = keys.find(Normalized(text));
-    return found != keys.end() ? found->second : std::string();
+    const auto found = g_keys.find(Normalized(text));
+    return found != g_keys.end() ? found->second : std::string();
 }
 
 // The game's text for `key` in the language played here; empty if it has none.
@@ -210,7 +223,7 @@ void SendText(int id, yyc::CInstance* sign, const std::string& text, SignKind ki
 }  // namespace
 
 void Tick(yyc::CInstance* localPlayer, bool isHost) {
-    if (!net::IsConnected() || ++g_steps % kEverySteps != 0) return;
+    if (!net::IsConnected() || !TextKeysReady() || ++g_steps % kEverySteps != 0) return;
     const bool resend = isHost && g_steps % kResendEverySteps == 0;
     const int count = static_cast<int>(yyc::CallReal(localPlayer, "instance_number", {double(kObjSignpost)}));
     for (int i = 0; i < count; ++i) {
