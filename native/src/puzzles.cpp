@@ -275,8 +275,8 @@ constexpr const char* kRewardMakers[] = {
     "gml_Object_objFrozenChest_Step_2",
     "gml_Object_objReceptorBig_Step_0",  // the battery's big chest
     "gml_Object_objReceptorBig_Alarm_0",  // ... and its four small ones, one by one as its alarm goes off
-    "gml_Object_objVolcanoPushDownPillar_Other_7",
-    "gml_Object_objBell_Other_11"};  // the three bells' chest, made by the E that rings the last right note  // the fire island's pillars, as their animation ends at the guest
+    "gml_Object_objVolcanoPushDownPillar_Other_7",  // the fire island's pillars, as their animation ends at the guest
+    "gml_Object_objBell_Other_11"};  // the three bells' chest, made by the E that rings the last right note
 constexpr const char* kIceMaker = "gml_Object_objFrozenChest_Step_2";  // sets the chest it makes `grounded`
 constexpr int kSlotGrounded = 0x54D;  // a chest done falling (var_slots.tsv)
 constexpr double kSameSpotIce = 24;
@@ -608,12 +608,12 @@ const Respawn* FindRespawn(int number) {
 void ReadSpots() {
     g_spotsRead = true;
     g_spots.clear();
+    g_fireSpots.clear();
     const std::wstring path = character::WorldNoteFile(kSpotsFile);
     if (path.empty()) return;
     std::ifstream in{std::filesystem::path(path)};
     int object = 0;
     double x = 0, y = 0;
-    g_fireSpots.clear();
     while (in >> object >> x >> y) {
         if (!std::isfinite(x) || !std::isfinite(y)) continue;
         if (object == kObjTreasureChestSmall) {
@@ -634,11 +634,11 @@ void WriteSpots() {
     files::WriteAtomic(std::filesystem::path(path), reinterpret_cast<const uint8_t*>(text.data()), text.size());
 }
 
-// Host (or alone), in the world: where each such piece stands, noted while it is there - a save solved before this
-// build has nothing to note (then the reset goes by the reward chest or the player).
+// Host, in the world: where each such piece stands, noted while it is there - a save solved before this build (or
+// alone) has nothing to note (then the reset goes by the reward chest or the player). Alone, no file is written.
 void NoteSpots(yyc::CInstance* localPlayer) {
     // InWorld: rmGame only - a dungeon's objFrozenChest (the Crystal Cave's boss key) is not one of these.
-    if (IsGuest() || ++g_spotSteps % kSpotEverySteps != 0 || !InWorld(localPlayer)) return;
+    if (!IsHost() || ++g_spotSteps % kSpotEverySteps != 0 || !InWorld(localPlayer)) return;
     if (!g_spotsRead) ReadSpots();
     bool changed = false;
     for (const Respawn& r : kRespawns) {
@@ -996,6 +996,8 @@ void Reset() {
     g_spotsRead = false;  // another world maybe: its own spots file
     g_madeHere.clear();
     g_spotSteps = 0;
+    g_meltSpots.clear();
+    g_fireRespawns.clear();
 }
 
 }  // namespace coop::puzzles
