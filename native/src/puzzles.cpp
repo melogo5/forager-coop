@@ -25,7 +25,7 @@ namespace {
 constexpr uint8_t kPuzzleState = 45;  // either way: StateEntry list, what pieces are now (see kKinds: who sends)
 constexpr uint8_t kPuzzleUse = 46;    // guest -> host: UseMsg, the guest's E on a piece
 constexpr uint8_t kPuzzleMirror = 104;  // either way (the host passes it on): UseMsg, an E done by everyone
-constexpr uint8_t kPuzzleReset = 105;   // either way (the host passes it on): int32 puzzle number, /puzzlereset
+constexpr uint8_t kPuzzleReset = 105;   // host only: the host's /puzzlereset - int32 puzzle number, or a ResetMsg
 constexpr uint8_t kPuzzleDig = 111;     // either way (the host passes it on): DigMsg, a puzzle dig spot dug here
 constexpr unsigned kEverySteps = 6;   // 10 looks a second
 constexpr int kSlotX = -1, kSlotY = -2;  // StateEntry.slot for the position
@@ -573,8 +573,7 @@ constexpr double kTile = 16;
 #pragma pack(push, 1)
 struct ResetMsg {
     int32_t number;
-    float x, y;        // to the host: where the player who typed it stands; from the host: the piece's spot
-    uint8_t fromHost;  // the host passes a guest's message on to the other guests: only the host's own one counts
+    float x, y;  // the piece's spot
 };
 #pragma pack(pop)
 
@@ -730,7 +729,7 @@ void RespawnPiece(yyc::CInstance* self, const Respawn& r, double fromX, double f
         g_spots[r.object] = {x, y};
         WriteSpots();
         if (net::IsConnected()) {
-            const ResetMsg msg{r.number, static_cast<float>(x), static_cast<float>(y), 1};
+            const ResetMsg msg{r.number, static_cast<float>(x), static_cast<float>(y)};
             net::Send(kPuzzleReset, &msg, sizeof(msg));
         }
         Log("puzzles: puzzle %d reset - object %d made again (id %d) at (%.0f, %.0f), %s; %d chest(s) cleared", r.number,
@@ -766,7 +765,7 @@ void ResetFireChests(yyc::CInstance* self, double fromX, double fromY) {
         }
         for (const auto& [x, y] : spots) {
             if (net::IsConnected()) {
-                const ResetMsg msg{kFireChests, static_cast<float>(x), static_cast<float>(y), 1};
+                const ResetMsg msg{kFireChests, static_cast<float>(x), static_cast<float>(y)};
                 net::Send(kPuzzleReset, &msg, sizeof(msg));
             }
             for (const int id : ChestsNear(self, x, y, kSameSpotIce)) yyc::CallReal(self, "instance_destroy", {double(id), 0});
@@ -801,9 +800,7 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
         } else if (message.payload.size() == sizeof(msg)) {
             memcpy(&msg, message.payload.data(), sizeof(msg));
             if (msg.number == kFireChests) {
-                if (IsHost() && !msg.fromHost) {
-                    ResetFireChests(localPlayer, msg.x, msg.y);
-                } else if (IsGuest() && msg.fromHost && std::isfinite(msg.x) && std::isfinite(msg.y)) {
+                if (IsGuest() && std::isfinite(msg.x) && std::isfinite(msg.y)) {
                     int gone = 0;
                     for (const int id : ChestsNear(localPlayer, msg.x, msg.y, kSameSpotIce)) {
                         yyc::CallReal(localPlayer, "instance_destroy", {double(id), 0});
@@ -815,9 +812,7 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
                 return true;
             }
             const Respawn* r = FindRespawn(msg.number);
-            if (r != nullptr && IsHost() && !msg.fromHost) {
-                RespawnPiece(localPlayer, *r, msg.x, msg.y);  // a guest's /puzzlereset: the host makes the piece
-            } else if (r != nullptr && IsGuest() && msg.fromHost && std::isfinite(msg.x) && std::isfinite(msg.y)) {
+            if (r != nullptr && IsGuest() && std::isfinite(msg.x) && std::isfinite(msg.y)) {
                 const int cleared = ClearChests(localPlayer, msg.x, msg.y);  // the piece itself comes as a new object
                 Log("puzzles: the host reset puzzle %d at (%.0f, %.0f); %d chest(s) cleared here", msg.number, msg.x,
                     msg.y, cleared);
@@ -887,19 +882,14 @@ void ResetPieces(yyc::CInstance* self, const PuzzleReset& reset) {
 }  // namespace
 
 bool ResetPuzzle(yyc::CInstance* self, int number, bool share) {
+    if (share && IsGuest()) return false;  // typed by a guest: the host's call only (commands.h)
     if ((FindRespawn(number) != nullptr || number == kFireChests) && share) {  // typed here (a received one is Handle's)
         const int playerId = static_cast<int>(yyc::CallReal(self, "instance_find", {double(yyc::obj::player), 0}));
         yyc::CInstance* player = yyc::FindInstance(playerId);
         const double nan = std::numeric_limits<double>::quiet_NaN();
         const double px = player != nullptr ? yyc::GetBuiltinReal(player, yyc::va::YYVar_x) : nan;
         const double py = player != nullptr ? yyc::GetBuiltinReal(player, yyc::va::YYVar_y) : nan;
-        if (IsGuest()) {
-            if (net::IsConnected()) {
-                const ResetMsg msg{number, static_cast<float>(px), static_cast<float>(py), 0};
-                net::Send(kPuzzleReset, &msg, sizeof(msg));
-            }
-            Log("puzzles: /puzzlereset %d asked of the host", number);
-        } else if (number == kFireChests) {
+        if (number == kFireChests) {
             ResetFireChests(self, px, py);
         } else {
             RespawnPiece(self, *FindRespawn(number), px, py);
@@ -909,14 +899,8 @@ bool ResetPuzzle(yyc::CInstance* self, int number, bool share) {
     if (number == kBellsPuzzle) {
         // The three bells keep where the player is in their order, and that it was done, in global.puzzle[3] (their
         // Other_11 reads ArrayIndex(global.puzzle, 3)): once done, ringing them makes no chest again. The host sets it
-        // back to 0 and sends it (AddPuzzleFlags); a guest asks the host.
-        if (IsGuest()) {
-            if (share && net::IsConnected()) {
-                const int32_t msg = number;
-                net::Send(kPuzzleReset, &msg, sizeof(msg));
-            }
-            return true;
-        }
+        // back to 0 and sends it (AddPuzzleFlags).
+        if (IsGuest()) return true;
         SetPuzzleFlag(self, kBellsFlag, 0);
         g_known.erase(std::make_pair(-1, kBellsFlag));  // news for the guests
         Log("puzzles: puzzle 10 reset - global.puzzle[%d] = 0", kBellsFlag);

@@ -313,8 +313,6 @@ constexpr uint8_t kSharedTypes[] = {
     94,  // stations: craft state
     93,  // chests: a treasure chest opened
     104,  // puzzles: an E everyone does (the boss key)
-    105,  // puzzles: /puzzlereset
-    108,  // commands: /chestremove
 };
 
 // Types only the host sends. One from a guest is a broken or hostile peer: the host drops it (it obeyed before - a
@@ -333,7 +331,9 @@ constexpr uint8_t kHostOnlyTypes[] = {
     96,                  // traps: what a trap holds (a guest asks with 101)
     97, 99, 100,         // chests: moved, keys so far, reward
     102,                 // banks: what a bank holds (a guest asks with 103)
+    105,                 // puzzles: /puzzlereset (the host's only: commands.h)
     106, 107,            // familiars: a guest's own, kept by the host; a player's own
+    108,                 // commands: /chestremove (the host's only)
 };
 
 bool FromGuestButHostOnly(const net::Message& message) {
@@ -934,7 +934,7 @@ bool SessionInstall() {
     if (!sync::InstallHooks(isHost, isGuest) || !mobs::InstallHooks(isHost, isGuest) ||
         !character::InstallHooks(isGuest) || !storage::InstallHooks() || !land::InstallHooks(isHost, isGuest) ||
         !progress::InstallHooks() || !stations::InstallHooks() || !chests::InstallHooks(isHost) ||
-        !traps::InstallHooks(isHost, isGuest) || !bombs::InstallHooks() || !shots::InstallHooks() || !puzzles::InstallHooks(isHost, isGuest) || !commands::InstallHooks() || !banks::InstallHooks(isHost, isGuest) || !skills::InstallHooks()) {
+        !traps::InstallHooks(isHost, isGuest) || !bombs::InstallHooks() || !shots::InstallHooks() || !puzzles::InstallHooks(isHost, isGuest) || !commands::InstallHooks(isGuest) || !banks::InstallHooks(isHost, isGuest) || !skills::InstallHooks()) {
         return false;
     }
     Role role = Role::kNone;

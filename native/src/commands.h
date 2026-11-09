@@ -1,8 +1,9 @@
-// Chat commands for testing the co-op, typed in the game's own chat (no cheats needed):
+// Chat commands for the host (or a player alone), typed in the game's own chat (no cheats needed); a guest's are
+// refused, since they make rewards again:
 //   /puzzlereset <n>  puts puzzle <n> back as it was, at every player (the numbers of the puzzle list, the wiki's
 //                     order: see puzzles.h ResetPuzzle; 15 and 20 make the frozen chest's ice and the giant crystal
 //                     again, 18 the fire island's four burning chests)
-//   /chestremove      removes the treasure chest nearest to the player, at every player
+//   /chestremove      removes the treasure chest nearest to the host, at every player
 // The game's chat runs a command's script through script_execute; each command here borrows a script nothing in the
 // game ever calls (a third-party library's empty one), registered with the game's own CommandCreate.
 #pragma once
@@ -13,7 +14,7 @@
 namespace coop::commands {
 
 // Creates the hooks (enabled by the caller).
-bool InstallHooks();
+bool InstallHooks(bool (*isGuest)());
 
 // Game thread, every local player step in a world: registers the commands once the game's chat is set up.
 void Tick(yyc::CInstance* localPlayer);

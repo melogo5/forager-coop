@@ -12,7 +12,7 @@ namespace coop::commands {
 
 namespace {
 
-constexpr uint8_t kChestRemove = 108;  // either way (the host passes it on): ChestMsg, a chest removed with /chestremove
+constexpr uint8_t kChestRemove = 108;  // host only: ChestMsg, a chest the host removed with /chestremove
 
 // decompiled/code/index.tsv and data.win's SCPT list (a script's index = its place there): CommandCreate(name, cheat,
 // ScriptWrap(script), help...) is how ForagerCommandsInit registers /give; ScriptWrap(index) makes the script value it takes.
@@ -40,6 +40,15 @@ struct ChestMsg {
 yyc::ScriptFn g_origPuzzleReset = nullptr;
 yyc::ScriptFn g_origChestRemove = nullptr;
 bool g_registered = false;
+bool (*g_isGuest)() = nullptr;
+
+// The commands make the world's things again (a puzzle's piece and its reward) or take them away: the host's call, in
+// its own world. A guest's is refused - they ship in the Workshop build, and any player could farm rewards with them.
+bool Refused(const char* command) {
+    if (g_isGuest == nullptr || !g_isGuest()) return false;
+    Log("commands: /%s - only the host can use it", command);
+    return true;
+}
 
 int IdOf(yyc::CInstance* instance) { return static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_id)); }
 
@@ -117,6 +126,7 @@ void RemoveChest(yyc::CInstance* self, int id) { yyc::CallReal(self, "instance_d
 
 yyc::RValue* __cdecl PuzzleResetHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                      yyc::RValue** args) {
+    if (Refused("puzzlereset")) return result;
     const int number = static_cast<int>(Arg(self, argc, args, 0, 0));
     if (!puzzles::ResetPuzzle(self, number, true)) {
         Log("commands: /puzzlereset %d - no such puzzle, or it cannot be reset yet", number);
@@ -126,6 +136,7 @@ yyc::RValue* __cdecl PuzzleResetHook(yyc::CInstance* self, yyc::CInstance* other
 
 yyc::RValue* __cdecl ChestRemoveHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                      yyc::RValue** args) {
+    if (Refused("chestremove")) return result;
     yyc::CInstance* player = yyc::FindInstance(static_cast<int>(yyc::CallReal(self, "instance_find", {double(yyc::obj::player), 0})));
     if (player == nullptr) return result;
     const double px = yyc::GetBuiltinReal(player, yyc::va::YYVar_x);
@@ -151,7 +162,8 @@ bool Hook(uint32_t va, void* detour, void* original) {
 
 }  // namespace
 
-bool InstallHooks() {
+bool InstallHooks(bool (*isGuest)()) {
+    g_isGuest = isGuest;
     const bool ok = Hook(kPuzzleResetScript, reinterpret_cast<void*>(&PuzzleResetHook), &g_origPuzzleReset) &&
                     Hook(kChestRemoveScript, reinterpret_cast<void*>(&ChestRemoveHook), &g_origChestRemove);
     if (!ok) Log("commands: hooks failed");
@@ -159,7 +171,7 @@ bool InstallHooks() {
 }
 
 void Tick(yyc::CInstance* localPlayer) {
-    if (g_registered) return;
+    if (g_registered || (g_isGuest != nullptr && g_isGuest())) return;  // a guest's chat has none
     const yyc::RValue* map = yyc::GlobalVar(kSlotChatCommands);
     if (map == nullptr || !yyc::IsNumber(*map)) return;  // the chat is not set up yet
     if (yyc::CallReal(localPlayer, "ds_exists", {yyc::ToReal(*map), yyc::kDsTypeMap}) == 0) return;
@@ -171,6 +183,7 @@ void Tick(yyc::CInstance* localPlayer) {
 
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     if (message.type != kChestRemove) return false;
+    if (g_isGuest == nullptr || !g_isGuest()) return true;  // the host's own only (session.cpp drops a guest's)
     if (message.payload.size() != sizeof(ChestMsg)) return true;
     ChestMsg msg{};
     memcpy(&msg, message.payload.data(), sizeof(msg));
