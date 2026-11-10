@@ -36,6 +36,7 @@
 #include "dungeons.h"
 #include "voidzone.h"
 #include "puzzles.h"
+#include "commands.h"
 #include "familiars.h"
 #include "land.h"
 #include "mobs.h"
@@ -49,6 +50,7 @@
 #include "skilltab.h"
 #include "displays.h"
 #include "shots.h"
+#include "signs.h"
 #include "stations.h"
 #include "steam.h"
 #include "storage.h"
@@ -63,7 +65,7 @@ namespace coop {
 
 namespace {
 
-constexpr uint32_t kProtocolVersion = 20;  // 20: the Void together (places, seed, level state); 19: the player's aim (mouse) in its state; 18: floor/road tiles, structure variants, everyone's familiars; 17: puzzle pieces by the host's
+constexpr uint32_t kProtocolVersion = 21;  // 21: the Void together (places, seed, level state: 112, 113); 20: world puzzles, ice bolts, signs (105, 108-111), gem sockets no longer shared; 19: the player's aim (mouse) in its state; 18: floor/road tiles, structure variants, everyone's familiars; 17: puzzle pieces by the host's
                                            // id and spot; 16: item unlocks; 15: a guest greets first (net.cpp); 14: the
                                            // tool swing
 constexpr uint32_t kYYVarImageBlend = 0x01AD8768;  // decompiled/code/yyvar_map.tsv
@@ -312,6 +314,9 @@ constexpr uint8_t kSharedTypes[] = {
     94,  // stations: craft state
     93,  // chests: a treasure chest opened
     104,  // puzzles: an E everyone does (the boss key)
+    109,  // signs: a sign's text
+    110,  // shots: what an ice bolt froze
+    111,  // puzzles: a puzzle dig spot dug
 };
 
 // Types only the host sends. One from a guest is a broken or hostile peer: the host drops it (it obeyed before - a
@@ -330,8 +335,10 @@ constexpr uint8_t kHostOnlyTypes[] = {
     96,                  // traps: what a trap holds (a guest asks with 101)
     97, 99, 100,         // chests: moved, keys so far, reward
     102,                 // banks: what a bank holds (a guest asks with 103)
+    105,                 // puzzles: /puzzlereset (the host's only: commands.h)
     106, 107,            // familiars: a guest's own, kept by the host; a player's own
-    108, 109,            // the Void: a level's seed, its timer and end
+    108,                 // commands: /chestremove (the host's only)
+    112, 113,            // the Void: a level's seed, its timer and end
 };
 
 bool FromGuestButHostOnly(const net::Message& message) {
@@ -401,7 +408,8 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             stations::Handle(message, localPlayer) || skills::Handle(message, localPlayer) || traps::Handle(message, localPlayer) ||
             banks::Handle(message, localPlayer) || reconcile::Handle(message, localPlayer) || chests::Handle(message, localPlayer) ||
             familiars::Handle(message) || bombs::Handle(message, localPlayer) ||
-            puzzles::Handle(message, localPlayer) || displays::Handle(message, localPlayer) ||
+            puzzles::Handle(message, localPlayer) || commands::Handle(message, localPlayer) ||
+            displays::Handle(message, localPlayer) || signs::Handle(message, localPlayer) ||
             shots::Handle(message, localPlayer) || voidzone::Handle(message, localPlayer)) {
             continue;
         }
@@ -721,7 +729,9 @@ void Tick(yyc::CInstance* localPlayer) {
             sync::ResetForNewPlace();
             reconcile::Reset();
             puzzles::Reset();
+            commands::Reset();
             displays::Reset();
+            signs::Reset();
         }
         g_lastSharedRoom = place;
         dungeons::OnRoomEntered(localPlayer, place);
@@ -739,6 +749,7 @@ void Tick(yyc::CInstance* localPlayer) {
     voidzone::Tick(localPlayer);
     sync::Tick(localPlayer);
     dungeons::Tick(localPlayer);
+    commands::Tick(localPlayer);
     puzzles::Tick(localPlayer);  // a dungeon's pieces, and the world's (the desert's pillars to push down)
     storage::DebugTick(localPlayer);
     land::Tick(localPlayer);
@@ -754,6 +765,7 @@ void Tick(yyc::CInstance* localPlayer) {
     if (g_role == Role::kGuest) coins::GuestTick(localPlayer);
     progress::Tick(localPlayer);
     displays::Tick(localPlayer);
+    signs::Tick(localPlayer, g_role == Role::kHost);
     shots::Tick();
     quests::Tick(localPlayer);
     stations::Tick(localPlayer, g_role == Role::kGuest);
@@ -875,9 +887,11 @@ void Leave() {
     familiars::Reset();
     bombs::Reset();
     shots::Reset();
+    signs::Reset();
     dungeons::Reset();
     voidzone::Reset();
     puzzles::Reset();
+    commands::Reset();
     g_deferred.clear();
     g_lastSharedRoom = -1;
     world::Reset();
@@ -932,7 +946,7 @@ bool SessionInstall() {
     if (!sync::InstallHooks(isHost, isGuest) || !mobs::InstallHooks(isHost, isGuest) ||
         !character::InstallHooks(isGuest) || !storage::InstallHooks() || !land::InstallHooks(isHost, isGuest) ||
         !progress::InstallHooks() || !stations::InstallHooks() || !chests::InstallHooks(isHost) ||
-        !traps::InstallHooks(isHost, isGuest) || !bombs::InstallHooks() || !shots::InstallHooks() || !puzzles::InstallHooks(isHost, isGuest) || !banks::InstallHooks(isHost, isGuest) || !skills::InstallHooks()) {
+        !traps::InstallHooks(isHost, isGuest) || !bombs::InstallHooks() || !shots::InstallHooks() || !puzzles::InstallHooks(isHost, isGuest) || !commands::InstallHooks(isGuest) || !banks::InstallHooks(isHost, isGuest) || !skills::InstallHooks()) {
         return false;
     }
     Role role = Role::kNone;

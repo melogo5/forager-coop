@@ -18,8 +18,8 @@ namespace coop::voidzone {
 
 namespace {
 
-constexpr uint8_t kVoidSeed = 108;   // host -> guests: SeedMsg, the seed of the level the host is about to enter
-constexpr uint8_t kVoidState = 109;  // host -> guests: StateMsg, the level's timer and whether it is complete
+constexpr uint8_t kVoidSeed = 112;   // host -> guests: SeedMsg, the seed of the level the host is about to enter
+constexpr uint8_t kVoidState = 113;  // host -> guests: StateMsg, the level's timer and whether it is complete
 
 // decompiled/code/index.tsv and the decompiled events' headers.
 constexpr uint32_t kScriptVoidLoad = 0x0073D4F0;    // gameModifier + 1 (0 first, from the world), ZoneGoTo(1)

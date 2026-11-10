@@ -118,6 +118,7 @@ constexpr int parStructure = 108;
 }  // namespace obj
 constexpr int kRoomGame = 8;   // rmGame, the world
 constexpr int kNoOne = -4;     // GML noone
+constexpr double kDsTypeMap = 1;   // ds_type_map
 constexpr double kDsTypeList = 2;  // ds_type_list
 
 // GML scripts several modules hook or call (decompiled/code/index.tsv).

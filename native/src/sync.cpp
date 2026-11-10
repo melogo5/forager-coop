@@ -687,6 +687,7 @@ int CreateReplica(yyc::CInstance* self, int hostId, int object, double x, double
     if (yyc::FindInstance(id) == nullptr) return 0;
     g_hostToLocal[hostId] = id;
     g_localToHost[id] = hostId;
+    puzzles::OnReplicaCreated(self, id, object);  // the frozen chest's reward lands already on the ground
     return id;
 }
 

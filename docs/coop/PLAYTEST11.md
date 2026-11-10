@@ -16,4 +16,4 @@
 Подсказки «keys in the chest», «waiting for the other players' keys», «f2: invite steam friends» были с заглавными
 буквами — шрифт рисует их значками; теперь строчными.
 
-Протокол 20 (`session.cpp`): места Void, `kVoidSeed` 108, `kVoidState` 109.
+Протокол 21 (`session.cpp`): места Void, `kVoidSeed` 112, `kVoidState` 113 (108 и 109 заняты командами и табличками, протокол 20).

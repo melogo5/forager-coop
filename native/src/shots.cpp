@@ -9,6 +9,7 @@
 #include "bombs.h"
 #include "log.h"
 #include "puppet.h"
+#include "sync.h"
 
 namespace coop::shots {
 
@@ -16,7 +17,14 @@ namespace {
 
 constexpr uint8_t kShot = 58;   // either way (the host passes a guest's on): ShotMsg
 constexpr uint8_t kBlast = 59;  // either way: BlastMsg, a fireball went off (ExplosionCreate in its collision)
+constexpr uint8_t kFrozen = 110;  // either way (the host passes a guest's on): FrozenMsg, an ice bolt froze this
+// What an ice bolt's hit leaves on what it hit: `freeze`, the ice drawn over a rock, a tree, a chest... and melting
+// away in its own step (var_slots.tsv). Only the shooter's bolt hits, so only the shooter saw the ice.
+constexpr int kSlotFreeze = 0x443;
 constexpr int kObjArrow = 303, kObjFireball = 301;  // decompiled/data/objects.tsv
+// The ice rod's shot: the others saw no shot, only what it hit freeze (puzzles.cpp shares the frozen chests'
+// `freeze`). Enemies' ice bolts (the ice wizard's) are theirs, not a player's: FiredByLocalPlayer keeps them out.
+constexpr int kObjIceBolt = 308;
 // decompiled/code/yyvar_map.tsv
 constexpr uint32_t kYYVarDirection = 0x01AD87A0, kYYVarSpeed = 0x01AD8C10, kYYVarImageAngle = 0x01AD8728;
 // objFireball.owner: UseSword sets it to the player; Create_0 leaves noone. Its Step_0 starts with
@@ -37,6 +45,8 @@ constexpr uint32_t kHarmful[] = {
     0x01052DB0, 0x01055320, 0x01057130, 0x010573A0,  // objArrow Collision_80, _23, _271, _64
     0x01051960,                                      // objArrow Destroy_0
     0x01049800, 0x0104A020, 0x0104B5A0,              // objFireball Collision_80, _20, _271
+    0x01067D50, 0x01069130, 0x01069890, 0x01069930,  // objIceBolt's five collisions (they freeze and hurt)
+    0x0106A2C0,
 };
 constexpr size_t kHookCount = sizeof(kHarmful) / sizeof(kHarmful[0]);
 
@@ -47,6 +57,12 @@ struct ShotMsg {
     float direction, speed, angle;
     float xscale, yscale;
     float sprite;
+};
+struct FrozenMsg {
+    int32_t hostId;  // the host's id of what was hit (-1 if not bound at the sender: then by object and spot)
+    int32_t object;
+    float x, y;
+    float freeze;
 };
 struct BlastMsg {
     float args[kBlastArgs];  // ExplosionCreate's: x, y, range, dmgPlayer
@@ -62,7 +78,7 @@ yyc::ScriptFn g_origExplosionCreate = nullptr;
 
 int IdOf(yyc::CInstance* instance) { return static_cast<int>(yyc::GetBuiltinReal(instance, yyc::va::YYVar_id)); }
 
-bool IsShot(int object) { return object == kObjArrow || object == kObjFireball; }
+bool IsShot(int object) { return object == kObjArrow || object == kObjFireball || object == kObjIceBolt; }
 
 // The local player fired it: made in its own step or Use script (an enemy's fireball is made by the enemy).
 bool FiredByLocalPlayer(yyc::CInstance* self) {
@@ -73,15 +89,39 @@ bool FiredByLocalPlayer(yyc::CInstance* self) {
 
 template <size_t N>
 void __cdecl HarmfulHook(yyc::CInstance* self, yyc::CInstance* other) {
-    if (!g_copies.empty() && g_copies.count(IdOf(self)) > 0) return;
+    if (!g_copies.empty() && g_copies.count(IdOf(self)) > 0) {
+        // An ice bolt's copy flew on through what the real one hit (a chest, a rock): it breaks there instead, its
+        // Destroy_0 only showing the shards. Not on a player: it starts on the shooter's puppet.
+        if (static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_object_index)) == kObjIceBolt && other != nullptr &&
+            static_cast<int>(yyc::GetBuiltinReal(other, yyc::va::YYVar_object_index)) != yyc::obj::player) {
+            g_copies.erase(IdOf(self));
+            yyc::CallReal(self, "instance_destroy", {double(IdOf(self))});
+        }
+        return;
+    }
     g_orig[N](self, other);
+    // Our ice bolt hit something: the others put the same ice on it (each side melts its own).
+    if (other == nullptr || !net::IsConnected() ||
+        static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_object_index)) != kObjIceBolt) {
+        return;
+    }
+    const int object = static_cast<int>(yyc::GetBuiltinReal(other, yyc::va::YYVar_object_index));
+    if (object == yyc::obj::player) return;
+    const int hit = IdOf(other);
+    yyc::RValue value{};
+    const float freeze = yyc::GetVar(hit, kSlotFreeze, &value) && yyc::IsNumber(value) ? static_cast<float>(yyc::ToReal(value)) : 0.f;
+    yyc::Free(&value);
+    if (!(freeze > 0)) return;
+    const FrozenMsg msg{sync::HostIdOf(hit), object, static_cast<float>(yyc::GetBuiltinReal(other, yyc::va::YYVar_x)),
+                        static_cast<float>(yyc::GetBuiltinReal(other, yyc::va::YYVar_y)), freeze};
+    net::Send(kFrozen, &msg, sizeof(msg));
 }
 
 template <size_t... N>
 struct HookTable {
     static constexpr yyc::EventFn kHooks[] = {&HarmfulHook<N>...};
 };
-using Hooks = HookTable<0, 1, 2, 3, 4, 5, 6, 7>;
+using Hooks = HookTable<0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12>;
 static_assert(sizeof(Hooks::kHooks) / sizeof(Hooks::kHooks[0]) == kHookCount, "one hook per harmful event");
 
 ShotMsg Describe(yyc::CInstance* shot, int object) {
@@ -233,6 +273,25 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
         }
         if (!std::isfinite(msg.depth)) return true;
         ShowBlast(localPlayer, msg);
+        return true;
+    }
+    if (message.type == kFrozen) {
+        FrozenMsg msg{};
+        if (message.payload.size() != sizeof(msg)) return true;
+        memcpy(&msg, message.payload.data(), sizeof(msg));
+        if (!std::isfinite(msg.x) || !std::isfinite(msg.y) || !std::isfinite(msg.freeze) || msg.freeze <= 0 ||
+            msg.freeze > 100000 || msg.object == yyc::obj::player) {
+            return true;
+        }
+        const int local = sync::Resolve(localPlayer, msg.hostId, msg.object, msg.x, msg.y);
+        if (local == 0) return true;
+        yyc::RValue current{};
+        const bool known = yyc::GetVar(local, kSlotFreeze, &current) && yyc::IsNumber(current);
+        const double before = known ? yyc::ToReal(current) : 0;
+        yyc::Free(&current);
+        if (!known || before >= msg.freeze) return true;  // never makes a variable it has not got; no less ice
+        yyc::RValue freeze = yyc::Real(msg.freeze);
+        yyc::SetVar(local, kSlotFreeze, &freeze);
         return true;
     }
     if (message.type != kShot) return false;
