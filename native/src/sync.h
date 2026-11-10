@@ -75,4 +75,8 @@ void ResetTransient();
 // Forgets everything about the last peer (replica ids, pending work), for the next session.
 void Reset();
 
+// The session moved to another place (a dungeon, a Void level): replicas start over, but the host's spawns not yet
+// sent stay - a Void level is generated in its first begin step, before the move is seen (gone ones are skipped).
+void ResetForNewPlace();
+
 }  // namespace coop::sync

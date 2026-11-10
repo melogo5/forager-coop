@@ -34,6 +34,7 @@
 #include "traps.h"
 #include "bombs.h"
 #include "dungeons.h"
+#include "voidzone.h"
 #include "puzzles.h"
 #include "familiars.h"
 #include "land.h"
@@ -62,7 +63,7 @@ namespace coop {
 
 namespace {
 
-constexpr uint32_t kProtocolVersion = 19;  // 19: the player's aim (mouse) in its state; 18: floor/road tiles, structure variants, everyone's familiars; 17: puzzle pieces by the host's
+constexpr uint32_t kProtocolVersion = 20;  // 20: the Void together (places, seed, level state); 19: the player's aim (mouse) in its state; 18: floor/road tiles, structure variants, everyone's familiars; 17: puzzle pieces by the host's
                                            // id and spot; 16: item unlocks; 15: a guest greets first (net.cpp); 14: the
                                            // tool swing
 constexpr uint32_t kYYVarImageBlend = 0x01AD8768;  // decompiled/code/yyvar_map.tsv
@@ -330,6 +331,7 @@ constexpr uint8_t kHostOnlyTypes[] = {
     97, 99, 100,         // chests: moved, keys so far, reward
     102,                 // banks: what a bank holds (a guest asks with 103)
     106, 107,            // familiars: a guest's own, kept by the host; a player's own
+    108, 109,            // the Void: a level's seed, its timer and end
 };
 
 bool FromGuestButHostOnly(const net::Message& message) {
@@ -400,7 +402,7 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             banks::Handle(message, localPlayer) || reconcile::Handle(message, localPlayer) || chests::Handle(message, localPlayer) ||
             familiars::Handle(message) || bombs::Handle(message, localPlayer) ||
             puzzles::Handle(message, localPlayer) || displays::Handle(message, localPlayer) ||
-            shots::Handle(message, localPlayer)) {
+            shots::Handle(message, localPlayer) || voidzone::Handle(message, localPlayer)) {
             continue;
         }
         bool guestIntroduced = false;
@@ -552,7 +554,9 @@ void RespawnIfDead(yyc::CInstance* localPlayer) {
     yyc::RValue invulnerable = yyc::Real(kRespawnInvulSteps);
     yyc::SetVar(id, kSlotInvulFrames, &invulnerable);
     double x = kRespawnX, y = kRespawnY;
-    const bool inDungeon = dungeons::RespawnPoint(localPlayer, &x, &y);  // a dungeon room has no starting island
+    // A dungeon room has no starting island; nor has a Void level (where the game ends the run: in coop the others
+    // play on, so the dead get up where the level began).
+    const bool inDungeon = dungeons::RespawnPoint(localPlayer, &x, &y);
     yyc::SetBuiltinReal(localPlayer, yyc::va::YYVar_x, x);
     yyc::SetBuiltinReal(localPlayer, yyc::va::YYVar_y, y);
     Log("session: died - respawned %s with %.0f hp", inDungeon ? "at the dungeon's way in" : "on the starting island",
@@ -705,20 +709,22 @@ void Tick(yyc::CInstance* localPlayer) {
     // there would make the guest remove its whole surroundings.)
     // Dungeons are played together: the shared room is the host's, the world or a dungeon (dungeons.cpp).
     constexpr int kRoomGame = yyc::kRoomGame;
+    // The Void is a zone of the world room, not a room: each of its levels is a place of its own (voidzone.h).
     const int room = static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_room));
+    const int place = voidzone::Place(localPlayer);
     const bool inWorld = room == kRoomGame;
-    const bool inShared = room == dungeons::SharedRoom(localPlayer);
-    if (inShared != g_wasInWorld) Log("session: %s the shared room (%d)", inShared ? "in" : "left", room);
-    if (inShared && room != g_lastSharedRoom) {
+    const bool inShared = place == dungeons::SharedRoom(localPlayer);
+    if (inShared != g_wasInWorld) Log("session: %s the shared room (%d)", inShared ? "in" : "left", place);
+    if (inShared && place != g_lastSharedRoom) {
         if (g_lastSharedRoom != -1) {
-            Log("session: the shared room is now %d - replicas and enemies start over", room);
-            sync::Reset();
+            Log("session: the shared room is now %d - replicas and enemies start over", place);
+            sync::ResetForNewPlace();
             reconcile::Reset();
             puzzles::Reset();
             displays::Reset();
         }
-        g_lastSharedRoom = room;
-        dungeons::OnRoomEntered(localPlayer, room);
+        g_lastSharedRoom = place;
+        dungeons::OnRoomEntered(localPlayer, place);
     }
     DebugVisitRoom(localPlayer, inWorld);
     skilltab::DebugTick(localPlayer);
@@ -730,6 +736,7 @@ void Tick(yyc::CInstance* localPlayer) {
     }
 
     if (g_role == Role::kHost) SteamInvites(localPlayer);
+    voidzone::Tick(localPlayer);
     sync::Tick(localPlayer);
     dungeons::Tick(localPlayer);
     puzzles::Tick(localPlayer);  // a dungeon's pieces, and the world's (the desert's pillars to push down)
@@ -869,6 +876,7 @@ void Leave() {
     bombs::Reset();
     shots::Reset();
     dungeons::Reset();
+    voidzone::Reset();
     puzzles::Reset();
     g_deferred.clear();
     g_lastSharedRoom = -1;
@@ -920,6 +928,7 @@ bool SessionInstall() {
     const auto isHost = [] { return g_role == Role::kHost; };
     const auto isGuest = [] { return g_role == Role::kGuest; };
     dungeons::Install(isGuest);
+    if (!voidzone::InstallHooks(isHost, isGuest)) return false;
     if (!sync::InstallHooks(isHost, isGuest) || !mobs::InstallHooks(isHost, isGuest) ||
         !character::InstallHooks(isGuest) || !storage::InstallHooks() || !land::InstallHooks(isHost, isGuest) ||
         !progress::InstallHooks() || !stations::InstallHooks() || !chests::InstallHooks(isHost) ||

@@ -14,6 +14,9 @@ bool InstallHooks(bool (*isHost)(), bool (*isGuest)());
 // Game thread, every local player step: the host's land map goes out a while after a purchase.
 void Tick(yyc::CInstance* localPlayer);
 
+// Host: the land map goes out a little later (land generated at both from one seed may still differ: a Void level).
+void HostSendMapSoon();
+
 // Game thread, every local player step (testing aid, see land.cpp).
 void DebugTick(yyc::CInstance* localPlayer);
 

@@ -302,8 +302,10 @@ std::string Answer(yyc::CInstance* self, const std::string& line) {
         return std::to_string(id) + " = " + yyc::BuiltinNameAt(id);
     }
     if (c == "script" && w.size() >= 2) {  // a GML script by its address (decompiled/code/index.tsv), self = player
-        std::vector<yyc::RValue> values;
-        for (size_t i = 2; i < w.size(); ++i) values.push_back(yyc::Real(Number(w[i])));
+        std::vector<yyc::RValue> values;  // a word starting with ' is a string ('void), the rest are numbers
+        for (size_t i = 2; i < w.size(); ++i) {
+            values.push_back(w[i][0] == '\'' ? yyc::String(w[i].substr(1).c_str()) : yyc::Real(Number(w[i])));
+        }
         std::vector<yyc::RValue*> args;
         for (yyc::RValue& v : values) args.push_back(&v);
         yyc::RValue result{};
@@ -311,6 +313,7 @@ std::string Answer(yyc::CInstance* self, const std::string& line) {
         script(self, self, &result, static_cast<int>(args.size()), args.empty() ? nullptr : args.data());
         const std::string text = Format(result);
         yyc::Free(&result);
+        for (yyc::RValue& v : values) yyc::Free(&v);
         return text;
     }
     if (c == "call" && w.size() >= 2) return Call(self, w);

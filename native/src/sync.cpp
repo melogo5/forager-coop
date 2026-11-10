@@ -1055,4 +1055,11 @@ void Reset() {
     ForgetAfterWake();
 }
 
+void ResetForNewPlace() {
+    std::vector<int> pending;
+    pending.swap(g_pendingSpawns);
+    Reset();
+    if (IsHost()) g_pendingSpawns.swap(pending);
+}
+
 }  // namespace coop::sync

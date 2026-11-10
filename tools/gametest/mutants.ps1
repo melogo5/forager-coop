@@ -15,6 +15,7 @@ $checks = [ordered]@{
   modes      = @{ Script = 'modes.ps1';       Mutant = 'modes' }
   craftmenu  = @{ Script = 'craftmenu.ps1';   Mutant = 'craftmenu' }
   craftasleep = @{ Script = 'craftmenu.ps1';  Mutant = 'craftasleep' }
+  void       = @{ Script = 'void.ps1';        Mutant = 'void' }
   worlddiff  = @{ Script = 'worlddiff-selfcheck.ps1'; Mutant = '' }
 }
 $rows = @()

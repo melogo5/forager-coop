@@ -494,6 +494,8 @@ bool InstallHooks(bool (*isHost)(), bool (*isGuest)()) {
     return ok;
 }
 
+void HostSendMapSoon() { g_mapIn = kMapAfterSteps; }
+
 void Tick(yyc::CInstance* localPlayer) {
     if (g_mapIn == 0 || --g_mapIn != 0 || !net::IsConnected()) return;
     const std::string map = LandMap(localPlayer);

@@ -20,7 +20,7 @@
 //   buyland                      -> the host buys the nearest sale sign's island (BUY LAND tab open; use woken 229)
 //   call <builtin> [numbers...]  -> a builtin's result, called as the local player
 //   woken <object> <command>     -> the command, run once that kind is awake (far objects sleep: culled)
-//   script <hex address> [n...]  -> a GML script's result (address from decompiled/code/index.tsv)
+//   script <hex address> [n...]  -> a GML script's result (address from decompiled/code/index.tsv); 'word = a string
 //   dump                         -> "N: object x y; ..." every world object, asleep ones too (world-diff.ps1)
 //   obj <id>                     -> "object name at (x, y) [asleep]": what an instance id is
 //   look <id>                    -> sprite, image, alpha, visible, xscale, depth: how it is drawn

@@ -11,6 +11,7 @@
 //   vaultslots   each player's vaults have that player's own number of cells
 //   craftmenu    a craft is own only if the menu is still open at the Tick (the menu closes as the craft starts)
 //   craftasleep  a station asleep here (off-screen) drops out of the scan: its own craft is reported as over
+//   void         the Void as before voidzone.cpp: a level is nobody's place, nobody follows, each counts its own
 #pragma once
 
 #include <windows.h>

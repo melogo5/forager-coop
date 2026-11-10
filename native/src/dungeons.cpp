@@ -10,6 +10,7 @@
 
 #include "log.h"
 #include "puppet.h"
+#include "voidzone.h"
 
 namespace coop::dungeons {
 
@@ -62,6 +63,13 @@ int g_guestRoom = kRoomGame;  // guest: the host's room as last told
 bool IsDungeon(int room) { return room >= kFirstDungeon && room <= kLastDungeon; }
 
 int CurrentRoom(yyc::CInstance* any) { return static_cast<int>(yyc::GetBuiltinReal(any, yyc::va::YYVar_room)); }
+
+// The room, or a level of the Void (a zone of the world room): what "the host's room" means here.
+int CurrentPlace(yyc::CInstance* any) { return voidzone::Place(any); }
+
+bool IsSharedPlace(int place) { return place == kRoomGame || IsDungeon(place) || voidzone::IsVoidPlace(place); }
+
+constexpr int kObjZoneLoader = 324;  // a zone being loaded (the Void's levels, the world back from them)
 
 double GlobalReal(int slot) {
     const yyc::RValue* value = yyc::GlobalVar(slot);
@@ -224,8 +232,18 @@ bool InterceptRoomGoto(yyc::CInstance* self, int room) {
 
 int SharedRoom(yyc::CInstance* localPlayer) {
     if (IsGuest()) return g_guestRoom;
-    const int room = CurrentRoom(localPlayer);
-    return room == kRoomGame || IsDungeon(room) ? room : kRoomGame;
+    const int place = CurrentPlace(localPlayer);
+    return IsSharedPlace(place) ? place : kRoomGame;
+}
+
+void HostAnnounce(yyc::CInstance* self, int place) {
+    const RoomMsg msg = Describe(self, place);
+    net::Send(kGoRoom, &msg, sizeof(msg));
+}
+
+void GuestAsk(yyc::CInstance* self, int place) {
+    const RoomMsg msg = Describe(self, place);
+    net::Send(kAskRoom, &msg, sizeof(msg));
 }
 
 bool Handle(const net::Message& message, yyc::CInstance* localPlayer, bool* stop) {
@@ -241,25 +259,27 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer, bool* stop
     if (message.payload.size() != sizeof(RoomMsg)) return true;
     RoomMsg msg{};
     memcpy(&msg, message.payload.data(), sizeof(msg));
-    const bool valid = (IsDungeon(msg.room) || msg.room == kRoomGame) && std::isfinite(msg.spawnX) &&
-                       std::isfinite(msg.spawnY) && std::isfinite(msg.currentDungeon);
+    const bool valid = IsSharedPlace(msg.room) && std::isfinite(msg.spawnX) && std::isfinite(msg.spawnY) &&
+                       std::isfinite(msg.currentDungeon);
     if (!valid) return true;
     if (message.type == kAskRoom && !IsGuest()) {
-        if (CurrentRoom(localPlayer) == msg.room) return true;
-        Log("dungeons: guest %u asks to go to room %d - going", message.from, msg.room);
-        Go(localPlayer, msg);
+        if (CurrentPlace(localPlayer) == msg.room) return true;
+        Log("dungeons: guest %u asks to go to place %d - going", message.from, msg.room);
+        if (!voidzone::HostGo(localPlayer, msg.room)) Go(localPlayer, msg);
         return true;
     }
     if (message.type == kGoRoom && IsGuest()) {
         g_guestRoom = msg.room;
         g_lastGo = msg;
         g_waitSteps = 0;
-        if (CurrentRoom(localPlayer) != msg.room) {
-            g_following = msg.room;
-            Go(localPlayer, msg);
-            Log("dungeons: the host went to room %d - following", msg.room);
+        if (CurrentPlace(localPlayer) != msg.room) {
+            if (!voidzone::GuestGo(localPlayer, msg.room)) {
+                g_following = msg.room;
+                Go(localPlayer, msg);
+            }
+            Log("dungeons: the host went to place %d - following", msg.room);
         }
-        *stop = true;  // what comes after it is news of that room
+        *stop = true;  // what comes after it is news of that place
     }
     return true;
 }
@@ -270,10 +290,14 @@ void Tick(yyc::CInstance* localPlayer) {
 }
 
 void GuestTick(yyc::CInstance* localPlayer) {
-    if (CurrentRoom(localPlayer) == g_guestRoom || ++g_waitSteps < kRetrySteps) return;
+    if (CurrentPlace(localPlayer) == g_guestRoom || ++g_waitSteps < kRetrySteps) return;
     g_waitSteps = 0;
-    if (yyc::CallReal(localPlayer, "instance_exists", {double(kObjTransition)}) != 0) return;
-    Log("dungeons: still not in room %d - going again", g_guestRoom);
+    if (yyc::CallReal(localPlayer, "instance_exists", {double(kObjTransition)}) != 0 ||
+        yyc::CallReal(localPlayer, "instance_exists", {double(kObjZoneLoader)}) != 0) {
+        return;
+    }
+    Log("dungeons: still not in place %d - going again", g_guestRoom);
+    if (voidzone::GuestGo(localPlayer, g_guestRoom)) return;
     g_following = g_guestRoom;
     Go(localPlayer, g_lastGo.room == g_guestRoom ? g_lastGo : RoomMsg{g_guestRoom, 0, 0, 0});
 }
@@ -315,10 +339,12 @@ void OnRoomEntered(yyc::CInstance* localPlayer, int room) {
 }
 
 bool RespawnPoint(yyc::CInstance* localPlayer, double* x, double* y) {
-    if (!IsDungeon(CurrentRoom(localPlayer)) || CurrentRoom(localPlayer) != g_entryRoom) return false;
+    const int place = CurrentPlace(localPlayer);
+    if (voidzone::IsVoidPlace(place)) return voidzone::StartPoint(place, x, y);  // its generation places the player
+    if (!IsDungeon(place) || place != g_entryRoom) return false;
     *x = g_entryX;
     *y = g_entryY;
-    ResetMinecarts(localPlayer);
+    if (IsDungeon(place)) ResetMinecarts(localPlayer);
     return true;
 }
 
