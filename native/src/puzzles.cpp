@@ -380,6 +380,35 @@ void SendChanges(yyc::CInstance* self) {
     if (!changes.empty()) net::Send(kPuzzleState, changes.data(), changes.size() * sizeof(StateEntry));
 }
 
+// A gem socket's gem is taken out only by the player who put it in. Sockets are kOwn: each player's E runs its own
+// Other_11, and a wrong gem's E drops it (DropItem) and empties the socket. Both players' E on the same gem within a
+// send interval each dropped a copy (review of #5). Each side notes who filled which of its sockets: an E on another
+// player's gem does nothing here. A gem in it before the session (the save's) is the host's to take out.
+// `socket` holds the gem's item id, empty <= 0 (a reset sets -4).
+enum class GemOwner : uint8_t { kMine, kOther };
+std::map<int, GemOwner> g_gemOwner;  // local socket id -> who put its gem in
+constexpr int kObjGemSocket = 188;
+
+bool Filled(float socket) { return socket > 0; }
+
+// The socket's gem changed here to `after` (from `before`), by `owner`.
+void NoteGem(int id, float before, float after, GemOwner owner) {
+    if (!Filled(after)) {
+        g_gemOwner.erase(id);
+    } else if (!Filled(before) || before != after) {
+        g_gemOwner[id] = owner;
+    }
+}
+
+// The local player's E on socket `id` may take out the gem in it.
+bool MayTakeGem(int id) {
+    float socket = 0;
+    if (!ReadNumber(id, kSocket, &socket) || !Filled(socket)) return true;  // empty: putting one in is anyone's
+    const auto owner = g_gemOwner.find(id);
+    if (owner == g_gemOwner.end()) return !IsGuest();
+    return owner->second == GemOwner::kMine;
+}
+
 void ApplyState(const net::Message& message, yyc::CInstance* localPlayer) {
     const size_t count = message.payload.size() / sizeof(StateEntry);
     if (message.payload.size() % sizeof(StateEntry) != 0 || count > kMaxEntries) return;
@@ -414,7 +443,11 @@ void ApplyState(const net::Message& message, yyc::CInstance* localPlayer) {
             ReadNumber(piece, kSolved, &before) && before != 0) {
             continue;  // solved stays solved: a guest's 0 is its copy not caught up yet (only /puzzlereset 5 undoes it)
         }
+        float gemBefore = 0;
+        const bool gem =
+            entry.object == kObjGemSocket && entry.slot == kSocket && ReadNumber(piece, kSocket, &gemBefore);
         WriteNumber(piece, entry.slot, entry.value);
+        if (gem) NoteGem(piece, gemBefore, entry.value, GemOwner::kOther);
         if (solvedNow) EyeSolvedAtHost(localPlayer, piece);
         if (kind->moves && entry.slot == kSlotX) {  // the host moves it: no sliding of its own here
             WriteNumber(piece, kH, 0);
@@ -464,7 +497,17 @@ void __cdecl InteractHook(yyc::CInstance* self, yyc::CInstance* other) {
         net::Send(kPuzzleUse, &msg, sizeof(msg));
         return;
     }
+    const bool gem = ours && kind->object == kObjGemSocket;
+    float before = 0, after = 0;
+    if (gem) {
+        if (!MayTakeGem(msg.id)) {
+            Log("puzzles: gem socket %d - its gem is another player's to take out", msg.id);
+            return;
+        }
+        ReadNumber(msg.id, kSocket, &before);
+    }
     g_orig[N](self, other);
+    if (gem && ReadNumber(msg.id, kSocket, &after)) NoteGem(msg.id, before, after, GemOwner::kMine);
     if (ours && kind->use == Use::kMirror) net::Send(kPuzzleMirror, &msg, sizeof(msg));
 }
 
@@ -998,6 +1041,7 @@ void Reset() {
     g_spotSteps = 0;
     g_meltSpots.clear();
     g_fireRespawns.clear();
+    g_gemOwner.clear();
 }
 
 }  // namespace coop::puzzles
