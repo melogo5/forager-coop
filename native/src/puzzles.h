@@ -52,4 +52,7 @@ bool ResetPuzzle(yyc::CInstance* self, int number, bool share);
 // A new room: what was known about the last one's pieces goes.
 void Reset();
 
+// The session is over: who put which gem into the world's sockets goes too (kept over trips into a dungeon).
+void ForgetSession();
+
 }  // namespace coop::puzzles

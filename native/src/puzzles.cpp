@@ -16,6 +16,7 @@
 #include "files.h"
 #include "log.h"
 #include "puppet.h"
+#include "stations.h"
 #include "sync.h"
 
 namespace coop::puzzles {
@@ -49,6 +50,7 @@ constexpr int kObjFrozenChest = 178;
 constexpr int kObjTreasureChestSmall = 151;
 constexpr int kOnFire = 0x6B3;  // a small chest of the fire island burning (var_slots.tsv)
 constexpr int kObjEyeStatue = 174;
+constexpr int kObjGemSocket = 188;  // objGemSocketPillar
 constexpr int kObjBattery = 175;      // objReceptorBig
 constexpr int kBellsPuzzle = 10;      // the three bells' puzzle number
 constexpr int kBellsFlag = 3;         // their place in global.puzzle
@@ -93,7 +95,7 @@ const std::vector<Kind> kKinds = {
     // `socket` turns into its `solveableItem`, and at that moment checks the others and makes the reward chest. Sent
     // with the gem, a guest's last `solved` reached the host already set - the host's socket never turned solved
     // itself and made no chest. Each side's Step_0 solves its sockets from the gems; the host's chest is everyone's.
-    {188, 0x00CF1090, Use::kOwn, false, {kSocket, kNumber, kUsable}, true},  // objGemSocketPillar
+    {kObjGemSocket, 0x00CF1090, Use::kOwn, false, {kSocket, kNumber, kUsable}, true},  // objGemSocketPillar
     // The sleeping princess (a stone statue): the same socket as a gem's - a player puts in a flower of their own and
     // her Step_0 wakes her when `socket` is the cinderbloom (item 18) and she is not `solved` yet, then makes the reward
     // chest. Not shared, each player saw only their own flower and got a chest of their own (a guest's was the guest's
@@ -346,6 +348,37 @@ void SetPuzzleFlag(yyc::CInstance* self, int index, float value) {
     g_known[std::make_pair(-1, index)] = value;
 }
 
+// A gem socket's gem is taken out only by the player who put it in. Sockets are kOwn: each player's E runs its own
+// Other_11, and E on a filled socket drops its gem (DropItem) and empties it - on an empty one it opens the gem menu
+// (objSocketMenu), which puts the chosen gem in: one or the other, never a swap. Both players' E on the same gem
+// within a send interval each dropped a copy (review of #5). Each side notes who filled which of its sockets: an E
+// on another player's gem does nothing here (a bubble says so). A gem in it before the session (the save's) is the
+// host's to take out. The notes stay over trips into a dungeon or the void (a world socket keeps its id; a
+// dungeon's are new ones each time): they go with the session. `socket` holds the gem's item id, empty <= 0 (a
+// reset sets -4).
+enum class GemOwner : uint8_t { kMine, kOther };
+std::map<int, GemOwner> g_gemOwner;  // local socket id -> who put its gem in
+
+bool Filled(float socket) { return socket > 0; }
+constexpr DWORD kNotYourGemMs = 3000;
+
+// The socket's gem changed here to `after` (from `before`), by `owner`.
+void NoteGem(int id, float before, float after, GemOwner owner) {
+    if (!Filled(after)) {
+        g_gemOwner.erase(id);
+    } else if (!Filled(before) || before != after) {
+        g_gemOwner[id] = owner;
+    }
+}
+
+// The local player's E on socket `id` may take out the gem in it.
+bool MayTakeGem(int id) {
+    float socket = 0;
+    if (!ReadNumber(id, kSocket, &socket) || !Filled(socket)) return true;  // empty: putting one in is anyone's
+    const auto owner = g_gemOwner.find(id);
+    if (owner == g_gemOwner.end()) return !IsGuest();
+    return owner->second == GemOwner::kMine;
+}
 void SendChanges(yyc::CInstance* self) {
     std::vector<StateEntry> changes;
     if (IsHost()) AddPuzzleFlags(self, changes);
@@ -368,7 +401,12 @@ void SendChanges(yyc::CInstance* self) {
                 const auto known = g_known.find(key);
                 if (known != g_known.end() && known->second == value) continue;
                 const bool firstSeen = known == g_known.end();
+                const float before = firstSeen ? 0.f : known->second;
                 g_known[key] = value;
+                // A change here is our own: a gem put in (the gem menu does it) or taken out by our player.
+                if (!firstSeen && kind.object == kObjGemSocket && slot == kSocket) {
+                    NoteGem(id, before, value, GemOwner::kMine);
+                }
                 // A guest tells what it changed, never what it first sees: a piece's first value here may be its own
                 // copy's, older than the host's (a small chest replicated with onFire 0 would put out the host's
                 // burning one; an eye statue's solved 0 would make the host's solvable again, for a second chest).
@@ -378,35 +416,6 @@ void SendChanges(yyc::CInstance* self) {
         }
     }
     if (!changes.empty()) net::Send(kPuzzleState, changes.data(), changes.size() * sizeof(StateEntry));
-}
-
-// A gem socket's gem is taken out only by the player who put it in. Sockets are kOwn: each player's E runs its own
-// Other_11, and a wrong gem's E drops it (DropItem) and empties the socket. Both players' E on the same gem within a
-// send interval each dropped a copy (review of #5). Each side notes who filled which of its sockets: an E on another
-// player's gem does nothing here. A gem in it before the session (the save's) is the host's to take out.
-// `socket` holds the gem's item id, empty <= 0 (a reset sets -4).
-enum class GemOwner : uint8_t { kMine, kOther };
-std::map<int, GemOwner> g_gemOwner;  // local socket id -> who put its gem in
-constexpr int kObjGemSocket = 188;
-
-bool Filled(float socket) { return socket > 0; }
-
-// The socket's gem changed here to `after` (from `before`), by `owner`.
-void NoteGem(int id, float before, float after, GemOwner owner) {
-    if (!Filled(after)) {
-        g_gemOwner.erase(id);
-    } else if (!Filled(before) || before != after) {
-        g_gemOwner[id] = owner;
-    }
-}
-
-// The local player's E on socket `id` may take out the gem in it.
-bool MayTakeGem(int id) {
-    float socket = 0;
-    if (!ReadNumber(id, kSocket, &socket) || !Filled(socket)) return true;  // empty: putting one in is anyone's
-    const auto owner = g_gemOwner.find(id);
-    if (owner == g_gemOwner.end()) return !IsGuest();
-    return owner->second == GemOwner::kMine;
 }
 
 void ApplyState(const net::Message& message, yyc::CInstance* localPlayer) {
@@ -446,6 +455,16 @@ void ApplyState(const net::Message& message, yyc::CInstance* localPlayer) {
         float gemBefore = 0;
         const bool gem =
             entry.object == kObjGemSocket && entry.slot == kSocket && ReadNumber(piece, kSocket, &gemBefore);
+        if (gem && IsHost() && Filled(entry.value) && Filled(gemBefore) && entry.value != gemBefore) {
+            const auto owner = g_gemOwner.find(piece);
+            if (owner != g_gemOwner.end() && owner->second == GemOwner::kMine) {
+                // Both put a gem into the same empty socket within a send interval: the host's stays, here and (sent
+                // again) at the guest (review of #8) - each side showing the other's gem, nobody could take it out.
+                g_known.erase(std::make_pair(piece, static_cast<int>(kSocket)));
+                Log("puzzles: gem socket %d - a guest's gem came over the host's own: the host's stays", piece);
+                continue;
+            }
+        }
         WriteNumber(piece, entry.slot, entry.value);
         if (gem) NoteGem(piece, gemBefore, entry.value, GemOwner::kOther);
         if (solvedNow) EyeSolvedAtHost(localPlayer, piece);
@@ -497,17 +516,16 @@ void __cdecl InteractHook(yyc::CInstance* self, yyc::CInstance* other) {
         net::Send(kPuzzleUse, &msg, sizeof(msg));
         return;
     }
-    const bool gem = ours && kind->object == kObjGemSocket;
-    float before = 0, after = 0;
-    if (gem) {
-        if (!MayTakeGem(msg.id)) {
-            Log("puzzles: gem socket %d - its gem is another player's to take out", msg.id);
-            return;
+    if (ours && kind->object == kObjGemSocket && !MayTakeGem(msg.id)) {
+        Log("puzzles: gem socket %d - its gem is another player's to take out", msg.id);
+        static DWORD said = 0;  // one bubble at a time, not one per E
+        if (other != nullptr && GetTickCount() - said > kNotYourGemMs) {
+            said = GetTickCount();
+            stations::Say(other, "not your gem");  // the game's font draws capitals as icons: lowercase
         }
-        ReadNumber(msg.id, kSocket, &before);
+        return;
     }
     g_orig[N](self, other);
-    if (gem && ReadNumber(msg.id, kSocket, &after)) NoteGem(msg.id, before, after, GemOwner::kMine);
     if (ours && kind->use == Use::kMirror) net::Send(kPuzzleMirror, &msg, sizeof(msg));
 }
 
@@ -912,7 +930,7 @@ struct PuzzleReset {
 const std::vector<PuzzleReset> kResets = {
     {5, kObjEyeStatue, {{kSolved, 0}}},                                                  // eye statue
     {9, 190, {{kSolved, 0}, {kSlotImage, 0}, {kSlotImageSpeed, 0}}},                      // skull braziers: unlit
-    {11, 188, {{kSocket, -4}, {kSolved, 0}, {kUsable, 1}}},                               // colored pedestals: no gem
+    {11, kObjGemSocket, {{kSocket, -4}, {kSolved, 0}, {kUsable, 1}}},                     // colored pedestals: no gem
     {14, 177, {{kSocket, -4}, {kSolved, 0}, {kUsable, 1}}},                               // stone princess: no flower
 };
 
@@ -1041,7 +1059,8 @@ void Reset() {
     g_spotSteps = 0;
     g_meltSpots.clear();
     g_fireRespawns.clear();
-    g_gemOwner.clear();
 }
+
+void ForgetSession() { g_gemOwner.clear(); }
 
 }  // namespace coop::puzzles
