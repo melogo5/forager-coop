@@ -149,7 +149,7 @@ int OpenForReward(yyc::CInstance* chest, yyc::CInstance* player) {
 }
 
 void SayKeys(yyc::CInstance* player, int have, int need) {
-    const std::string text = "Keys in the chest: " + std::to_string(have) + "/" + std::to_string(need);
+    const std::string text = "keys in the chest: " + std::to_string(have) + "/" + std::to_string(need);
     stations::Say(player, text.c_str());
 }
 
@@ -188,7 +188,7 @@ void AddKey(yyc::CInstance* localPlayer, int chestId, const ChestMsg& msg, net::
 void OpenKeyChest(yyc::CInstance* self, yyc::CInstance* player, int id) {
     if (Opened(id)) return;
     if (g_keyGiven.count(id) > 0) {
-        stations::Say(player, "Waiting for the other players' keys");
+        stations::Say(player, "waiting for the other players' keys");
         return;
     }
     if (CallScript(kScriptItemCount, player, kKeyItem) < 1) {

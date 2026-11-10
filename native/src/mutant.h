@@ -9,6 +9,8 @@
 //   forget     a destroyed instance stays on cull lists other than its last cell//   modes      the coop mode screen shows every mode
 //   storagelock  the chest open here is sent while open (the other side's lock on it is released)
 //   vaultslots   each player's vaults have that player's own number of cells
+//   craftmenu    a craft is own only if the menu is still open at the Tick (the menu closes as the craft starts)
+//   craftasleep  a station asleep here (off-screen) drops out of the scan: its own craft is reported as over
 #pragma once
 
 #include <windows.h>

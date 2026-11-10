@@ -14,6 +14,7 @@
 
 #include "MinHook.h"
 #include "log.h"
+#include "mutant.h"
 
 namespace coop::stations {
 
@@ -58,6 +59,7 @@ constexpr uint32_t kScriptDialogue = 0x0072E5A0;  // Dialogue(text): a speech bu
 constexpr DWORD kSayEveryMs = 3000;
 yyc::ScriptFn g_origCreateMenu = nullptr;
 int g_opened = kNoOne;  // the station whose menu this side opened last (open while a crafting menu exists)
+int g_menuLastStep = kNoOne;  // the station whose menu was open here at the last Tick
 
 using yyc::CallReal;
 
@@ -242,8 +244,11 @@ void DebugOpen(yyc::CInstance* localPlayer) {
 // Testing aid: COOP_DEBUG_CRAFT=<item> starts a craft of 3 of that item at the nearest station ~12 s in (as
 // the crafting menu leaves it: crafting = [item, count]), then logs both sides' progress every 2 s;
 // COOP_DEBUG_CRAFT_COUNT=<n> crafts n instead (a craft that is still running when a guest joins);
-// COOP_DEBUG_STATION_OBJECT=<object> picks the nearest station of that kind (a vault is a structure too).
+// COOP_DEBUG_STATION_OBJECT=<object> picks the nearest station of that kind (a vault is a structure too);
+// COOP_DEBUG_CRAFT_MENU=1 crafts at the station whose menu is open (COOP_DEBUG_STATION) and destroys the menu in
+// the same step, as uiCrafting's Other_13 does when a player picks a recipe.
 void DebugCraft(yyc::CInstance* localPlayer) {
+    static const bool viaMenu = GetEnvironmentVariableA("COOP_DEBUG_CRAFT_MENU", nullptr, 0) > 0;
     static const int item = [] {
         char value[16] = {};
         return GetEnvironmentVariableA("COOP_DEBUG_CRAFT", value, sizeof(value)) > 0 ? atoi(value) : -1;
@@ -263,15 +268,17 @@ void DebugCraft(yyc::CInstance* localPlayer) {
     if (item >= 0 && steps == 720) {
         const double x = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_x);
         const double y = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_y);
-        const int id = static_cast<int>(CallReal(localPlayer, "instance_nearest", {x, y, double(object)}));
-        if (yyc::FindInstance(id) == nullptr) {
-            Log("stations: debug craft: no station near (%.0f, %.0f)", x, y);
+        const int id = viaMenu ? OpenMenuStation(localPlayer)
+                               : static_cast<int>(CallReal(localPlayer, "instance_nearest", {x, y, double(object)}));
+        if (id == kNoOne || yyc::FindInstance(id) == nullptr) {
+            Log("stations: debug craft: no station %s (%.0f, %.0f)", viaMenu ? "menu open at" : "near", x, y);
             return;
         }
         yyc::RValue what = yyc::Real(item), count = yyc::Real(amount);
         yyc::SetVarAt(id, kSlotCrafting, 0, &what);
         yyc::SetVarAt(id, kSlotCrafting, 1, &count);
-        Log("stations: debug started crafting item %d at %d", item, id);
+        if (viaMenu) CallReal(localPlayer, "instance_destroy", {kUiCrafting});
+        Log("stations: debug started crafting item %d at %d%s", item, id, viaMenu ? " (menu closed)" : "");
     }
     if ((item < 0 && !watch) || steps % 120 != 0) return;
     const double x = yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_x);
@@ -326,9 +333,13 @@ void Tick(yyc::CInstance* localPlayer, bool guest) {
     g_localPlayer = localPlayer;
     ++g_steps;
     DebugOpen(localPlayer);
+    // uiCrafting's Other_13 sets the station's `crafting` and destroys the menu in the same event, so by this Tick
+    // the menu may already be gone: the station whose menu was open at the last Tick counts as well.
     const int menu = OpenMenuStation(localPlayer);
-    if (yyc::CInstance* station = menu == kNoOne ? nullptr : yyc::FindInstance(menu)) {
-        if (Crafting(menu)) g_own.insert(KeyOf(station));
+    const int used = menu != kNoOne || Mutant("craftmenu") ? menu : g_menuLastStep;
+    g_menuLastStep = menu;
+    if (yyc::CInstance* station = used == kNoOne ? nullptr : yyc::FindInstance(used)) {
+        if (Crafting(used) && !IsMirror(station)) g_own.insert(KeyOf(station));
     }
     if (g_steps % kStateEverySteps == 0) {
         for (const auto& [key, id] : g_crafting) {
@@ -337,7 +348,8 @@ void Tick(yyc::CInstance* localPlayer, bool guest) {
     }
     if (g_steps % kEverySteps != 0) return;
     std::set<Key> now;
-    g_crafting.clear();
+    std::map<Key, int> before;
+    before.swap(g_crafting);
     const int open = OpenMenuStation(localPlayer);
     const int count = static_cast<int>(CallReal(localPlayer, "instance_number", {kParStructure}));
     for (int i = 0; i < count; ++i) {
@@ -358,6 +370,17 @@ void Tick(yyc::CInstance* localPlayer, bool guest) {
         }
         if (crafting) g_crafting[key] = id;
         if (id == open || crafting) now.insert(key);
+    }
+    // instance_find skips stations asleep here (the player walked off-screen), and ones just being woken (activated,
+    // not yet back on the active list). An own craft there is not over: the station stays ours, or the other side
+    // would take its copy and overwrite the craft when we come back. Asleep, it runs no events, so it is still
+    // crafting as at the last scan (its variables cannot be read by id then). A destroyed one is let go.
+    for (const auto& [key, id] : before) {
+        if (g_crafting.count(key) > 0 || g_own.count(key) == 0 || g_mirrors.count(key) > 0) continue;
+        if (Mutant("craftasleep")) continue;
+        if (yyc::FindInstance(id) == nullptr) continue;
+        g_crafting[key] = id;
+        now.insert(key);
     }
     for (const Key& key : now) {
         if (g_mine.count(key) == 0) Send(key, true);
@@ -493,6 +516,7 @@ void Reset() {
     g_localPlayer = nullptr;
     g_peerOwners.clear();
     g_opened = kNoOne;
+    g_menuLastStep = kNoOne;
     g_mine.clear();
     g_peer.clear();
     g_crafting.clear();

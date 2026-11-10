@@ -13,6 +13,8 @@ $checks = [ordered]@{
   wake       = @{ Script = 'sleeplists.ps1';  Mutant = 'wake' }
   wakeactive = @{ Script = 'sleeplists.ps1';  Mutant = 'active' }
   modes      = @{ Script = 'modes.ps1';       Mutant = 'modes' }
+  craftmenu  = @{ Script = 'craftmenu.ps1';   Mutant = 'craftmenu' }
+  craftasleep = @{ Script = 'craftmenu.ps1';  Mutant = 'craftasleep' }
   worlddiff  = @{ Script = 'worlddiff-selfcheck.ps1'; Mutant = '' }
 }
 $rows = @()

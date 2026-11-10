@@ -598,7 +598,7 @@ void SteamInvites(yyc::CInstance* localPlayer) {
     if (!steam::HasLobby()) return;
     if (!g_inviteHinted) {
         g_inviteHinted = true;
-        stations::Say(localPlayer, "F2: invite Steam friends");
+        stations::Say(localPlayer, "f2: invite steam friends");
     }
     gui::Begin(localPlayer);
     if (gui::KeyPressed(VK_F2)) steam::OpenInviteDialog();
