@@ -482,6 +482,7 @@ void TrackPeers(yyc::CInstance* localPlayer, const std::vector<net::PeerId>& pee
         net::Send(kPeerGone, &peer, sizeof(peer));
         storage::OnPeerLeft(localPlayer, peer);
         stations::OnPeerLeft(peer);
+        puzzles::OnPeerLeft();
         chests::OnPeerLeft(localPlayer, peer);
     }
     g_peers = peers;

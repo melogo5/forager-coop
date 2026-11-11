@@ -51,6 +51,7 @@ constexpr int kObjTreasureChestSmall = 151;
 constexpr int kOnFire = 0x6B3;  // a small chest of the fire island burning (var_slots.tsv)
 constexpr int kObjEyeStatue = 174;
 constexpr int kObjGemSocket = 188;  // objGemSocketPillar
+constexpr uint32_t kScriptGainItem = 0x006AC690;  // GainItem(item): into PlayerFind()'s inventory (index.tsv)
 constexpr int kObjBattery = 175;      // objReceptorBig
 constexpr int kBellsPuzzle = 10;      // the three bells' puzzle number
 constexpr int kBellsFlag = 3;         // their place in global.puzzle
@@ -371,14 +372,33 @@ void NoteGem(int id, float before, float after, GemOwner owner) {
     }
 }
 
+// SendChanges notes our own gems every few steps: a gem put in here since (`socket` is not what it last saw) is ours
+// already - for an E right after putting it in, and for a tie that comes before it (ApplyState).
+void NoteFreshGem(int id, float socket) {
+    const auto known = g_known.find(std::make_pair(id, static_cast<int>(kSocket)));
+    if (known != g_known.end() && known->second != socket) NoteGem(id, known->second, socket, GemOwner::kMine);
+}
+
 // The local player's E on socket `id` may take out the gem in it.
 bool MayTakeGem(int id) {
     float socket = 0;
     if (!ReadNumber(id, kSocket, &socket) || !Filled(socket)) return true;  // empty: putting one in is anyone's
+    NoteFreshGem(id, socket);
     const auto owner = g_gemOwner.find(id);
     if (owner == g_gemOwner.end()) return !IsGuest();
     return owner->second == GemOwner::kMine;
 }
+
+// A tie lost: our gem in socket `id` was replaced by the host's - it goes back into our inventory.
+void GiveBackGem(yyc::CInstance* localPlayer, int id, float gem) {
+    yyc::RValue item = yyc::Real(gem);
+    yyc::RValue* args[1] = {&item};
+    yyc::RValue result{};
+    yyc::At<yyc::ScriptFn>(kScriptGainItem)(localPlayer, localPlayer, &result, 1, args);
+    yyc::Free(&result);
+    Log("puzzles: gem socket %d - the host's gem came over ours: our gem (item %.0f) back to us", id, gem);
+}
+
 void SendChanges(yyc::CInstance* self) {
     std::vector<StateEntry> changes;
     if (IsHost()) AddPuzzleFlags(self, changes);
@@ -455,17 +475,23 @@ void ApplyState(const net::Message& message, yyc::CInstance* localPlayer) {
         float gemBefore = 0;
         const bool gem =
             entry.object == kObjGemSocket && entry.slot == kSocket && ReadNumber(piece, kSocket, &gemBefore);
-        if (gem && IsHost() && Filled(entry.value) && Filled(gemBefore) && entry.value != gemBefore) {
+        // A tie: both put a gem into the same empty socket within a send interval. The host's stays, here and (sent
+        // again) at the guest, whose own gem goes back into its inventory (review of #8) - each side showing the
+        // other's gem, nobody could take it out, and one gem was lost. Our gem is ours even before SendChanges noted it.
+        const bool tie = gem && Filled(entry.value) && Filled(gemBefore) && entry.value != gemBefore;
+        bool oursReplaced = false;
+        if (tie) {
+            NoteFreshGem(piece, gemBefore);
             const auto owner = g_gemOwner.find(piece);
-            if (owner != g_gemOwner.end() && owner->second == GemOwner::kMine) {
-                // Both put a gem into the same empty socket within a send interval: the host's stays, here and (sent
-                // again) at the guest (review of #8) - each side showing the other's gem, nobody could take it out.
+            oursReplaced = owner != g_gemOwner.end() && owner->second == GemOwner::kMine;
+            if (oursReplaced && IsHost()) {
                 g_known.erase(std::make_pair(piece, static_cast<int>(kSocket)));
                 Log("puzzles: gem socket %d - a guest's gem came over the host's own: the host's stays", piece);
                 continue;
             }
         }
         WriteNumber(piece, entry.slot, entry.value);
+        if (oursReplaced) GiveBackGem(localPlayer, piece, gemBefore);
         if (gem) NoteGem(piece, gemBefore, entry.value, GemOwner::kOther);
         if (solvedNow) EyeSolvedAtHost(localPlayer, piece);
         if (kind->moves && entry.slot == kSlotX) {  // the host moves it: no sliding of its own here
@@ -1062,5 +1088,11 @@ void Reset() {
 }
 
 void ForgetSession() { g_gemOwner.clear(); }
+
+void OnPeerLeft() {
+    for (auto it = g_gemOwner.begin(); it != g_gemOwner.end();) {
+        it = it->second == GemOwner::kOther ? g_gemOwner.erase(it) : std::next(it);
+    }
+}
 
 }  // namespace coop::puzzles
