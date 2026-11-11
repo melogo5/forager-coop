@@ -52,4 +52,13 @@ bool ResetPuzzle(yyc::CInstance* self, int number, bool share);
 // A new room: what was known about the last one's pieces goes.
 void Reset();
 
+// The session is over: who put which gem into the world's sockets goes too (kept over trips into a dungeon).
+void ForgetSession();
+
+// Host: a guest left. Its gems would stay "another player's" here for good (and, back again, at the guest too: it
+// forgot them when it left), so no one could take them out: every gem a guest put in becomes one of no known owner -
+// the host's to take out. The notes do not say which guest, so this frees the gems of guests still here as well: still
+// no double drop, since only the host may take them out.
+void OnPeerLeft();
+
 }  // namespace coop::puzzles
