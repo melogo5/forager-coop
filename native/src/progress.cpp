@@ -238,8 +238,12 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     const size_t i = p[0];
     uint16_t size[2] = {};
     memcpy(size, p.data() + 1, sizeof(size));
-    Cells theirs{size[0], size[1], std::vector<double>(static_cast<size_t>(size[0]) * size[1])};
-    if (p.size() != 5 + theirs.values.size() * sizeof(double)) return true;
+    const size_t count = static_cast<size_t>(size[0]) * size[1];
+    if (count == 0 || count > kMaxCells || p.size() != 5 + count * sizeof(double)) {
+        Log("progress: invalid museum grid rejected");
+        return true;
+    }
+    Cells theirs{size[0], size[1], std::vector<double>(count)};
     memcpy(theirs.values.data(), p.data() + 5, theirs.values.size() * sizeof(double));
     const double id = GridId(i);
     Cells here;
