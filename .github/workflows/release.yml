@@ -1,6 +1,7 @@
 # Builds native\build\version.dll and the Steam Workshop package zip (mods\ForagerCoop\build.ps1; uploaded to Steam
 # by hand). A pushed tag v* publishes both as a GitHub release (a tag with a '-', like v0.2.0-beta1, becomes a
-# pre-release); a manual run only builds and keeps both as workflow artifacts.
+# pre-release) with the tag's section of CHANGELOG.md as its text; a manual run only builds and keeps both as workflow
+# artifacts.
 name: release
 
 on:
@@ -18,6 +19,23 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0   # the previous tag, for the "Full changelog" link
+
+      # The release text is written by hand in CHANGELOG.md (## <tag>). Checked first, so a tag without it fails in
+      # seconds instead of after the build.
+      - name: Release notes from CHANGELOG.md
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $changelog = Get-Content CHANGELOG.md -Raw -Encoding utf8
+          $heading = '(?m)^## ' + [regex]::Escape($env:TAG) + '[ \t]*\r?\n'
+          $m = [regex]::Match($changelog, $heading + '(?s)(.*?)(?=^## |\z)', 'Multiline')
+          if (-not $m.Success -or -not $m.Groups[1].Value.Trim()) {
+            throw "CHANGELOG.md has no '## $env:TAG' section. Write what changed for players there, then tag again."
+          }
+          $m.Groups[1].Value.Trim() | Set-Content "$env:RUNNER_TEMP/changes.md" -Encoding utf8
 
       - name: Build version.dll
         shell: pwsh
@@ -44,7 +62,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          $notes = @'
+          $changes = Get-Content "$env:RUNNER_TEMP/changes.md" -Raw -Encoding utf8
+          $prev = git describe --tags --abbrev=0 "$env:TAG^" 2>$null
+          $compare = if ($prev) {
+            "**Full changelog**: https://github.com/${{ github.repository }}/compare/$prev...$env:TAG"
+          } else { '' }
+          $install = @'
           ## Installation
           Every player needs the co-op. Only the Steam version 4.1.9 (build 2021-01-29) is supported.
 
@@ -66,6 +89,8 @@ jobs:
 
           `ForagerCoop-Workshop-*.zip` is the Steam Workshop package of the same build; players do not need it.
           '@
-          $flags = @('--generate-notes', '--notes', $notes, '--title', $env:TAG)
+          $notes = "## What's new`n`n$changes`n`n$install`n`n$compare"
+          $notes | Set-Content "$env:RUNNER_TEMP/notes.md" -Encoding utf8
+          $flags = @('--notes-file', "$env:RUNNER_TEMP/notes.md", '--title', $env:TAG)
           if ($env:TAG.Contains('-')) { $flags += '--prerelease' }
           gh release create $env:TAG native/build/version.dll "mods/ForagerCoop/build/ForagerCoop-Workshop-$env:TAG.zip" @flags
