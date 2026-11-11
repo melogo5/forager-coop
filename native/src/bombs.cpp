@@ -38,6 +38,11 @@ struct BombMsg {
 std::unordered_set<int> g_decoys;       // bombs of other players: never go off here
 std::unordered_set<int> g_harmless;     // blasts made for a decoy: their step (the damage) is skipped
 int g_placing = 0;                      // inside our own instance_create of a decoy or a blast
+// Our own bombs' blasts (friendly fire): made while our bomb's Destroy_0 runs; while one's step runs, the damage it
+// does to another player's puppet goes to that player (puppet::SetPuppetHurtHandler, emotes.cpp).
+int g_ownDestroy = 0;
+std::unordered_set<int> g_ownBlasts;
+bool g_inOwnBlastStep = false;
 yyc::EventFn g_origAlarm = nullptr;
 yyc::EventFn g_origDestroy = nullptr;
 yyc::EventFn g_origExplosionStep = nullptr;
@@ -80,7 +85,9 @@ void __cdecl DestroyHook(yyc::CInstance* self, yyc::CInstance* other) {
         const BombMsg msg = Describe(self);
         net::Send(kBombBlast, &msg, sizeof(msg));
     }
+    ++g_ownDestroy;
     g_origDestroy(self, other);
+    --g_ownDestroy;
 }
 
 // The step also grows, fades and ends the blast: it runs, with the damage marked as dealt already.
@@ -92,7 +99,11 @@ void __cdecl ExplosionStepHook(yyc::CInstance* self, yyc::CInstance* other) {
         yyc::SetVar(id, kSlotDmg, &none);
         yyc::SetVar(id, kSlotDmgPlayer, &none2);
     }
+    const bool own = g_ownBlasts.count(id) > 0;
+    g_inOwnBlastStep = own;
     g_origExplosionStep(self, other);
+    g_inOwnBlastStep = false;
+    if (own && yyc::FindInstance(id) == nullptr) g_ownBlasts.erase(id);
 }
 
 void Place(yyc::CInstance* self, const BombMsg& msg) {
@@ -147,6 +158,13 @@ bool InstallHooks() {
 }
 
 void OnCreated(yyc::CInstance* self, int createdId, int object) {
+    if (object == kObjExplosion && g_ownDestroy > 0) {
+        for (auto it = g_ownBlasts.begin(); it != g_ownBlasts.end();) {  // blasts end by themselves (Other_7)
+            it = yyc::FindInstance(*it) == nullptr ? g_ownBlasts.erase(it) : std::next(it);
+        }
+        g_ownBlasts.insert(createdId);
+        return;
+    }
     if (object != kObjBomb || g_placing > 0 || !PlacedByPlayer()) return;
     yyc::CInstance* bomb = yyc::FindInstance(createdId);
     if (bomb == nullptr) return;
@@ -175,10 +193,15 @@ void MakeHarmless(int explosionId) {
     }
 }
 
+bool InOwnBlastStep() { return g_inOwnBlastStep; }
+
 void Reset() {
     g_decoys.clear();
     g_harmless.clear();
     g_placing = 0;
+    g_ownDestroy = 0;
+    g_ownBlasts.clear();
+    g_inOwnBlastStep = false;
 }
 
 }  // namespace coop::bombs

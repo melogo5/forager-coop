@@ -25,4 +25,9 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer);
 // A world was left: the commands are registered again in the next one.
 void Reset();
 
+// Game thread: adds chat command /<name> running script `scriptIndex` (its place in data.win's SCPT list; a script
+// nothing in the game calls, hooked by its owner) unless the chat has it already. False while the chat is not set
+// up. For any player - the commands above are the host's.
+bool RegisterIfMissing(yyc::CInstance* self, const char* name, double scriptIndex, const char* help);
+
 }  // namespace coop::commands

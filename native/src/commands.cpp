@@ -194,6 +194,23 @@ bool Handle(const net::Message& message, yyc::CInstance* localPlayer) {
     return true;
 }
 
+bool RegisterIfMissing(yyc::CInstance* self, const char* name, double scriptIndex, const char* help) {
+    const yyc::RValue* map = yyc::GlobalVar(kSlotChatCommands);
+    if (map == nullptr || !yyc::IsNumber(*map)) return false;  // the chat is not set up yet
+    const double mapId = yyc::ToReal(*map);
+    if (yyc::CallReal(self, "ds_exists", {mapId, yyc::kDsTypeMap}) == 0) return false;
+    yyc::RValue args[2] = {yyc::Real(mapId), yyc::String(name)};
+    yyc::RValue exists{};
+    yyc::CallBuiltin("ds_map_exists", self, 2, args, &exists);
+    const bool there = yyc::ToReal(exists) != 0;
+    yyc::Free(&exists);
+    yyc::Free(&args[1]);
+    if (there) return true;
+    Register(self, name, scriptIndex, help);
+    Log("commands: /%s registered in the chat", name);
+    return true;
+}
+
 void Reset() { g_registered = false; }
 
 }  // namespace coop::commands

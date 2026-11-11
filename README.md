@@ -38,6 +38,8 @@
   the guest's name, so you come back as yourself.
 - **Dungeons together:** everyone goes in and out together; puzzles, lanterns, keys and chests are synced.
 - **No game over:** a dead player gets back up on the starting island (or at the dungeon entrance).
+- **Fun together:** hit a friend on the head with your pickaxe for a *bonk* (no damage), type `/dance` in the
+  chat to dance to a little tune (walk to stop), and mind your bombs: their blast hurts the other players too.
 
 > **Status: beta.** Most of the game plays fine together, but some things can still go out of sync.
 > Please report bugs on [Discord](https://discord.gg/BjsubWefm4) or in [Issues](https://github.com/melogo5/forager-coop/issues).

@@ -34,6 +34,7 @@
 #include "traps.h"
 #include "bombs.h"
 #include "dungeons.h"
+#include "emotes.h"
 #include "voidzone.h"
 #include "puzzles.h"
 #include "commands.h"
@@ -65,7 +66,7 @@ namespace coop {
 
 namespace {
 
-constexpr uint32_t kProtocolVersion = 21;  // 21: the Void together (places, seed, level state: 112, 113); 20: world puzzles, ice bolts, signs (105, 108-111), gem sockets no longer shared; 19: the player's aim (mouse) in its state; 18: floor/road tiles, structure variants, everyone's familiars; 17: puzzle pieces by the host's
+constexpr uint32_t kProtocolVersion = 22;  // 22: bonk and friendly fire (114), dancing in the state; 21: the Void together (places, seed, level state: 112, 113); 20: world puzzles, ice bolts, signs (105, 108-111), gem sockets no longer shared; 19: the player's aim (mouse) in its state; 18: floor/road tiles, structure variants, everyone's familiars; 17: puzzle pieces by the host's
                                            // id and spot; 16: item unlocks; 15: a guest greets first (net.cpp); 14: the
                                            // tool swing
 constexpr uint32_t kYYVarImageBlend = 0x01AD8768;  // decompiled/code/yyvar_map.tsv
@@ -112,6 +113,7 @@ struct PlayerStateMsg {
     puppet::Swing swing;  // the biggest since the last update: a hit lasts a step, updates come every few
     int32_t blend;  // image_blend: the rainbow body's colours, made in the player's Step_2 (puppets have none)
     float aimX, aimY;  // mouse_x/mouse_y (room): where its puppet's tool points (swords, bows)
+    uint8_t flags;     // emotes::StateFlags: dancing
 };
 struct PeerStateMsg {
     uint8_t player;
@@ -201,6 +203,7 @@ PlayerStateMsg CaptureState(yyc::CInstance* player) {
     }
     s.aimX = aimX;
     s.aimY = aimY;
+    s.flags = emotes::StateFlags();
     yyc::Free(&tool);
     return s;
 }
@@ -407,7 +410,7 @@ void HandleMessages(yyc::CInstance* localPlayer) {
             progress::Handle(message, localPlayer) || quests::Handle(message, localPlayer) ||
             stations::Handle(message, localPlayer) || skills::Handle(message, localPlayer) || traps::Handle(message, localPlayer) ||
             banks::Handle(message, localPlayer) || reconcile::Handle(message, localPlayer) || chests::Handle(message, localPlayer) ||
-            familiars::Handle(message) || bombs::Handle(message, localPlayer) ||
+            familiars::Handle(message) || bombs::Handle(message, localPlayer) || emotes::Handle(message, localPlayer) ||
             puzzles::Handle(message, localPlayer) || commands::Handle(message, localPlayer) ||
             displays::Handle(message, localPlayer) || signs::Handle(message, localPlayer) ||
             shots::Handle(message, localPlayer) || voidzone::Handle(message, localPlayer)) {
@@ -657,6 +660,7 @@ void Tick(yyc::CInstance* localPlayer) {
     constexpr int kRoomWorld = 8;  // rmGame
     look::Tick(localPlayer, g_role == Role::kGuest,
                static_cast<int>(yyc::GetBuiltinReal(localPlayer, yyc::va::YYVar_room)) == kRoomWorld);
+    emotes::LocalTick(localPlayer);  // alone too: /dance
     ApplyDebugGodMode();
     ApplyDebugCheats();
     ApplyDebugSpeed(localPlayer);
@@ -693,6 +697,7 @@ void Tick(yyc::CInstance* localPlayer) {
         Log("session: peer gone");
         g_remotes.clear();
         puppet::DestroyAll(localPlayer);
+        emotes::Reset();
         sync::Reset();  // a guest coming back starts over: new replicas, new drops
         storage::Reset();
         stations::Reset();
@@ -788,6 +793,7 @@ void Tick(yyc::CInstance* localPlayer) {
         target.aimX = remote.aimX;
         target.aimY = remote.aimY;
         puppet::Update(localPlayer, player, target);
+        emotes::OnRemoteState(player, remote.flags);
     }
 }
 
@@ -886,6 +892,7 @@ void Leave() {
     character::Reset();
     familiars::Reset();
     bombs::Reset();
+    emotes::Reset();
     shots::Reset();
     signs::Reset();
     dungeons::Reset();
@@ -946,7 +953,7 @@ bool SessionInstall() {
     if (!sync::InstallHooks(isHost, isGuest) || !mobs::InstallHooks(isHost, isGuest) ||
         !character::InstallHooks(isGuest) || !storage::InstallHooks() || !land::InstallHooks(isHost, isGuest) ||
         !progress::InstallHooks() || !stations::InstallHooks() || !chests::InstallHooks(isHost) ||
-        !traps::InstallHooks(isHost, isGuest) || !bombs::InstallHooks() || !shots::InstallHooks() || !puzzles::InstallHooks(isHost, isGuest) || !commands::InstallHooks(isGuest) || !banks::InstallHooks(isHost, isGuest) || !skills::InstallHooks()) {
+        !traps::InstallHooks(isHost, isGuest) || !bombs::InstallHooks() || !emotes::InstallHooks(isHost) || !shots::InstallHooks() || !puzzles::InstallHooks(isHost, isGuest) || !commands::InstallHooks(isGuest) || !banks::InstallHooks(isHost, isGuest) || !skills::InstallHooks()) {
         return false;
     }
     Role role = Role::kNone;

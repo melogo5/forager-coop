@@ -113,6 +113,8 @@ bool g_drawingAim = false;
 double g_drawAimX = 0, g_drawAimY = 0;
 // mouse_x/mouse_y's builtin variable ids: numbered by the runner after start-up, so read at the first puppet draw.
 int g_mouseXId = -1, g_mouseYId = -1;
+DrawCallbacks g_draw{};
+PuppetHurtFn g_puppetHurt = nullptr;
 
 Puppet* Find(net::PeerId player) {
     for (auto& puppet : g_puppets) {
@@ -277,11 +279,40 @@ void __cdecl Step1Hook(yyc::CInstance* self, yyc::CInstance* other) {
     g_origStep1(self, other);
 }
 
+// The puppet's player, or kLocalPlayer for an objPlayer that is no puppet (the local player, the skill tree's avatar).
+int WhoIs(const yyc::CInstance* instance) {
+    for (const auto& puppet : g_puppets) {
+        if (puppet.instance == instance) return puppet.player;
+    }
+    return kLocalPlayer;
+}
+
+// The local player or a puppet, drawn with the pose the draw callbacks give it (and put back afterwards).
+void DrawPosed(yyc::CInstance* self, yyc::CInstance* other, int who) {
+    bool posed = false;
+    if (g_draw.before != nullptr && g_draw.after != nullptr) {
+        __try {
+            g_draw.before(self, who);
+            posed = true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            Log("puppet: before-draw callback crashed (code 0x%08lX)", GetExceptionCode());
+        }
+    }
+    g_origDraw(self, other);
+    if (!posed) return;
+    __try {
+        g_draw.after(self, who);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        Log("puppet: after-draw callback crashed (code 0x%08lX)", GetExceptionCode());
+    }
+}
+
 void __cdecl DrawHook(yyc::CInstance* self, yyc::CInstance* other) {
     if (!IsPuppetInstance(self)) {
-        g_origDraw(self, other);
+        DrawPosed(self, other, kLocalPlayer);
         return;
     }
+    const int who = WhoIs(self);  // kLocalPlayer: the skill tree's avatar, drawn with no pose
     const int previous = g_actorId;
     g_actorId = static_cast<int>(yyc::GetBuiltinReal(self, yyc::va::YYVar_id));
     bool aiming = false;
@@ -297,7 +328,11 @@ void __cdecl DrawHook(yyc::CInstance* self, yyc::CInstance* other) {
     }
     g_drawingPuppet = true;
     g_drawingAim = aiming;
-    g_origDraw(self, other);
+    if (who != kLocalPlayer) {
+        DrawPosed(self, other, who);
+    } else {
+        g_origDraw(self, other);
+    }
     g_drawingAim = false;
     g_drawingPuppet = false;
     g_actorId = previous;
@@ -313,9 +348,15 @@ void __cdecl DrawSpriteExtHook(yyc::CInstance* self, int sprite, int subimg, flo
 // the local player, whoever was hit. A puppet is `other` when it touches the attacker, and `self` when the attacker
 // goes through the allies - a slime landing (`with (parAlly) if (place_meeting(x, y, slime)) DmgPlayer(...)`) hurt
 // the host when it landed on the guest (playtest 5).
+// The hurt handler hears of the damage a puppet takes as `self` (a blast's `with` over the players in its reach).
 yyc::RValue* __cdecl DmgPlayerHook(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc,
                                    yyc::RValue** args) {
-    if (IsPuppetInstance(other) || IsPuppetInstance(self)) return result;
+    if (IsPuppetInstance(self)) {
+        const int who = WhoIs(self);
+        if (g_puppetHurt != nullptr && who != kLocalPlayer) g_puppetHurt(static_cast<net::PeerId>(who), argc, args);
+        return result;
+    }
+    if (IsPuppetInstance(other)) return result;
     return g_origDmgPlayer(self, other, result, argc, args);
 }
 
@@ -353,11 +394,14 @@ void DrawLabel(const Puppet& puppet) {
 void __cdecl DrawEndHook(yyc::CInstance* self, yyc::CInstance* other) {
     if (IsPuppetInstance(self)) return;
     g_origDrawEnd(self, other);
-    if (g_puppets.empty()) return;
+    if (g_puppets.empty() && g_draw.overlay == nullptr) return;
     __try {
         gui::Begin(self);
+        if (g_draw.overlay != nullptr) g_draw.overlay(self, kLocalPlayer);
         for (const auto& puppet : g_puppets) {
-            if (yyc::FindInstance(puppet.id) == puppet.instance) DrawLabel(puppet);
+            if (yyc::FindInstance(puppet.id) != puppet.instance) continue;
+            DrawLabel(puppet);
+            if (g_draw.overlay != nullptr) g_draw.overlay(puppet.instance, puppet.player);
         }
         gui::End();
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -537,6 +581,10 @@ void AfterBuiltinRead(int varId, yyc::RValue* out) {
     if ((out->kind & yyc::kKindMask) != yyc::kReal) return;  // a number: nothing to free
     out->real = isX ? g_drawAimX : g_drawAimY;
 }
+
+void SetDrawCallbacks(const DrawCallbacks& callbacks) { g_draw = callbacks; }
+
+void SetPuppetHurtHandler(PuppetHurtFn handler) { g_puppetHurt = handler; }
 
 void SetEnemiesSeeAll(bool on) { g_enemiesSeeAll = on; }
 

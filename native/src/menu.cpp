@@ -4,11 +4,11 @@
 
 #include <algorithm>
 #include <cstring>
-#include <fstream>
 #include <string>
 #include <vector>
 
 #include "MinHook.h"
+#include "assets.h"
 #include "character.h"
 #include "coop_button_png.h"
 #include "coop_ui_png.h"
@@ -122,38 +122,11 @@ yyc::CInstance* FindMenuButton(yyc::CInstance* self, int sprite) {
     return nullptr;
 }
 
-// Writes an embedded PNG next to the saves, where the game's file functions look, and adds it as a sprite of
-// `frames` frames side by side. The sprite index, or -1.
-int AddSprite(yyc::CInstance* self, const unsigned char* png, size_t size, const char* file, int frames, double ox,
-              double oy) {
-    wchar_t local[MAX_PATH] = {};
-    const DWORD length = GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
-    if (length == 0 || length >= MAX_PATH) return -1;
-    {
-        const std::wstring path = std::wstring(local) + L"\\Forager\\" + std::wstring(file, file + strlen(file));
-        std::ofstream out(path.c_str(), std::ios::binary | std::ios::trunc);
-        out.write(reinterpret_cast<const char*>(png), static_cast<std::streamsize>(size));
-        if (!out) {
-            Log("menu: cannot write %s", file);
-            return -1;
-        }
-    }
-    yyc::RValue args[6] = {yyc::String(file), yyc::Real(frames), yyc::Real(0), yyc::Real(0), yyc::Real(ox),
-                           yyc::Real(oy)};
-    yyc::RValue result{};
-    yyc::CallBuiltin("sprite_add", self, 6, args, &result);
-    const int sprite = static_cast<int>(yyc::ToReal(result));
-    yyc::Free(&result);
-    yyc::Free(&args[0]);
-    Log("menu: sprite %s %s (%d)", file, sprite >= 0 ? "loaded" : "NOT loaded", sprite);
-    return sprite >= 0 ? sprite : -1;
-}
-
 // The COOP button's own sprite, made like the game's menu buttons (native/assets/coop_button.png, embedded).
 bool CoopSpriteReady(yyc::CInstance* self) {
     if (g_coopSprite == -1) {
-        const int sprite = AddSprite(self, kCoopButtonPng, sizeof(kCoopButtonPng), "coop_button.png", 2,
-                                     kCoopSpriteOriginX, kCoopSpriteOriginY);
+        const int sprite = assets::AddSprite(self, kCoopButtonPng, sizeof(kCoopButtonPng), "coop_button.png", 2,
+                                             kCoopSpriteOriginX, kCoopSpriteOriginY);
         g_coopSprite = sprite >= 0 ? sprite : -2;
     }
     return g_coopSprite >= 0;
@@ -162,7 +135,7 @@ bool CoopSpriteReady(yyc::CInstance* self) {
 // The COOP screen's button bodies (native/assets/coop_ui.png, embedded).
 bool UiSpriteReady(yyc::CInstance* self) {
     if (g_uiSprite == -1) {
-        const int sprite = AddSprite(self, kCoopUiPng, sizeof(kCoopUiPng), "coop_ui.png", kUiFrames, 0, 0);
+        const int sprite = assets::AddSprite(self, kCoopUiPng, sizeof(kCoopUiPng), "coop_ui.png", kUiFrames, 0, 0);
         g_uiSprite = sprite >= 0 ? sprite : -2;
     }
     return g_uiSprite >= 0;

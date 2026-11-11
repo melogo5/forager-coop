@@ -52,6 +52,23 @@ bool InstallHooks(LocalStepFn onLocalStep, LocalStepFn beforeLocalStep1);
 // point_direction(x, y, mouse_x, mouse_y) - the sword of the other player's puppet followed our own mouse.
 void AfterBuiltinRead(int varId, yyc::RValue* out);
 
+// Who an objPlayer drawn is: the local player, or (a net::PeerId) that player's puppet.
+constexpr int kLocalPlayer = -1;
+// Around each objPlayer's Draw_0 (the local player's and every puppet's): `before` may change how it is drawn (its
+// squash, its facing), `after` puts that back. `overlay` runs at the local player's draw end, over everything, once
+// for the local player and once for each puppet (room coordinates; gui::Begin is done). All three or none.
+struct DrawCallbacks {
+    void (*before)(yyc::CInstance* player, int who) = nullptr;
+    void (*after)(yyc::CInstance* player, int who) = nullptr;
+    void (*overlay)(yyc::CInstance* player, int who) = nullptr;
+};
+void SetDrawCallbacks(const DrawCallbacks& callbacks);
+
+// DmgPlayer aimed at a puppet is dropped here (it would hurt the local player); `handler` hears of it first: whose
+// puppet it was and DmgPlayer's arguments.
+using PuppetHurtFn = void (*)(net::PeerId player, int argc, yyc::RValue** args);
+void SetPuppetHurtHandler(PuppetHurtFn handler);
+
 // Host with guests: an enemy asking for "the player" (PlayerFind) gets the nearest of the local player and the
 // puppets, so it chases and attacks whoever is closest.
 void SetEnemiesSeeAll(bool on);
