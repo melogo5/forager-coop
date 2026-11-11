@@ -9,6 +9,8 @@
 namespace coop::files {
 
 // Creates the parent folders, writes `data` and replaces `path` with it. False (and `path` untouched) on failure.
+bool IsCompleteCinder(const uint8_t* data, size_t size);
+
 bool WriteAtomic(const std::filesystem::path& path, const uint8_t* data, size_t size);
 
 }  // namespace coop::files
