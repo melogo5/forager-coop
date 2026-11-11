@@ -106,11 +106,6 @@ The DLL is built to `native\build\version.dll`; `-Install` also copies it to the
 Pushing a `v*` tag builds the DLL on GitHub Actions and publishes a release (a tag with a `-`, like `v0.2.0-beta1`,
 becomes a pre-release).
 
-**Before tagging a release, write its section in [CHANGELOG.md](CHANGELOG.md)** (`## v0.1.7`), commit and push it.
-The release text is taken from there; without the section the release fails before the build. Write it for players:
-what is new and what works now that did not, one line per change, related fixes in one line, nothing a player would
-not notice (refactoring, tests, reviews). The same text goes into the Steam Workshop changenote.
-
 ### How it works
 
 Forager is built with GameMaker YYC (GML compiled to machine code), so there are no scripts to edit. Instead
