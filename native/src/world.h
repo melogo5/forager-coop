@@ -20,6 +20,7 @@ bool HandleMessage(const net::Message& message);
 // Guest: the slot the host world is written to, and whether a complete world has arrived.
 constexpr int kGuestSlot = 99;
 bool GuestWorldReady();
+bool GuestWorldFailed();
 
 // Game thread: an instance was destroyed - the herb list may hold a gone id now (cleaned before the next HerbProcess).
 void OnInstanceDestroyed();

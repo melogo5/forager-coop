@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
@@ -15,6 +16,7 @@
 #include <vector>
 
 #include "MinHook.h"
+#include "files.h"
 #include "interiors.h"
 #include "log.h"
 #include "mutant.h"
@@ -37,6 +39,8 @@ constexpr size_t kChunkSize = 32 * 1024;
 constexpr size_t kMaxBacklog = 4 * 1024 * 1024;  // snapshot bytes queued for a guest before the sender waits
 constexpr size_t kMaxPath = 200;
 constexpr uint32_t kMaxFileSize = 64u * 1024 * 1024;
+constexpr uint32_t kMaxFiles = 16384;
+constexpr uint64_t kMaxSnapshotSize = 256ull * 1024 * 1024;
 constexpr char kMarkerName[] = "coop_world.txt";
 
 // Host state (game thread).
@@ -53,11 +57,17 @@ yyc::ScriptFn g_origSaveGame = nullptr;
 std::mutex g_receiveLock;
 fs::path g_targetDir;
 std::ofstream g_file;
+fs::path g_filePath;
 uint32_t g_fileRemaining = 0;
 int g_filesReceived = 0;
 uint32_t g_filesExpected = 0;  // as the host announced
-int g_filesBroken = 0;         // rejected, cut short or not written: the world here differs from the host's
-std::atomic<bool> g_ready{false};  // read by the game thread
+int g_filesBroken = 0;
+uint64_t g_snapshotSize = 0;
+std::set<std::string> g_paths;
+bool g_receiving = false;
+std::atomic<bool> g_slotOwned{false};  // SaveGame may replace the marker in a slot we created
+std::atomic<bool> g_ready{false};
+std::atomic<bool> g_failed{false};
 
 fs::path SaveRoot() {
     wchar_t local[MAX_PATH] = {};
@@ -75,7 +85,34 @@ bool IsSafeRelativePath(const std::string& path) {
                         c == '_' || c == '-' || c == '/' || c == ' ';
         if (!ok) return false;
     }
+    size_t start = 0;
+    while (start < path.size()) {
+        const size_t slash = path.find('/', start);
+        const size_t end = slash == std::string::npos ? path.size() : slash;
+        if (end == start || path[end - 1] == '.' || path[end - 1] == ' ') return false;
+        if (slash == std::string::npos) break;
+        start = slash + 1;
+        if (start == path.size()) return false;
+    }
     return true;
+}
+
+std::string PathKey(std::string path) {
+    std::transform(path.begin(), path.end(), path.begin(), [](char c) {
+        return c >= 'A' && c <= 'Z' ? static_cast<char>(c + ('a' - 'A')) : c;
+    });
+    return path;
+}
+
+bool IsWorldFile(const std::string& key) {
+    // The game's world files are Data.cin and .cin files below Zones. The marker is ours.
+    return key == "data.cin" || (key.rfind("zones/", 0) == 0 && key.size() > 10 &&
+                                key.compare(key.size() - 4, 4, ".cin") == 0);
+}
+
+bool ReparsePoint(const fs::path& path) {
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
 }
 
 void Put32(std::vector<uint8_t>& out, uint32_t v) {
@@ -85,10 +122,14 @@ void Put32(std::vector<uint8_t>& out, uint32_t v) {
 uint32_t Get32(const uint8_t* p) { return p[0] | (p[1] << 8) | (p[2] << 16) | (static_cast<uint32_t>(p[3]) << 24); }
 
 bool SendFile(net::PeerId peer, const fs::path& root, const fs::path& file) {
-    const std::string relative = fs::relative(file, root).generic_u8string();
-    std::ifstream in(file, std::ios::binary);
-    std::vector<uint8_t> data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    if (!in.good() && !in.eof()) return false;
+    const std::string relative = file.lexically_relative(root).generic_u8string();
+    std::ifstream in(file, std::ios::binary | std::ios::ate);
+    if (!in) return false;
+    const auto size = in.tellg();
+    if (size <= 0 || size > kMaxFileSize) return false;
+    std::vector<uint8_t> data(static_cast<size_t>(size));
+    in.seekg(0);
+    if (!in.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(data.size()))) return false;
 
     std::vector<uint8_t> header;
     header.push_back(static_cast<uint8_t>(relative.size() & 0xFF));
@@ -132,14 +173,20 @@ void SendSnapshot(int slotNumber, std::vector<net::PeerId> peers) {
     const fs::path root = SaveRoot() / fs::u8path(slot);
     std::error_code error;
     std::vector<fs::path> files;
-    for (const auto& entry : fs::recursive_directory_iterator(root, error)) {
-        // The host's stored guest characters stay on the host.
-        const std::string relative = fs::relative(entry.path(), root, error).generic_u8string();
-        if (relative.rfind("coop_guests/", 0) == 0) continue;
-        if (entry.is_regular_file() && entry.path().filename() != kMarkerName) files.push_back(entry.path());
+    for (fs::recursive_directory_iterator entry(root, error), end; !error && entry != end; entry.increment(error)) {
+        const auto& path = entry->path();
+        const std::string relative = path.lexically_relative(root).generic_u8string();
+        if (ReparsePoint(path) || PathKey(relative) == "coop_guests") {
+            entry.disable_recursion_pending();
+            continue;
+        }
+        if (entry->is_regular_file(error) && IsSafeRelativePath(relative) && IsWorldFile(PathKey(relative))) {
+            files.push_back(path);
+        }
     }
-    if (error || files.empty()) {
+    if (error || files.empty() || files.size() > kMaxFiles) {
         Log("world: cannot read slot %s", slot.c_str());
+        for (const net::PeerId peer : peers) net::SendTo(peer, kWorldEnd, nullptr, 0);
         return;
     }
     WaitUntilWritten(files);
@@ -148,7 +195,7 @@ void SendSnapshot(int slotNumber, std::vector<net::PeerId> peers) {
     for (const net::PeerId peer : peers) {
         bool ok = net::SendTo(peer, kWorldBegin, begin.data(), begin.size());
         for (const auto& file : files) ok = ok && SendFile(peer, root, file);
-        ok = ok && net::SendTo(peer, kWorldEnd, nullptr, 0);
+        ok = net::SendTo(peer, kWorldEnd, nullptr, 0) && ok;
         Log("world: snapshot of %s (%zu files) to guest %u %s", slot.c_str(), files.size(), peer,
             ok ? "sent" : "FAILED");
     }
@@ -162,15 +209,19 @@ fs::path GuestSlotDir() {
 void RemoveGuestSlot() {
     const fs::path dir = GuestSlotDir();
     std::error_code error;
-    if (dir.empty() || !fs::exists(dir / kMarkerName, error)) return;  // only ever delete our own slot
+    if (dir.empty() || ReparsePoint(dir)) return;
+    const bool marked = fs::is_regular_file(dir / kMarkerName, error);
+    if (!g_slotOwned && !marked) return;
+    error.clear();
     fs::remove_all(dir, error);
+    if (!error) g_slotOwned = false;
     Log("world: temporary slot %d %s", kGuestSlot, error ? "could not be removed" : "removed");
 }
 
 // The guest's game saves into slot 99 like any game into its slot: leaving the world (skill tree, other
 // rooms) saves, and coming back reloads the world from that save. Marked so a later start cleans it up.
 yyc::RValue* Save(yyc::CInstance* self, yyc::CInstance* other, yyc::RValue* result, int argc, yyc::RValue** args) {
-    if (g_isGuest != nullptr && g_isGuest()) {
+    if (g_isGuest != nullptr && g_isGuest() && g_slotOwned) {
         std::error_code error;
         fs::create_directories(GuestSlotDir(), error);
         std::ofstream(GuestSlotDir() / kMarkerName) << "Forager coop: the guest's working copy. Removed automatically.\n";
@@ -310,39 +361,64 @@ yyc::RValue* __cdecl SaveGameHook(yyc::CInstance* self, yyc::CInstance* other, y
 void EndFile() {
     if (!g_file.is_open()) return;
     g_file.close();
-    if (g_fileRemaining != 0 || g_file.fail()) ++g_filesBroken;
+    if (g_fileRemaining != 0 || g_file.fail()) {
+        ++g_filesBroken;
+    } else {
+        std::ifstream data(g_filePath, std::ios::binary);
+        const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(data)), {});
+        if (!files::IsCompleteCinder(bytes.data(), bytes.size())) ++g_filesBroken;
+    }
     g_fileRemaining = 0;
+    g_filePath.clear();
 }
 
 void BeginReceive(const std::vector<uint8_t>& payload) {
-    g_file.close();
-    g_filesReceived = 0;
-    g_filesBroken = 0;
-    g_filesExpected = payload.size() == 4 ? Get32(payload.data()) : 0;
-    g_ready = false;
-    const fs::path root = SaveRoot();
-    if (root.empty()) {
-        Log("world: LOCALAPPDATA is not set");
+    if (g_receiving || g_ready || g_failed) {
+        g_failed = true;
         return;
     }
-    // A fixed high slot: the guest's working copy, replaced on every join, removed back in the main menu.
-    g_targetDir = GuestSlotDir();
+    g_filesExpected = payload.size() == 4 ? Get32(payload.data()) : 0;
+    if (g_filesExpected == 0 || g_filesExpected > kMaxFiles) {
+        g_failed = true;
+        return;
+    }
+    const fs::path dir = GuestSlotDir();
+    RemoveGuestSlot();
     std::error_code error;
-    fs::remove_all(g_targetDir, error);
-    fs::create_directories(g_targetDir, error);
-    std::ofstream(g_targetDir / kMarkerName) << "Forager coop: world received from the host. Overwritten on join.\n";
+    if (dir.empty() || fs::exists(dir, error) || error || !fs::create_directories(dir, error)) {
+        Log("world: could not reserve guest slot %d; existing saves were kept", kGuestSlot);
+        g_failed = true;
+        return;
+    }
+    g_slotOwned = true;
+    std::ofstream marker(dir / kMarkerName);
+    marker << "Forager coop: world received from the host. Overwritten on join.\n";
+    marker.close();
+    if (!marker) {
+        g_failed = true;
+        return;
+    }
+    g_targetDir = dir;
+    g_receiving = true;
 }
 
 void BeginFile(const std::vector<uint8_t>& payload) {
     EndFile();
-    if (g_targetDir.empty() || payload.size() < 2) return;
-    const size_t length = payload[0] | (payload[1] << 8);
-    if (payload.size() != 2 + length + 4) return;
+    if (!g_receiving || g_failed) return;
+    const size_t length = payload.size() >= 2 ? payload[0] | (payload[1] << 8) : 0;
+    if (length == 0 || payload.size() != 2 + length + 4) {
+        g_failed = true;
+        return;
+    }
     const std::string relative(payload.begin() + 2, payload.begin() + 2 + length);
+    const std::string key = PathKey(relative);
     g_fileRemaining = Get32(payload.data() + 2 + length);
-    if (!IsSafeRelativePath(relative) || g_fileRemaining > kMaxFileSize) {
+    g_snapshotSize += g_fileRemaining;
+    if (g_filesReceived >= static_cast<int>(g_filesExpected) || !IsSafeRelativePath(relative) || !IsWorldFile(key) ||
+        g_fileRemaining == 0 || g_fileRemaining > kMaxFileSize || g_snapshotSize > kMaxSnapshotSize ||
+        !g_paths.insert(key).second) {
         Log("world: rejected file '%s' (%u bytes)", relative.c_str(), g_fileRemaining);
-        ++g_filesBroken;
+        g_failed = true;
         return;
     }
     const fs::path target = g_targetDir / fs::u8path(relative);
@@ -350,6 +426,7 @@ void BeginFile(const std::vector<uint8_t>& payload) {
     fs::create_directories(target.parent_path(), error);
     g_file.open(target, std::ios::binary | std::ios::trunc);
     if (g_file.is_open()) {
+        g_filePath = target;
         ++g_filesReceived;
     } else {
         Log("world: cannot write '%s'", relative.c_str());
@@ -358,7 +435,11 @@ void BeginFile(const std::vector<uint8_t>& payload) {
 }
 
 void WriteChunk(const std::vector<uint8_t>& payload) {
-    if (!g_file.is_open()) return;
+    if (!g_receiving || g_failed) return;
+    if (!g_file.is_open()) {
+        g_failed = true;
+        return;
+    }
     if (payload.size() > g_fileRemaining) {
         g_file.setstate(std::ios::failbit);  // more than announced: the file is not what the host has
         return;
@@ -396,6 +477,7 @@ void HostTick() {
 }
 
 bool GuestWorldReady() { return g_ready; }
+bool GuestWorldFailed() { return g_failed; }
 
 void OnInstanceDestroyed() { g_herbsDirty = true; }
 
@@ -408,10 +490,9 @@ void GuestSaveCharacter(yyc::CInstance* localPlayer) {
 std::wstring GuestSlotPath() { return GuestSlotDir().wstring(); }
 
 void RemoveGuestSaveSlot() {
-    // Our reserved slot: SaveGame recreates it without the marker, so delete by name.
-    std::error_code error;
-    const fs::path dir = GuestSlotDir();
-    if (!dir.empty()) fs::remove_all(dir, error);
+    std::lock_guard<std::mutex> guard(g_receiveLock);
+    EndFile();
+    RemoveGuestSlot();
 }
 
 bool InstallHooks(bool (*isGuest)()) {
@@ -441,15 +522,17 @@ bool HandleMessage(const net::Message& message) {
         case kWorldChunk:
             WriteChunk(message.payload);
             return true;
-        case kWorldEnd:
+        case kWorldEnd: {
             EndFile();
-            g_ready = g_filesReceived > 0;
-            Log("world: received %d files into %s", g_filesReceived, g_targetDir.u8string().c_str());
-            if (g_filesBroken > 0 || g_filesReceived != static_cast<int>(g_filesExpected)) {
-                Log("world: WARNING the world came incomplete: %d of %u files, %d broken - it may differ from the "
-                    "host's", g_filesReceived, g_filesExpected, g_filesBroken);
-            }
+            g_ready = g_receiving && !g_failed && message.payload.empty() && g_filesBroken == 0 &&
+                      g_filesReceived == static_cast<int>(g_filesExpected) && g_paths.count("data.cin") != 0 &&
+                      g_paths.count("zones/forager.main.cin") != 0;
+            g_receiving = false;
+            g_failed = !g_ready;
+            Log("world: %s snapshot (%d of %u files, %d broken)", g_ready ? "accepted" : "rejected",
+                g_filesReceived, g_filesExpected, g_filesBroken);
             return true;
+        }
         default:
             return false;
     }
@@ -459,8 +542,16 @@ void Reset() {
     std::lock_guard<std::mutex> guard(g_receiveLock);
     g_file.close();
     g_fileRemaining = 0;
+    g_filePath.clear();
     g_filesReceived = 0;
+    g_filesExpected = 0;
+    g_filesBroken = 0;
+    g_snapshotSize = 0;
+    g_paths.clear();
+    g_targetDir.clear();
+    g_receiving = false;
     g_ready = false;
+    g_failed = false;
     g_settleSteps = 0;
     g_pendingPeers.clear();
 }

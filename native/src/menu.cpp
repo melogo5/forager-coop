@@ -575,6 +575,11 @@ void Step(yyc::CInstance* control) {
         g_status = g_notice;
     }
     if (session::CurrentRole() == session::Role::kGuest && !g_loadingWorld) {
+        if (world::GuestWorldFailed()) {
+            CancelUnplayedSession("invalid world transfer");
+            g_status = "World could not be received. Check your saves and try again.";
+            return;
+        }
         if (world::GuestWorldReady() && character::GuestReady()) {
             LoadGuestWorld(control);
             return;
